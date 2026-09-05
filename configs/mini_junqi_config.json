@@ -1,0 +1,94 @@
+{
+  "board": {
+    "rows": 5,
+    "cols": 5,
+    "total_squares": 25
+  },
+  "piece_sets": {
+    "scheme_a": {
+      "pieces": [
+        {"type": "SI", "count": 1},
+        {"type": "JUN", "count": 1},
+        {"type": "SHI", "count": 1},
+        {"type": "LV", "count": 1},
+        {"type": "TUAN", "count": 1},
+        {"type": "GONG", "count": 2},
+        {"type": "LEI", "count": 2},
+        {"type": "QI", "count": 1}
+      ],
+      "total": 10
+    },
+    "scheme_b": {
+      "pieces": [
+        {"type": "SI", "count": 1},
+        {"type": "JUN", "count": 1},
+        {"type": "SHI", "count": 1},
+        {"type": "LV", "count": 1},
+        {"type": "TUAN", "count": 2},
+        {"type": "YING", "count": 2},
+        {"type": "LIAN", "count": 2},
+        {"type": "QI", "count": 1}
+      ],
+      "total": 11
+    }
+  },
+  "bunkers": {
+    "center": [2, 2],
+    "frontline_l": [1, 1],
+    "frontline_r": [1, 3],
+    "rear_l": [3, 1],
+    "rear_r": [3, 3]
+  },
+  "railroads": [
+    [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]],
+    [[0, 4], [1, 4], [2, 4], [3, 4], [4, 4]],
+    [[2, 0], [2, 1], [2, 2], [2, 3], [2, 4]]
+  ],
+  "piece_ranks": {
+    "SI": 10,
+    "JUN": 9,
+    "SHI": 8,
+    "LV": 7,
+    "TUAN": 6,
+    "YING": 5,
+    "LIAN": 4,
+    "PAI": 3,
+    "GONG": 1,
+    "LEI": 0,
+    "QI": 0,
+    "BOMB": 7
+  },
+  "combat": {
+    "attacker_wins_when": "greater_rank",
+    "draw_when": "equal_rank",
+    "bomb_mutation": true,
+    "engineer_mines_only": true,
+    "engineer_flying": true
+  },
+  "engineer_flight": {
+    "enabled": true,
+    "max_distance": 3,
+    "cannot_fly_over": ["enemy_revealed"]
+  },
+  "win_conditions": {
+    "flag_capture": true,
+    "immobilization": true,
+    "timeout_draw": false,
+    "max_plies": 60
+  },
+  "repetition": {
+    "long_zhuo_penalty": true,
+    "repeated_count_threshold": 4
+  },
+  "flipping": {
+    "first_flip_color_determines": true,
+    "max_initial_flips": 5,
+    "no_marshall_early": true
+  },
+  "experiment": {
+    "record_all_moves": true,
+    "measure_entropy_change": true,
+    "track_bunker_control": true,
+    "classify_move_types": true
+  }
+}

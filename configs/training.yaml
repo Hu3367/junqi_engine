@@ -1,0 +1,29 @@
+# 训练超参数配置
+# 用于 train_rl.py、train_bc.py 等训练脚本
+
+epochs: 10                       # 总训练轮数
+games_per_epoch: 24             # 每轮自对弈局数
+sims_per_game: 25               # MCTS 模拟次数
+eval_games: 40                  # 评估比赛局数
+workers: 4                      # 并行 Worker 数量
+
+out_dir: "models"               # 输出目录
+load_model: null                # 加载预训练模型路径
+
+rebase_baseline: false          # 是否重置基线（备份旧 best 并用 bc_best 重建）
+
+# MCTS 搜索参数
+c_puct: 0.6                     # PUCT 探索系数
+epsilon: 0.20                   # Dirichlet 噪声 ε
+alpha: 0.15                     # Dirichlet 噪声 α
+
+# Value Head 训练参数
+learning_rate: 1e-3
+batch_size: 256
+weight_decay: 1e-4
+early_stopping_patience: 5      # 早停等待轮数
+
+# 门控参数（晋级标准）
+promote_threshold: 0.75         # 胜率阈值
+wilson_alpha: 0.95              # Wilson 区间置信度
+min_samples_for_promotion: 40   # 最小样本量要求

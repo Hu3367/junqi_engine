@@ -1,0 +1,23 @@
+# Core dependencies
+torch>=2.0.0
+numpy>=1.24.0
+networkx>=3.0
+Pillow>=10.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Data processing
+pyyaml>=6.0
+jsonlines>=3.0
+
+# Visualization (optional, for GUI)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Machine Learning utilities
+scikit-learn>=1.2.0
+
+# Web interface (optional)
+streamlit>=1.24.0

@@ -1,0 +1,1 @@
+{"id": "model_20260905_v1", "filename": "releases/v1.0_current.pt", "created_at": "2026-09-05T14:41:00Z", "status": "released", "training_config": {"epochs": null, "games_per_epoch": null}, "metrics": {"elo": 1500, "benchmark_win_rate": null}}

@@ -1,0 +1,160 @@
+# Mini-Junqi (5x5) Configuration
+# =================================
+# 微缩版军棋规则配置 - 用于专家模型训练和策略研究
+
+board:
+  rows: 5
+  cols: 5
+  total_squares: 25
+
+# 双方各 10 个子力 + 1 个军旗 = 11 子铺满棋盘
+piece_sets:
+  scheme_a:  # 标准战斗配置 (含特殊能力)
+    pieces:
+      - { type: "SI", count: 1 }   # 司令
+      - { type: "JUN", count: 1 }  # 军长
+      - { type: "SHI", count: 1 }  # 师长
+      - { type: "LV", count: 1 }   # 旅长
+      - { type: "TUAN", count: 1 } # 团长
+      - { type: "GONG", count: 2 } # 工兵 × 2
+      - { type: "LEI", count: 2 }  # 地雷 × 2
+      - { type: "QI", count: 1 }   # 军旗
+    total: 10
+    
+  scheme_b:  # 纯等级对抗配置
+    pieces:
+      - { type: "SI", count: 1 }   # 司令
+      - { type: "JUN", count: 1 }  # 军长
+      - { type: "SHI", count: 1 }  # 师长
+      - { type: "LV", count: 1 }   # 旅长
+      - { type: "TUAN", count: 2 } # 团长 × 2
+      - { type: "YING", count: 2 } # 营长 × 2
+      - { type: "LIAN", count: 2 } # 连长 × 2
+      - { type: "QI", count: 1 }   # 军旗
+    total: 11
+
+# 行营位置 (5 个 - 十字形布局)
+bunkers:
+  center: [2, 2]          # 中央枢纽
+  frontline_l: [1, 1]     # 前线左
+  frontline_r: [1, 3]     # 前线右
+  rear_l: [3, 1]          # 后方左
+  rear_r: [3, 3]          # 后方右
+
+# 铁路连接 (简化版)
+railroads:
+  # 横贯铁路 (中间行)
+  - [2, 0], [2, 1], [2, 2], [2, 3], [2, 4]
+  # 两条竖线
+  - [0, 0], [1, 0], [2, 0], [3, 0], [4, 0]
+  - [0, 4], [1, 4], [2, 4], [3, 4], [4, 4]
+
+# 棋子等级体系
+piece_ranks:
+  SI: 10    # 司令
+  JUN: 9    # 军长
+  SHI: 8    # 师长
+  LV: 7     # 旅长
+  TUAN: 6   # 团长
+  YING: 5   # 营长
+  LIAN: 4   # 连长
+  PAI: 3    # 排长
+  GONG: 1   # 工兵
+  LEI: 0    # 地雷 (不能主动攻击)
+  BOMB: 7   # 炸弹 (可与任何棋子同归于尽)
+  QI: 0     # 军旗 (游戏目标)
+
+# 战斗规则
+combat:
+  attacker_wins_when: greater_rank
+  draw_when: equal_rank
+  bomb_mutation: true     # 炸弹与任何棋子同归于尽
+  engineer_mines_only: true  # 工兵只能挖地雷
+  engineer_flying: true     # 工兵可以飞行 (见下方)
+
+# 工兵飞行规则
+engineer_flight:
+  enabled: true
+  max_distance: 3  # 可以飞越直线距离≤3 的空格
+  cannot_fly_over: ["enemy_revealed"]  # 不能飞过敌方明子
+
+# 胜负判定
+win_conditions:
+  flag_capture: true        # 吃掉军旗立即获胜
+  immobilization: true      # 对方无子可动判负
+  timeout_draw: false       # 禁手和棋 (强制分胜负)
+  max_plies: 60             # 最大步数限制 (超过则按子力差判负)
+  
+# 循环局面包围规则
+repetition:
+  long_zhuo_penalty: true   # 长捉惩罚
+  repeated_count_threshold: 4  # 4 次重复同一局面判负
+  
+# 翻棋规则
+flipping:
+  first_flip_color_determines: true  # 首翻决定阵营归属
+  max_initial_flips: 5               # 前 5 手至少要有翻棋动作
+  no_marshall_early: true            # 前 3 手不能翻出司令/军长
+  
+# 实验设置 (用于数据分析)
+experiment:
+  record_all_moves: true
+  measure_entropy_change: true
+  track_bunker_control: true
+  classify_move_types: true
+  
+  move_type_categories:
+    flip_center: "翻中腹区域 (距中心≤2)"
+    flip_edge: "翻边缘角落区域"
+    capture_material: "直接吃子"
+    occupy_key_position: "占领关键点"
+    scout_information: "侦察翻棋"
+    defensive_retreat: "防守回撤"
+    rail_slide: "铁路滑行"
+    engineer_fly: "工兵飞行"
+    
+  bunker_control_value_estimation:
+    center_bunker: 0.35
+    frontline_bunker: 0.25
+    rear_bunker: 0.15
+    
+  opening_phase_turns: 5
+  midgame_phase_turns: 15
+  endgame_phase_start: 16
+
+# 专家模型训练参数
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  epochs: 100
+  validation_split: 0.2
+  
+  # Multi-task losses
+  loss_weights:
+    policy_loss: 1.0
+    value_loss: 2.0
+    label_loss: 0.5
+    
+  # Curriculum learning levels
+  curriculum_levels:
+    level_1_basic:      { turns: 1-10, complexity: 0.3 }
+    level_2_midgame:     { turns: 11-20, complexity: 0.5 }
+    level_3_endgame:     { turns: 21+, complexity: 0.7 }
+    level_4_adaptive:    { dynamic: true, complexity: "auto" }
+
+# 输出设置
+output:
+  log_dir: "logs/mini_junqi"
+  checkpoint_dir: "checkpoints/mini_junqi"
+  tensorboard: true
+  
+  # 统计数据输出
+  statistics:
+    save_per_n_games: 1000
+    metrics:
+      - win_rate
+      - avg_turns
+      - entropy_reduction_rate
+      - bunker_control_efficiency
+      - move_type_distribution
+      

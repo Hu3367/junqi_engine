@@ -1,0 +1,1038 @@
+"""深度强化学习自对弈训练流水线（V2.3 P0 收尾版：多进程并发 + 批量推理 + 阶段加权 + 残局课程）。
+
+核心特性：
+1. 多进程并发 (Multiprocessing Actors)：并行运行自对弈 Worker；
+2. 批量根节点推理 (Batched Root Evaluation)：充分释放 RTX 4080 SUPER 算力；
+3. 残局课程混入 (Curriculum Endgame Mix)：混入残局局面，强化死区与拖和；
+4. 阶段感知分层经验池；
+5. P0 修复（§3.1.3）：candidate 与 best 分离——门控失败不再回滚训练进度，
+   best.pt 只在晋升时更新；每轮保存完整 checkpoint（网络+优化器+随机源+元数据）；
+6. P0 修复（§3.1.4）：门控重设计——候选 vs 已发布 best 在三套固定评测集 + 随机
+   完整发牌上对抗（先后手各半、固定种子），按阶段拆分胜/和/负与终局原因，
+   Wilson 区间判定晋升；另附 search2 参考对抗（仅记录，不阻塞）；
+7. P0 修复（§3.1.5）：Python/NumPy/PyTorch/Worker 随机源全部由实验种子派生。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import random
+import time
+from collections import Counter, deque
+from multiprocessing import Pool
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+
+from .analysis import (PHASE_ENDGAME, PHASE_MIDGAME, PHASE_OPENING,
+                       detect_phase)
+from .config import RuleConfig
+from .encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, encode_state_np,
+                      legal_action_mask)
+from .endgame_gen import gen_endgame
+from .mcts import MCTS
+from .net import JunqiNet
+from .selfplay import play_game
+from .state import GameState, deal, position_key
+
+# S2：温度表上调（AlphaZero 前中期高温探索；原尾盘 0.2 在趋和局面下等于关闭探索，
+# 导致破死区/围猎暗子的决胜样本永远采不到）。
+TEMP_BY_PHASE = {
+    PHASE_OPENING: 1.2,
+    PHASE_MIDGAME: 1.0,
+    PHASE_ENDGAME: 0.5,
+}
+
+# S2：Value 批内公共模式样本目标占比（与世界模式叶子约 1:1 混合，修复模式失配）
+PUBLIC_VALUE_RATIO = 0.5
+# S2：辅助回归损失权重（监督 material_diff，非奖励塑形）
+AUX_LOSS_WEIGHT = 0.1
+
+# S1 修复：显式对手配比（原代码“25% best 对抗”因池扩张依赖晋升而从不生效）。
+# mirror=同模型镜像、best=已发布模型/池内快照、expert=专家搜索、
+# greedy=贪心期望搜索、random=随机扰动。
+OPP_MIX = {"mirror": 0.50, "best": 0.25, "expert": 0.10,
+           "greedy": 0.10, "random": 0.05}
+
+
+def opponent_type_for(r: float, net1_available: bool = True) -> str:
+    """按 OPP_MIX 配比把均匀随机数映射为对手类型（纯函数，可单测）。
+    net1_available=False 时 'best' 区间降级为 'expert'（防御分支，主循环已无条件注入）。"""
+    if r < OPP_MIX["mirror"]:
+        return "mirror"
+    if r < OPP_MIX["mirror"] + OPP_MIX["best"]:
+        return "best" if net1_available else "expert"
+    if r < OPP_MIX["mirror"] + OPP_MIX["best"] + OPP_MIX["expert"]:
+        return "expert"
+    if r < 1.0 - OPP_MIX["random"]:
+        return "greedy"
+    return "random"
+
+
+# ------------------------------------------------------------- 经验回放数据集
+
+class PolicyDataset(Dataset):
+    def __init__(self, samples: List[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        tensor, mask, pi, phase = self.samples[idx]
+        return (
+            torch.from_numpy(tensor).float(),
+            torch.from_numpy(mask).bool(),
+            torch.from_numpy(pi).float(),
+        )
+
+
+class ValueDataset(Dataset):
+    def __init__(self, samples: List[Tuple[np.ndarray, float, int]]):
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        tensor, z, phase = self.samples[idx]
+        return (
+            torch.from_numpy(tensor).float(),
+            torch.tensor(z, dtype=torch.float32),
+        )
+
+
+class StratifiedReplayBuffer:
+    """按阶段与胜负类别分桶的经验回放池（解决 Draw 样本淹没与类别塌缩）。"""
+
+    def __init__(self, capacity: int = 200000, rng: random.Random | None = None):
+        self.capacity = capacity
+        self.rng = rng or random.Random()
+        # Policy 流按阶段分桶: 0=opening, 1=midgame, 2=endgame
+        self.policy_buckets: Dict[int, deque] = {
+            PHASE_OPENING: deque(maxlen=capacity // 3),
+            PHASE_MIDGAME: deque(maxlen=capacity // 3),
+            PHASE_ENDGAME: deque(maxlen=capacity // 3),
+        }
+        # Value 流按胜负类别分桶: 0=Win, 1=Draw, 2=Loss
+        self.value_buckets: Dict[int, deque] = {
+            0: deque(maxlen=capacity // 3),
+            1: deque(maxlen=capacity // 3),
+            2: deque(maxlen=capacity // 3),
+        }
+
+    def add_policy(self, sample: Tuple[np.ndarray, np.ndarray, np.ndarray, int]):
+        phase = sample[3]
+        self.policy_buckets[phase].append(sample)
+
+    def add_value(self, sample: Tuple[np.ndarray, int, int]):
+        z_cls = sample[1]
+        if z_cls in self.value_buckets:
+            self.value_buckets[z_cls].append(sample)
+
+    def total_policy_samples(self) -> int:
+        return sum(len(b) for b in self.policy_buckets.values())
+
+    def total_value_samples(self) -> int:
+        return sum(len(b) for b in self.value_buckets.values())
+
+    def sample_policy_batch(self, batch_size: int, weights: Tuple[float, float, float] = (0.2, 0.5, 0.3)) -> List:
+        """按阶段配比采样 Policy 数据。"""
+        counts = [len(self.policy_buckets[p]) for p in (0, 1, 2)]
+        tot = sum(counts)
+        if tot == 0:
+            return []
+        w = np.array(weights, dtype=np.float32)
+        for i in range(3):
+            if counts[i] == 0:
+                w[i] = 0.0
+        if w.sum() == 0:
+            w = np.ones(3, dtype=np.float32)
+        w = w / w.sum()
+
+        samples = []
+        for p in (0, 1, 2):
+            n_p = int(round(batch_size * w[p]))
+            if n_p > 0 and len(self.policy_buckets[p]) > 0:
+                sampled = self.rng.sample(self.policy_buckets[p], min(n_p, len(self.policy_buckets[p])))
+                samples.extend(sampled)
+
+        while len(samples) < batch_size and tot > 0:
+            p = self.rng.choices([0, 1, 2], weights=counts, k=1)[0]
+            if len(self.policy_buckets[p]) > 0:
+                samples.append(self.rng.choice(self.policy_buckets[p]))
+        return samples
+
+    def sample_value_batch(self, batch_size: int, weights: Tuple[float, float, float] = (0.34, 0.33, 0.33),
+                           prob_public: float = PUBLIC_VALUE_RATIO) -> List:
+        """按类别均衡采样 Value 数据（Win : Draw : Loss 各占 weights，彻底破除 Draw 塌缩）。
+        S2：双层配额抽样——先按类别分配配额（稀有类保证不被淹没），再在每个类内按
+        prob_public 在公共模式根样本与世界模式叶子间分配（修复训练/评测模式失配）；
+        某模式存量不足时由另一模式补足。旧版 3 元组样本按世界模式处理。"""
+        counts = [len(self.value_buckets[c]) for c in (0, 1, 2)]
+        tot = sum(counts)
+        if tot == 0:
+            return []
+        w = np.array(weights, dtype=np.float32)
+        for i in range(3):
+            if counts[i] == 0:
+                w[i] = 0.0
+        if w.sum() == 0:
+            w = np.ones(3, dtype=np.float32)
+        w = w / w.sum()
+
+        def _mode(s) -> int:
+            return s[3] if len(s) > 3 else 1
+
+        samples = []
+        for c in (0, 1, 2):
+            n_c = int(round(batch_size * w[c]))
+            if n_c <= 0 or counts[c] == 0:
+                continue
+            pub = [s for s in self.value_buckets[c] if _mode(s) == 0]
+            world = [s for s in self.value_buckets[c] if _mode(s) == 1]
+            n_pub = int(round(n_c * prob_public))
+            n_world = n_c - n_pub
+            # 存量不足时跨模式补足，保证类配额不被接受过滤损耗（稀有类不被淹没）
+            if n_pub > len(pub):
+                n_world += n_pub - len(pub)
+                n_pub = len(pub)
+            if n_world > len(world):
+                n_pub += n_world - len(world)
+                n_world = len(world)
+                n_pub = min(n_pub, len(pub))
+            if n_pub > 0:
+                samples.extend(self.rng.sample(pub, min(n_pub, len(pub))))
+            if n_world > 0:
+                samples.extend(self.rng.sample(world, min(n_world, len(world))))
+
+        while len(samples) < batch_size and tot > 0:
+            c = self.rng.choices([0, 1, 2], weights=counts, k=1)[0]
+            if len(self.value_buckets[c]) > 0:
+                samples.append(self.rng.choice(self.value_buckets[c]))
+        self.rng.shuffle(samples)
+        return samples[:batch_size]
+
+    def stats(self) -> dict:
+        return {
+            "policy_buckets": {p: len(b) for p, b in self.policy_buckets.items()},
+            "value_buckets": {c: len(b) for c, b in self.value_buckets.items()},
+            "total_policy": self.total_policy_samples(),
+            "total_value": self.total_value_samples(),
+        }
+
+    def save(self, path: str):
+        """序列化持久化经验池内容。"""
+        import pickle
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        data = {
+            "policy": {p: list(b) for p, b in self.policy_buckets.items()},
+            "value": {c: list(b) for c, b in self.value_buckets.items()},
+        }
+        with open(path, "wb") as f:
+            pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, path: str):
+        """从文件恢复经验池内容。"""
+        import pickle
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+            for p, lst in data.get("policy", {}).items():
+                if p in self.policy_buckets:
+                    self.policy_buckets[p] = deque(lst, maxlen=self.capacity // 3)
+            for c, lst in data.get("value", {}).items():
+                if c in self.value_buckets:
+                    self.value_buckets[c] = deque(lst, maxlen=self.capacity // 3)
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------- 模块级多进程 Worker
+
+def _selfplay_worker_chunk(job_args):
+    """子进程任务：执行 n_games 局自对弈（支持残局课程采样、中盘注入与多样化对手池）。
+    P0 修复（§3.1.5）：子进程内所有随机源由 base_seed 统一派生。"""
+    (net_dict, opp_net_dict, n_games, sims, c_puct, device_str,
+     base_seed, cur_prob, mid_prob) = job_args
+    random.seed(base_seed)
+    np.random.seed(base_seed % (2 ** 32))
+    torch.manual_seed(base_seed % (2 ** 31))
+    device = torch.device(device_str)
+
+    in_c0 = 38
+    val_out0 = 3
+    if "in_conv.0.weight" in net_dict:
+        in_c0 = net_dict["in_conv.0.weight"].shape[1]
+    if "value_head.6.weight" in net_dict:
+        val_out0 = net_dict["value_head.6.weight"].shape[0]
+
+    net0 = JunqiNet(in_channels=in_c0)
+    if val_out0 == 1:
+        net0.value_head[6] = nn.Linear(128, 1)
+    net0.load_state_dict(net_dict, strict=False)
+    net0.to(device)
+    net0.eval()
+
+    net1 = None
+    if opp_net_dict is not None:
+        in_c1 = 38
+        val_out1 = 3
+        if "in_conv.0.weight" in opp_net_dict:
+            in_c1 = opp_net_dict["in_conv.0.weight"].shape[1]
+        if "value_head.6.weight" in opp_net_dict:
+            val_out1 = opp_net_dict["value_head.6.weight"].shape[0]
+
+        net1 = JunqiNet(in_channels=in_c1)
+        if val_out1 == 1:
+            net1.value_head[6] = nn.Linear(128, 1)
+        net1.load_state_dict(opp_net_dict, strict=False)
+        net1.to(device)
+        net1.eval()
+
+    all_p_samples = []
+    all_v_samples = []
+    opp_counter = Counter()
+
+    for i in range(n_games):
+        seed = base_seed + i
+        # S1 修复：按 OPP_MIX 显式配比选择对手；net1（已发布模型权重）由主循环无条件注入，
+        # 不再依赖池内快照数（打破“晋升→扩池→多样性”死锁）
+        rng_game = random.Random(seed * 10007 + 7)
+        opp_type = opponent_type_for(rng_game.random(), net1_available=net1 is not None)
+        opp_strat = None
+        target_net1 = None
+        if opp_type == "best":
+            target_net1 = net1          # 池快照仅 1 个时即已发布 best 本体
+        elif opp_type == "expert":
+            from .selfplay import ExpertStrategy
+            opp_strat = ExpertStrategy(depth=2, seed=seed)
+        elif opp_type == "greedy":
+            from .selfplay import AgentStrategy
+            opp_strat = AgentStrategy(depth=0, samples=4, seed=seed)
+        elif opp_type == "random":
+            from .selfplay import RandomStrategy
+            opp_strat = RandomStrategy()
+        opp_counter[opp_type] += 1
+
+        p_samples, v_samples, pub_v_samples = play_selfplay_game(
+            net0, net1=target_net1, opp_strategy=opp_strat,
+            sims=sims, c_puct=c_puct, device=device_str,
+            seed=seed, curriculum_prob=cur_prob, midgame_prob=mid_prob
+        )
+        all_p_samples.extend(p_samples)
+        all_v_samples.extend(v_samples)
+        all_v_samples.extend(pub_v_samples)
+
+    return all_p_samples, all_v_samples, opp_counter
+
+
+# ------------------------------------------------------------- 门控评测（P0 重设计，§3.1.4 / §7）
+#
+# 旧版门控（40 局同模型镜像、温度 0、无阶段拆分）在和棋密集规则下完全失去区分度。
+# 新门控：候选模型 vs 已发布 best，在三套固定评测集 + 随机完整发牌上对抗，
+# 先后手各半、固定种子（跨轮可比），按阶段拆分胜/和/负与终局原因，
+# 用 Wilson 区间判定晋升；另附 vs search2 参考对抗（仅记录，不阻塞晋升）。
+# 正式晋级建议将 --eval-games 提到 ≥ 200/阶段（§7 协议）；默认值为逐轮快速门控。
+
+GATE_STAGES = ("opening", "midgame", "endgame")
+_EVAL_SET_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval_sets")
+
+
+def wilson_lower_bound(successes: float, n: int, z: float = 1.96) -> float:
+    """Wilson 分数区间下界（广义：successes 可为小数，如 胜局数 + 0.5×和局数）。"""
+    if n <= 0:
+        return 0.0
+    p = min(1.0, max(0.0, successes / n))
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2.0 * n)) / denom
+    half = z * math.sqrt(max(0.0, p * (1.0 - p) / n + z * z / (4.0 * n * n))) / denom
+    return max(0.0, centre - half)
+
+
+def _stage_score(s: dict) -> Tuple[float, int]:
+    n = s["wins"] + s["draws"] + s["losses"]
+    return ((s["wins"] + 0.5 * s["draws"]) / n if n else 0.0), n
+
+
+def decide_promotion(stage_stats: Dict[str, dict],
+                     min_stage_score: float = 0.30,
+                     ref_score: Optional[float] = None,
+                     prev_ref_score: Optional[float] = None,
+                     strict_stages: bool = False) -> Tuple[bool, str]:
+    """晋升判定（纯函数，可单测）。stage_stats: {阶段名: {wins,draws,losses,reasons}}，
+    必须含 "overall"。晋升条件（全部满足）：
+      1. 整体得分 ≥0.5 且“不败率（胜+和）”Wilson 下界 ≥0.5（整体不显著退化）；
+      2. 任一阶段得分不低于 min_stage_score（无严重退化）；
+      3. S1 修订：**整体得分**的 Wilson 下界 >0.5（统计显著改善）。
+         原“任一子阶段下界 >0.5”在快速门控样本量（每阶段 ≤32 局）下需得分 ≥0.75，
+         数学上不可达，构成“永不晋升→池永不扩张”死锁；仅在正式晋升协议（每场景 ≥200 局）
+         时通过 strict_stages=True 恢复子阶段显著性要求；
+      4. S1 新增：若跑了参考对抗（ref_score 非 None），要求 ref_score ≥0.5 且不低于上轮；
+         未跑参考对抗时跳过该检查。stage_stats 内的 "ref_vs_search2" 条目仅作记录。"""
+    overall = stage_stats.get("overall")
+    if not overall:
+        return False, "缺少 overall 统计"
+    _skip = {"overall", "ref_vs_search2"}
+    o_score, o_n = _stage_score(overall)
+    nonloss_lower = wilson_lower_bound(overall["wins"] + overall["draws"], o_n)
+    if o_score < 0.5 or nonloss_lower < 0.5:
+        return False, (f"整体退化风险（得分={o_score:.3f}，"
+                       f"不败 Wilson 下界={nonloss_lower:.3f}）")
+    for name, s in stage_stats.items():
+        if name in _skip:
+            continue
+        sc, n = _stage_score(s)
+        if n == 0:
+            continue                     # 未评测的阶段不参与退化判定
+        if sc < min_stage_score:
+            return False, f"阶段 {name} 严重退化（得分={sc:.3f} < {min_stage_score}）"
+    overall_lower = wilson_lower_bound(o_score * o_n, o_n)
+    if overall_lower <= 0.5:
+        return False, (f"整体得分 Wilson 下界={overall_lower:.3f} ≤ 0.5，"
+                       f"无统计显著改善（得分={o_score:.3f}，n={o_n}）")
+    if strict_stages:
+        improved = [name for name, s in stage_stats.items()
+                    if name not in _skip
+                    for sc, n in [_stage_score(s)]
+                    if n > 0 and wilson_lower_bound(sc * n, n) > 0.5]
+        if not improved:
+            return False, "正式协议：无阶段出现统计显著改善"
+    if ref_score is not None:
+        if ref_score < 0.5:
+            return False, f"参考对抗不达标（ref_vs_search2={ref_score:.3f} < 0.5）"
+        if prev_ref_score is not None and ref_score < prev_ref_score:
+            return False, (f"参考对抗退化（ref_vs_search2={ref_score:.3f} "
+                           f"< 上轮 {prev_ref_score:.3f}）")
+    detail = f"整体得分={o_score:.3f}，Wilson 下界={overall_lower:.3f}"
+    if ref_score is not None:
+        detail += f"，ref_vs_search2={ref_score:.3f}"
+    return True, detail
+
+
+def _gate_game_job(job):
+    """子进程任务：单局门控对局（复用 selfplay.play_game，规则/循环判和口径一致）。"""
+    spec0, spec1, seed, mp0, mp1, init_json = job
+    init = GameState.from_json(init_json) if init_json else None
+    return play_game(spec0, spec1, seed, model_path0=mp0, model_path1=mp1,
+                     init_state=init, device="cpu")
+
+
+def _load_eval_jsons(stage: str, limit: int) -> List[str]:
+    path = os.path.join(_EVAL_SET_DIR, f"{stage}.jsonl")
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    return lines[:limit]
+
+
+def _tally(records: List[dict], cand_seat: int) -> dict:
+    wins = sum(1 for r in records if r["winner"] == cand_seat)
+    losses = sum(1 for r in records
+                 if r["winner"] is not None and r["winner"] not in (-1, cand_seat))
+    draws = len(records) - wins - losses
+    reasons = Counter(r.get("reason") or "unknown" for r in records)
+    return {"wins": wins, "draws": draws, "losses": losses,
+            "games": len(records), "reasons": dict(reasons)}
+
+
+def _merge_tally(a: dict, b: dict) -> dict:
+    return {"wins": a["wins"] + b["wins"], "draws": a["draws"] + b["draws"],
+            "losses": a["losses"] + b["losses"],
+            "games": a["games"] + b["games"],
+            "reasons": dict(Counter(a["reasons"]) + Counter(b["reasons"]))}
+
+
+def _run_jobs(jobs: List[tuple], workers: int) -> List[dict]:
+    if workers > 1 and len(jobs) > 1:
+        with Pool(min(workers, len(jobs))) as pool:
+            return pool.map(_gate_game_job, jobs)
+    return [_gate_game_job(j) for j in jobs]
+
+
+def evaluate_gate(candidate_pt: str, best_pt: str, sims: int,
+                  games_per_side: int, seed: int, workers: int = 4,
+                  ref_games: int = 0) -> Tuple[Dict[str, dict], Optional[float]]:
+    """门控评测。返回 (stage_stats, ref_vs_search2 得分)。
+    stage_stats 含 opening/midgame/endgame/random/overall 五项，
+    每项 {wins, draws, losses, games, reasons}（候选视角）。
+    """
+    spec = f"nn_mcts_{sims}"
+    stage_stats: Dict[str, dict] = {}
+    overall = {"wins": 0, "draws": 0, "losses": 0, "games": 0, "reasons": {}}
+
+    scenarios = [(st, _load_eval_jsons(st, games_per_side)) for st in GATE_STAGES]
+    scenarios.append(("random", [None] * games_per_side))
+
+    for name, jsons in scenarios:
+        jobs_a, jobs_b = [], []
+        for i, js in enumerate(jsons):
+            # 固定种子 + 先后手各半（方向 A 候选执先，方向 B 候选执后）
+            jobs_a.append((spec, spec, seed + i, candidate_pt, best_pt, js))
+            jobs_b.append((spec, spec, seed + 100_000 + i, best_pt, candidate_pt, js))
+        recs_a = _run_jobs(jobs_a, workers)
+        recs_b = _run_jobs(jobs_b, workers)
+        stats = _merge_tally(_tally(recs_a, 0), _tally(recs_b, 1))
+        stage_stats[name] = stats
+        overall = _merge_tally(overall, stats)
+
+    stage_stats["overall"] = overall
+
+    # search2 参考对抗（仅记录，不参与晋升判定）
+    ref_score: Optional[float] = None
+    if ref_games > 0:
+        ref_jobs = []
+        for st_name in GATE_STAGES:
+            js_list = _load_eval_jsons(st_name, ref_games)
+            for i, js in enumerate(js_list):
+                cand_first = (i % 2 == 0)
+                if cand_first:
+                    ref_jobs.append((spec, "search2", seed + 500_000 + i,
+                                     candidate_pt, None, js))
+                else:
+                    ref_jobs.append(("search2", spec, seed + 500_000 + i,
+                                     None, candidate_pt, js))
+        ref_recs = _run_jobs(ref_jobs, workers)
+        ref_tally = {"wins": 0, "draws": 0, "losses": 0}
+        for idx, r in enumerate(ref_recs):
+            cand_seat = 0 if idx % 2 == 0 else 1
+            if r["winner"] == cand_seat:
+                ref_tally["wins"] += 1
+            elif r["winner"] in (-1, None):
+                ref_tally["draws"] += 1
+            else:
+                ref_tally["losses"] += 1
+        n_ref = len(ref_recs)
+        ref_score = ((ref_tally["wins"] + 0.5 * ref_tally["draws"]) / n_ref
+                     if n_ref else None)
+        stage_stats["ref_vs_search2"] = {**ref_tally, "games": n_ref}
+
+    return stage_stats, ref_score
+
+
+# ------------------------------------------------------------- 完整 checkpoint（§3.1.3）
+
+def save_checkpoint(path: str, net: JunqiNet, optimizer, epoch: int, elo: float,
+                    main_rng: random.Random, buffer: Optional[StratifiedReplayBuffer] = None):
+    """完整检查点：网络 + 优化器 + 随机源状态 + 元数据 + 真实经验池样本。"""
+    payload = {
+        "net": net.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "epoch": epoch,
+        "elo": elo,
+        "python_rng_state": main_rng.getstate(),
+        "torch_rng_state": torch.get_rng_state(),
+        "buffer_stats": buffer.stats() if buffer is not None else None,
+    }
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    torch.save(payload, path)
+    if buffer is not None:
+        buf_path = path.replace(".pt", "_buffer.pkl")
+        buffer.save(buf_path)
+
+
+def load_checkpoint(path: str, net: JunqiNet,
+                    optimizer=None, device: str = "cpu",
+                    buffer: Optional[StratifiedReplayBuffer] = None) -> dict:
+    """加载完整检查点（自产可信文件，含随机源状态故用完整反序列化）。
+    strict=False：兼容 S2 前的旧检查点（无 aux_head 键）。"""
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    net.load_state_dict(ckpt["net"], strict=False)
+    if optimizer is not None and ckpt.get("optimizer") is not None:
+        optimizer.load_state_dict(ckpt["optimizer"])
+    if buffer is not None:
+        buf_path = path.replace(".pt", "_buffer.pkl")
+        buffer.load(buf_path)
+    return ckpt
+
+
+# ------------------------------------------------------------- 单局自对弈
+
+_MIDGAME_STARTS_CACHE: Optional[List[str]] = None
+
+
+def _load_midgame_starts() -> List[str]:
+    """S2：缓存加载中盘评测集（供自对弈起始局面注入，Lc0 开局多样性类比）。"""
+    global _MIDGAME_STARTS_CACHE
+    if _MIDGAME_STARTS_CACHE is None:
+        path = os.path.join(_EVAL_SET_DIR, "midgame.jsonl")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                _MIDGAME_STARTS_CACHE = [ln.strip() for ln in f if ln.strip()]
+        except OSError:
+            _MIDGAME_STARTS_CACHE = []
+    return _MIDGAME_STARTS_CACHE
+
+
+def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
+                       opp_strategy=None,
+                       sims: int = 60, c_puct: float = 0.6,
+                       device: str = "cpu", cfg: RuleConfig | None = None,
+                       seed: int | None = None,
+                       curriculum_prob: float = 0.0,
+                       midgame_prob: float = 0.0) -> Tuple[List, List, List]:
+    """执行一局自对弈（支持混合对手与课程采样），返回 (policy_samples, value_samples, public_value_samples)。
+    - curriculum_prob > 0 时按概率从残局生成器开始对弈；S2 决胜课程：
+      子力失衡 |mb|≥0.3 时禁用堡垒，优先生成可破局局面（制造 Win/Loss 样本）
+    - midgame_prob > 0 时按概率从 eval_sets/midgame.jsonl 注入中盘起始局面（文件缺失时退回完整发牌）
+    - Value 样本为 4 元组 (arr, z_cls, phase, is_world)：is_world=1 为世界模式叶子，
+      is_world=0 为公共模式根局面（S2 修复训练/评测模式失配）；标签仍为纯终局结果，未引入任何中间奖励。
+    """
+    from .encoder import action_to_index
+    cfg = cfg or RuleConfig()
+    rng = random.Random(seed)
+
+    r_start = rng.random()
+    if curriculum_prob > 0 and r_start < curriculum_prob:
+        # S2 决胜课程：扩大子力失衡幅度；失衡大时不筑堡垒，避免课程局面自带和棋答案
+        mb = rng.uniform(-0.6, 0.6)
+        fortress_flag = rng.random() < 0.5 and abs(mb) < 0.3
+        st = gen_endgame(
+            rng, cfg,
+            material_balance=mb,
+            hidden_k=rng.randint(2, 5),
+            my_engineers=rng.randint(0, 1),
+            opp_engineers=0 if fortress_flag else rng.randint(0, 1),
+            fortress=fortress_flag
+        )
+    elif midgame_prob > 0 and r_start < curriculum_prob + midgame_prob:
+        starts = _load_midgame_starts()
+        st = None
+        if starts:
+            try:
+                cand = GameState.from_json(rng.choice(starts), cfg)
+                if not cand.is_terminal() and cand.legal_actions():
+                    st = cand
+            except (ValueError, KeyError):
+                st = None
+        if st is None:
+            st = deal(rng, cfg)
+    else:
+        st = deal(rng, cfg)
+
+    mcts0 = MCTS(net0, simulations=sims, c_puct=c_puct, device=device)
+    mcts1 = MCTS(net1 if net1 is not None else net0, simulations=sims, c_puct=c_puct, device=device)
+
+    root_records = []
+    root_value_records = []
+    leaf_records = []
+    seen = Counter()
+
+    while not st.is_terminal():
+        seen[position_key(st)] += 1
+        if seen[position_key(st)] >= cfg.repetition_draw_count:
+            st.winner, st.win_reason = -1, "repetition"
+            break
+
+        acts = st.legal_actions()
+        if not acts:
+            st.winner, st.win_reason = 1 - st.turn, "immobilized"
+            break
+
+        current_phase = detect_phase(st)
+        temp = TEMP_BY_PHASE[current_phase]
+        avoid = {k for k, n in seen.items() if n >= cfg.repetition_draw_count - 1}
+
+        # 若黑方配置了外部多样化策略（专家/贪心/随机）
+        if st.turn == 1 and opp_strategy is not None:
+            # S1 修复：对手走子不再写入 one-hot 策略目标（违背 AlphaZero 语义：
+            # 策略目标必须来自训练方自身 MCTS 访问分布），该手不产生任何训练样本。
+            act = opp_strategy.choose(st, rng=rng, avoid=avoid, history_counts=seen)
+        else:
+            # 编码 38 通道（注入历史重复计数）——仅训练方走子时编码，省去对手手开销
+            state_arr = encode_state_np(st, seat=st.turn, world=None, history_counts=seen)
+            mask_arr = legal_action_mask(st)
+            active_mcts = mcts0 if st.turn == 0 else mcts1
+            act, pi_vec, _, leaf_samples = active_mcts.search(
+                st, temperature=temp, add_noise=True, rng=rng,
+                history_counts=seen, avoid=avoid
+            )
+            root_records.append((state_arr, mask_arr, pi_vec, st.turn, current_phase))
+            # S2：公共模式根局面同步作为 Value 样本（与靶场/GUI/混合引擎评测分布对齐）
+            root_value_records.append((state_arr, st.turn, current_phase))
+            for leaf_arr, leaf_turn in leaf_samples:
+                leaf_records.append((leaf_arr, leaf_turn, current_phase))
+
+        st = st.apply(act)
+
+    final_winner = st.winner
+    policy_samples = [
+        (state_arr, mask_arr, pi_vec, phase)
+        for state_arr, mask_arr, pi_vec, seat, phase in root_records
+    ]
+
+    # Value 样本标签（0=Win, 1=Draw, 2=Loss，纯终局结果；第 4 位为模式标志）
+    def _label(leaf_turn: int) -> int:
+        if final_winner == -1 or final_winner is None:
+            return 1
+        return 0 if final_winner == leaf_turn else 2
+
+    value_samples = [(arr, _label(leaf_turn), phase, 1)
+                     for arr, leaf_turn, phase in leaf_records]
+    public_value_samples = [(arr, _label(seat), phase, 0)
+                            for arr, seat, phase in root_value_records]
+
+    return policy_samples, value_samples, public_value_samples
+
+
+# ------------------------------------------------------------- 训练步骤
+
+def train_epoch(net: JunqiNet, buffer: StratifiedReplayBuffer,
+                optimizer: torch.optim.Optimizer,
+                batch_size: int = 128, steps_per_epoch: int = 50,
+                device: str = "cpu") -> Tuple[float, float, float, float]:
+    """从分层回放池中执行一个 Epoch 的联合优化。
+    返回 (loss, p_loss, v_loss, aux_loss)；S2 新增辅助回归损失（监督 material_diff，
+    目标直接取自编码器通道 25，无需额外存储）与公共/世界双模式 Value 混合采样。"""
+    net.train()
+    total_loss, total_p_loss, total_v_loss, total_aux_loss = 0.0, 0.0, 0.0, 0.0
+    actual_steps = 0
+
+    for _ in range(steps_per_epoch):
+        p_batch = buffer.sample_policy_batch(batch_size)
+        v_batch = buffer.sample_value_batch(batch_size)
+        if not p_batch or not v_batch:
+            break
+
+        # 1. Policy Forward
+        p_states = torch.from_numpy(np.stack([item[0] for item in p_batch])).float().to(device)
+        p_masks = torch.from_numpy(np.stack([item[1] for item in p_batch])).bool().to(device)
+        p_targets = torch.from_numpy(np.stack([item[2] for item in p_batch])).float().to(device)
+
+        optimizer.zero_grad()
+        p_logits, _ = net(p_states, legal_mask=p_masks)
+        log_probs = F.log_softmax(p_logits, dim=-1)
+        p_loss = -torch.sum(p_targets * log_probs, dim=-1).mean()
+
+        # 2. Value Forward（S2：forward_with_aux 同步输出辅助回归值）
+        v_states = torch.from_numpy(np.stack([item[0] for item in v_batch])).float().to(device)
+        v_targets = torch.tensor([item[1] for item in v_batch], dtype=torch.long).to(device)
+
+        _, v_out, aux_out = net.forward_with_aux(v_states)
+        if v_out.shape[-1] == 3:
+            v_loss = F.cross_entropy(v_out, v_targets)
+        else:
+            v_scalar = torch.where(v_targets == 0, 1.0, torch.where(v_targets == 2, -1.0, 0.0))
+            v_loss = F.mse_loss(v_out.squeeze(-1), v_scalar)
+
+        # 3. 辅助回归损失：material_diff 已广播在编码器通道 25，直接读取作监督目标。
+        # 属监督信号而非奖励塑形：不改变终局回报，仅为价值头提供密集锚定。
+        aux_targets = v_states[:, 25, 0, 0]
+        aux_loss = F.mse_loss(aux_out, aux_targets)
+
+        loss = p_loss + v_loss + AUX_LOSS_WEIGHT * aux_loss
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        total_p_loss += p_loss.item()
+        total_v_loss += v_loss.item()
+        total_aux_loss += aux_loss.item()
+        actual_steps += 1
+
+    steps = max(1, actual_steps)
+    return (total_loss / steps, total_p_loss / steps,
+            total_v_loss / steps, total_aux_loss / steps)
+
+
+# ------------------------------------------------------------- 训练主循环（V2.3）
+
+def run_training(epochs: int = 10, games_per_epoch: int = 40,
+                 sims: int = 60, eval_games: int = 32,
+                 ref_games: int = 6,
+                 workers: int = 4, curriculum_prob: float = 0.3,
+                 midgame_prob: float = 0.1,
+                 batch_size: int = 128, lr: float = 1e-3,
+                 buffer_size: int = 200000, out_dir: str = "models",
+                 seed: int = 42, device: str | None = None,
+                 fresh: bool = False,
+                 rebase_baseline: bool = False) -> JunqiNet:
+    """深度强化学习自对弈训练主闭环（V2.3 + S0/S1/S2 整改）。
+
+    candidate/best 分离（§3.1.3）：net 是持续训练的候选模型，门控失败不回滚；
+    best.pt 是发布模型，仅在晋升时更新。每轮保存完整 checkpoint，支持断点续训。
+    S0：rebase_baseline=True 时用 bc_best.pt 重建发布基线；热启动优先 bc_best。
+    S1：对手池无条件注入；逐轮记录实际对手占比；晋升判据整体 Wilson + ref 硬条件；Elo 解耦。
+    S2：公共模式 Value 样本与世界模式叶子约 1:1 混合；决胜课程与中盘注入；
+    温度表上调；辅助回归头监督 material_diff；热启动优先 value_distilled.pt（若存在）。
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"=== 军棋深度强化学习系统 V2.3（P3.3 门控增强版）启动 ===")
+    print(f"计算设备: {device.upper()} | 并发 Workers: {workers} | 随机种子: {seed}")
+    if device == "cuda":
+        print(f"GPU 型号: {torch.cuda.get_device_name(0)}")
+
+    # 全局随机源由实验种子派生（§3.1.5）
+    torch.manual_seed(seed)
+    main_rng = random.Random((seed * 2654435761) % (2 ** 32))
+
+    os.makedirs(out_dir, exist_ok=True)
+    pool_dir = os.path.join(out_dir, "pool")
+    os.makedirs(pool_dir, exist_ok=True)
+
+    best_path = os.path.join(out_dir, "best.pt")
+    ckpt_path = os.path.join(out_dir, "candidate_latest.pt")
+    elo_log_path = os.path.join(out_dir, "elo_history.jsonl")
+
+    net = JunqiNet().to(device)                       # candidate：持续训练
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
+
+    buffer = StratifiedReplayBuffer(capacity=buffer_size,
+                                    rng=random.Random(seed + 777))
+    start_epoch = 1
+    current_elo = 1500.0
+    if fresh and os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
+    bc_path = os.path.join("models", "bc_best.pt")
+    if rebase_baseline:
+        # S0 基线重建：旧 best 系旧缺陷产物（50 题靶场全 Win 塌缩，见审查报告根因 2），
+        # 备份后用 BC 模型（策略头 Top-1 81.5%）重建发布基线，并清空候选进度强制重训。
+        if os.path.exists(bc_path):
+            legacy = best_path.replace("best.pt", "best_legacy.pt")
+            if os.path.exists(best_path) and not os.path.exists(legacy):
+                os.replace(best_path, legacy)
+                print(f"旧发布模型已备份: {legacy}")
+            JunqiNet.load_from_file(bc_path, device=device).save(best_path)
+            print(f"发布基线已用 bc_best 重建: {best_path}")
+            # 必须同时清空候选检查点与经验池：否则 load_checkpoint 会把旧池（Draw 主导、
+            # 无模式标志）整体读回，污染新起点（实证：重训 3 轮后池内 100% 旧式样本）。
+            for stale in (ckpt_path, ckpt_path.replace(".pt", "_buffer.pkl"),
+                          os.path.join(out_dir, "_candidate_gate.pt")):
+                if os.path.exists(stale):
+                    os.remove(stale)
+            print("候选检查点、经验池与门控快照已清空，将从新基线重新训练")
+        else:
+            print(f"--rebase-baseline 需要 {bc_path}，文件不存在，跳过基线重建")
+    if os.path.exists(ckpt_path):
+        # 断点续训：恢复候选权重 + 优化器 + 随机源 + 经验池（§3.1.3）
+        ckpt = load_checkpoint(ckpt_path, net, optimizer, device=device, buffer=buffer)
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        current_elo = float(ckpt.get("elo", 1500.0))
+        try:
+            main_rng.setstate(ckpt["python_rng_state"])
+            torch.set_rng_state(ckpt["torch_rng_state"])
+        except (KeyError, TypeError):
+            pass
+        print(f"已从检查点续训: epoch {start_epoch} 起，Elo={current_elo:.1f}，恢复经验池: {buffer.stats()}")
+    elif os.path.exists(os.path.join("models", "value_distilled.pt")):
+        # S2：专家价值蒸馏预热产物优先（价值头已有锚定，避免冷启动塌缩）
+        vd_path = os.path.join("models", "value_distilled.pt")
+        print(f"无检查点，从价值蒸馏模型热启动候选: {vd_path}")
+        net = JunqiNet.load_from_file(vd_path, device=device)
+        if not os.path.exists(best_path):
+            net.save(best_path)
+    elif os.path.exists(bc_path):
+        # S0：热启动优先 bc_best（策略头可用），避免继承旧缺陷 best.pt 的塌缩权重；
+        # 发布基线保持既有 best.pt，仅在晋升时更新。
+        print(f"无检查点，从行为克隆模型热启动候选: {bc_path}")
+        # S2 提示：BC 价值头未校准（靶场开局 MAE≈1.0），直接自对弈初期会变弱；
+        # 建议先跑 `python -m junqi distill_value` 生成 value_distilled.pt 再训练。
+        if not os.path.exists(os.path.join("models", "value_distilled.pt")):
+            print("⚠️ 未检测到 value_distilled.pt：建议先执行 distill_value 蒸馏预热，"
+                  "否则候选初期棋力可能弱于旧版模型（BC 价值头未锚定）")
+        net = JunqiNet.load_from_file(bc_path, device=device)
+        if not os.path.exists(best_path):
+            net.save(best_path)
+    elif os.path.exists(best_path):
+        print(f"无检查点，从已发布模型热启动候选: {best_path}")
+        net = JunqiNet.load_from_file(best_path, device=device)
+    else:
+        net.save(best_path)
+    if not os.path.exists(best_path):
+        net.save(best_path)
+
+    pool_models: List[str] = [best_path]
+    gate_seed = seed * 90000 + 7                       # 门控固定种子，跨轮可比（§7）
+    end_epoch = start_epoch + epochs
+
+    def _prev_ref_score() -> Optional[float]:
+        """从 elo_history.jsonl 读取上一轮 ref_vs_search2（用于晋升不退化硬条件）。"""
+        if not os.path.exists(elo_log_path):
+            return None
+        try:
+            with open(elo_log_path, "r", encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            if not lines:
+                return None
+            return json.loads(lines[-1]).get("ref_vs_search2")
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    for ep in range(start_epoch, end_epoch):
+        t0 = time.time()
+        print(f"\n==================== Epoch {ep} ====================", flush=True)
+        print(f"执行多进程自对弈采样 ({games_per_epoch} 局, 并发 {workers} 进程, MCTS Sims={sims})...", flush=True)
+
+        # 准备子进程任务（Worker 运行在 CPU 避免 CUDA 上下文争用）
+        chunk_size = max(1, games_per_epoch // workers)
+        jobs = []
+        for w in range(workers):
+            n_g = chunk_size if w < workers - 1 else games_per_epoch - chunk_size * (workers - 1)
+            if n_g > 0:
+                # S1 修复：无条件注入已发布模型权重（池快照 >1 时随机选一个），
+                # 使 Worker 的 25% "best 对抗"分支真实生效。
+                opp_path = main_rng.choice(pool_models)
+                opp_dict = torch.load(opp_path, map_location="cpu", weights_only=True)
+
+                w_seed = seed * 1_000_000 + ep * 10_000 + w * 500
+                jobs.append((
+                    net.state_dict(), opp_dict, n_g, sims, 0.6, "cpu", w_seed,
+                    curriculum_prob, midgame_prob
+                ))
+
+        if workers > 1:
+            with Pool(workers) as pool:
+                results = pool.map(_selfplay_worker_chunk, jobs)
+        else:
+            results = [_selfplay_worker_chunk(j) for j in jobs]
+
+        opp_mix_total = Counter()
+        for p_samples, v_samples, opp_counts in results:
+            opp_mix_total.update(opp_counts)
+            for s in p_samples:
+                buffer.add_policy(s)
+            for s in v_samples:
+                buffer.add_value(s)
+
+        opp_total_games = max(1, sum(opp_mix_total.values()))
+        opponent_mix = {k: round(v / opp_total_games, 3)
+                        for k, v in sorted(opp_mix_total.items())}
+        print(f"自对弈完成 | 总 Policy 样本: {buffer.total_policy_samples()}, 总 Value 样本: {buffer.total_value_samples()} | 实际对手占比: {opponent_mix}", flush=True)
+
+        # 网络参数优化（GPU 训练）
+        print(f"优化神经网络参数 (Policy + Value + Aux on {device.upper()})...", flush=True)
+        loss, p_loss, v_loss, aux_loss = train_epoch(
+            net, buffer, optimizer, batch_size=batch_size,
+            steps_per_epoch=max(20, buffer.total_policy_samples() // batch_size),
+            device=device
+        )
+        print(f"优化完成 | 总 Loss: {loss:.4f} (Policy: {p_loss:.4f}, Value: {v_loss:.4f}, Aux: {aux_loss:.4f})", flush=True)
+
+        # 运行靶场基准评测
+        from .benchmark import evaluate_net_benchmark, save_metrics_report
+        bm_res = evaluate_net_benchmark(net, device=device)
+        print(f"靶场评测 | Value MAE: {bm_res['value_mae_overall']:.4f}, 三分类准确率: {bm_res['value_class_acc']*100:.1f}%", flush=True)
+        save_metrics_report({
+            "value_mae": bm_res,
+            "training_status": {"epoch": ep, "loss": loss, "p_loss": p_loss, "v_loss": v_loss, "elo": current_elo}
+        }, output_dir="metrics")
+
+        # 门控评测（§3.1.4 重设计）：候选落盘后与已发布 best 对抗
+        cand_pt = os.path.join(out_dir, "_candidate_gate.pt")
+        net.save(cand_pt)
+        print(f"执行门控评测 (候选 vs 已发布 best，每阶段/方向 {eval_games} 局)..." )
+        stage_stats, ref_score = evaluate_gate(
+            cand_pt, best_path, sims=sims, games_per_side=eval_games,
+            seed=gate_seed, workers=workers, ref_games=ref_games
+        )
+        ov = stage_stats["overall"]
+        ov_score, _ = _stage_score(ov)
+        print(f"门控总体: 胜 {ov['wins']} / 和 {ov['draws']} / 负 {ov['losses']} | 得分 {ov_score:.3f}", flush=True)
+        for name in (*GATE_STAGES, "random"):
+            sc, n = _stage_score(stage_stats[name])
+            print(f"  阶段 {name:<8} 得分 {sc:.3f} ({n} 局) 终局原因: {stage_stats[name]['reasons']}", flush=True)
+        if ref_score is not None:
+            print(f"  参考 vs search2: 得分 {ref_score:.3f}（仅记录）", flush=True)
+
+        prev_ref = _prev_ref_score()
+        promote, reason = decide_promotion(stage_stats, ref_score=ref_score,
+                                          prev_ref_score=prev_ref)
+        if promote:
+            print(f"🎉 晋升成功：{reason} → 更新 best.pt", flush=True)
+            net.save(best_path)
+            snapshot_path = os.path.join(pool_dir, f"step_ep{ep}.pt")
+            net.save(snapshot_path)
+            pool_models.append(snapshot_path)
+            if len(pool_models) > 8:
+                pool_models.pop(0)
+        else:
+            # §3.1.3：门控失败不回滚候选训练进度，仅不更新发布模型
+            print(f"⚠️ 未达晋升条件：{reason}（候选训练进度保留，不回滚）", flush=True)
+        # S1：Elo 与晋升解耦——每轮按门控整体得分更新，恢复曲线信号（原来仅晋升时更新，恒 1500）
+        current_elo += 16.0 * (ov_score - 0.5) * 2
+
+        # 每轮保存完整检查点（无论是否晋升）
+        save_checkpoint(ckpt_path, net, optimizer, ep, current_elo, main_rng, buffer)
+
+        elapsed = time.time() - t0
+        log_entry = {
+            "epoch": ep,
+            "loss": round(loss, 4),
+            "p_loss": round(p_loss, 4),
+            "v_loss": round(v_loss, 4),
+            "aux_loss": round(aux_loss, 4),
+            "gate_score": round(ov_score, 3),
+            "gate_wins": ov["wins"], "gate_draws": ov["draws"], "gate_losses": ov["losses"],
+            "stage_scores": {k: round(_stage_score(v)[0], 3)
+                             for k, v in stage_stats.items() if k != "ref_vs_search2"},
+            "gate_reasons": ov["reasons"],
+            "opponent_mix": opponent_mix,
+            "ref_vs_search2": None if ref_score is None else round(ref_score, 3),
+            "promoted": promote,
+            "gate_decision": reason,
+            "elo": round(current_elo, 1),
+            "time_sec": round(elapsed, 1),
+        }
+        with open(elo_log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        print(f"Epoch {ep} 耗时: {elapsed:.1f}s | 当前估算 Elo: {current_elo:.1f}", flush=True)
+
+    return net
+
+
+def main():
+    default_workers = min(8, os.cpu_count() or 4)
+    parser = argparse.ArgumentParser(description="军棋翻棋深度强化学习自训练 V2.3 (P0 收尾版)")
+    parser.add_argument("--epochs", type=int, default=5, help="训练轮数")
+    parser.add_argument("--games", type=int, default=40, help="每轮自对弈局数")
+    parser.add_argument("--sims", type=int, default=60, help="MCTS 每手模拟次数")
+    parser.add_argument("--eval-games", type=int, default=32,
+                        help="门控评测：每阶段每方向局数（S1 起默认 32；正式晋级建议 ≥200）")
+    parser.add_argument("--ref-games", type=int, default=6,
+                        help="vs search2 参考对抗：每阶段局数（仅记录，0=关闭）")
+    parser.add_argument("--workers", type=int, default=default_workers, help="并发 Worker 进程数")
+    parser.add_argument("--curriculum-prob", type=float, default=0.3, help="残局课程采样概率")
+    parser.add_argument("--midgame-prob", type=float, default=0.1,
+                        help="S2：中盘评测集起始局面注入概率（开局多样性）")
+    parser.add_argument("--batch-size", type=int, default=128, help="批处理大小")
+    parser.add_argument("--lr", type=float, default=1e-3, help="学习率")
+    parser.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser.add_argument("--out-dir", type=str, default="models", help="模型输出目录")
+    parser.add_argument("--device", type=str, default=None, help="计算设备 (cuda/cpu)")
+    parser.add_argument("--fresh", action="store_true", help="忽略已有检查点，从头训练")
+    parser.add_argument("--rebase-baseline", action="store_true",
+                        help="S0：用 bc_best.pt 重建发布基线（旧 best 备份），并清空候选进度")
+
+    args = parser.parse_args()
+    run_training(
+        epochs=args.epochs,
+        games_per_epoch=args.games,
+        sims=args.sims,
+        eval_games=args.eval_games,
+        ref_games=args.ref_games,
+        workers=args.workers,
+        curriculum_prob=args.curriculum_prob,
+        midgame_prob=args.midgame_prob,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        seed=args.seed,
+        out_dir=args.out_dir,
+        device=args.device,
+        fresh=args.fresh,
+        rebase_baseline=args.rebase_baseline,
+    )
+
+
+if __name__ == "__main__":
+    main()

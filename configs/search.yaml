@@ -1,0 +1,36 @@
+# 搜索参数配置
+# 用于 MCTS、ExpertSearch、NNAgent 等搜索引擎
+
+mcts:
+  c_puct: 0.6                   # PUCT 探索系数
+  epsilon: 0.20                 # Dirichlet 噪声 ε
+  alpha: 0.15                   # Dirichlet 噪声 α
+  max_depth: 3                  # 最大搜索深度（CLI GUI 使用）
+  
+  # 惩罚参数
+  repeat_penalty: 150.0         # 重复局面罚分
+  
+  # 采样参数
+  samples_by_board:
+    "12x5": 25
+    "8x6": 40
+    "6x6": 40
+    "4x8": 60
+
+search_agent:
+  depth: 2                      # 传统搜索深度（标准模式）
+  weight_scale: 1.0             # 估值权重缩放
+  
+  # 启发式权重
+  eval_weights:
+    material: 100.0
+    camp_occ: 10.0
+    camp_siege: 6.0
+    fortress: 25.0
+    
+  mvv_lva_multiplier: 100.0     # MVV-LVA 排序因子
+
+hybrid:
+  nn_weight: 0.7                # 神经网络权重占比
+  search_weight: 0.3            # 传统搜索权重占比
+  fallback_threshold: 0.3       # 回退到传统搜索的阈值

@@ -1,0 +1,133 @@
+# ==========================================
+# 1. Python 编译与打包产物
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# 2. 虚拟环境
+# ==========================================
+venv/
+ENV/
+env/
+.venv/
+
+# ==========================================
+# 3. 深度学习权重、大缓存与序列化文件
+# ==========================================
+*.bin
+*.pth
+*.pt
+*.pkl
+*.pickle
+*.npz
+*.npy
+*.onnx
+
+# 模型检查点与评估子目录
+models/checkpoints/
+models/releases/
+models/test/
+models/test_parallel/
+models/test_v2/
+models/candidate_*
+models/_candidate_*
+
+# 允许受管的模型清单元数据（不含大权重）
+!models/MANIFEST.jsonl
+!models/bc_best_history.json
+
+# ==========================================
+# 4. IDE 与编辑器产物
+# ==========================================
+.vscode/
+.idea/
+.VSCodeCounter/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+*.code-workspace
+
+# ==========================================
+# 5. 测试与覆盖率
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+metrics/*.json
+metrics/*.md
+
+# ==========================================
+# 6. 数据集与对局缓存
+# ==========================================
+# 官方原始复盘数据与二进制对局（1000 局本地样本）
+军旗复盘/
+*.sav
+*.apk
+apk_extracted/
+
+# 大体积训练/验证张量集
+datasets/*
+!datasets/.gitkeep
+
+# 评估题库
+eval_sets/
+
+# 复盘与对局中间大体积缓存 (多兆字节 JSON/CSV)
+reports/replay_caches/
+reports/**/*.csv
+reports/*.csv
+games/*.json
+
+# 保留项目正式分析报告 (Markdown)
+!reports/**/*.md
+!reports/*.md
+!reports/**/README.md
+
+# ==========================================
+# 7. 临时文件与本地草稿
+# ==========================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+scripts_backup/
+tmp/
+temp/
+scratch/
+test_output.txt
+temp_analysis.json
+
+# ==========================================
+# 8. 环境变量与凭证
+# ==========================================
+.env
+.env.local
+.env.*.local
