@@ -228,13 +228,13 @@ class Agent:
                         key=lambda t: t[1], reverse=True)
         return result[:topn]
 
-    def select_action(self, state: GameState, avoid: set | None = None) -> Action:
+    def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
         """返回最优单步决策动作 (统一 Agent 规范)。"""
         scored = self.choose_actions(state, topn=1, avoid=avoid)
         if scored:
             return scored[0][0]
         acts = state.legal_actions()
-        return acts[0] if acts else Action("pass")
+        return acts[0] if acts else None
 
     # ------------------------------------------------------------- 搜索
 
@@ -332,13 +332,13 @@ class ExpertAgent:
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:topn]
 
-    def select_action(self, state: GameState, avoid: set | None = None) -> Action:
+    def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
         """返回最优单步决策动作 (统一 Agent 规范)。"""
         scored = self.choose_actions(state, topn=1, avoid=avoid)
         if scored:
             return scored[0][0]
         acts = state.legal_actions()
-        return acts[0] if acts else Action("pass")
+        return acts[0] if acts else None
 
 
 def win_probability(score: float, scale: float = 250.0) -> float:
@@ -403,6 +403,14 @@ class NNAgent:
                 scored_list.append((a, score))
             scored_list.sort(key=lambda t: t[1], reverse=True)
             return scored_list[:topn]
+
+    def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
+        """返回最优单步决策动作 (统一 Agent 规范)。"""
+        scored = self.choose_actions(state, topn=1, avoid=avoid)
+        if scored:
+            return scored[0][0]
+        acts = state.legal_actions()
+        return acts[0] if acts else None
 
 
 class HybridAgent:
@@ -473,8 +481,12 @@ class HybridAgent:
                 # 模拟执行移动
                 nxt = state.apply(a)
                 if nxt.is_terminal() and nxt.winner == state.turn:
-                    # 一步制胜（吃旗或灭尽敌军）
-                    tactical_score = WIN_SCORE
+                    # 一步制胜（直接吃旗赋予绝对最高斩杀优先级，避免因困毙平分被先验扰乱）
+                    tgt = state.board.get(a.to)
+                    if tgt and tgt.rank == Rank.QI:
+                        tactical_score = WIN_SCORE + 5000.0
+                    else:
+                        tactical_score = WIN_SCORE
                 elif nxt.is_terminal() and nxt.winner == -1:
                     tactical_score = 0.0
                 elif self.search_depth <= 1:
@@ -496,4 +508,12 @@ class HybridAgent:
 
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:topn]
+
+    def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
+        """返回最优单步决策动作 (统一 Agent 规范)。"""
+        scored = self.choose_actions(state, topn=1, avoid=avoid)
+        if scored:
+            return scored[0][0]
+        acts = state.legal_actions()
+        return acts[0] if acts else None
 

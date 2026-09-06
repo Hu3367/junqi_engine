@@ -91,10 +91,10 @@ class ApkNativeAgent:
         return scored[:topn]
 
     def select_action(self, state: GameState,
-                      avoid: Optional[set] = None) -> Action:
+                      avoid: Optional[set] = None) -> Optional[Action]:
         """返回单步最优决策动作 (符合统一 Agent 规范)。"""
         scored = self.choose_actions(state, topn=1, avoid=avoid)
         if scored:
             return scored[0][0]
         acts = state.legal_actions()
-        return acts[0] if acts else Action("pass")
+        return acts[0] if acts else None

@@ -91,9 +91,11 @@ class DatasetStats:
     version: str = "1.0.0"
     created_at: str = ""
     seed: int = 2026
+    min_plies: int = 20
     total_sav_files: int = 0
     valid_games: int = 0
     invalid_games: int = 0
+    filtered_short_games: int = 0
     total_plies: int = 0
     train_games: int = 0
     val_games: int = 0
@@ -268,13 +270,15 @@ def process_single_game(game: SavGame, cfg: RuleConfig,
     return samples
 
 
-def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
+def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v2",
                           split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
-                          seed: int = 2026, version: str = "1.0.0",
+                          seed: int = 2026, version: str = "2.0.0",
                           max_games: Optional[int] = None,
-                          list_cfg_path: Optional[str] = None) -> DatasetStats:
-    """从 .sav 文件目录构建标准 P1 数据集（按对局切分，附带版本和哈希）。
+                          list_cfg_path: Optional[str] = None,
+                          min_plies: int = 20) -> DatasetStats:
+    """从 .sav 文件目录构建标准 P1/P2 高质量行为克隆数据集（按对局切分，附带版本和哈希）。
     支持接入 list.cfg 官方权威终局判定真值数据库。
+    包含数据清洗：自动过滤损坏对局与总步数小于 min_plies 的开局失衡秒退异常局。
     """
     os.makedirs(out_dir, exist_ok=True)
     cfg = RuleConfig()
@@ -295,7 +299,7 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
         elif os.path.exists("军旗复盘/list.cfg"):
             meta_dict = load_list_cfg_metadata("军旗复盘/list.cfg")
 
-    # 1. 查找全部 .sav 文件
+    # 1. 查找全部 .sav 文件（去重扫描）
     if not os.path.exists(sav_dir):
         if os.path.exists("军旗复盘"):
             sav_dir = "军旗复盘"
@@ -305,48 +309,85 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
     if os.path.isfile(sav_dir):
         sav_files = [sav_dir]
     else:
-        sav_files = sorted(glob.glob(os.path.join(sav_dir, "*.sav")) +
-                           glob.glob(os.path.join(sav_dir, "**", "*.sav"), recursive=True))
-
-    if max_games is not None and max_games > 0:
-        sav_files = sav_files[:max_games]
+        sav_files = sorted(set(glob.glob(os.path.join(sav_dir, "*.sav")) +
+                               glob.glob(os.path.join(sav_dir, "**", "*.sav"), recursive=True)))
 
     total_files = len(sav_files)
     if total_files == 0:
         raise FileNotFoundError(f"在 {sav_dir} 下未找到任何 .sav 文件")
 
-    # 2. 确定性按对局文件名哈希洗牌
+    # 2. 前置数据清洗与重演有效性验证
+    valid_game_entries = []  # tuple: (fpath, meta, game_samples)
+    invalid_count = 0
+    filtered_short_count = 0
+
+    print(f"[Dataset] 开始重演与清洗 {total_files} 局复盘文件 (min_plies={min_plies})...")
+    for fpath in sav_files:
+        try:
+            g = parse_sav(fpath)
+            g = replay_sav(g, cfg=cfg, check=True)
+        except Exception:
+            invalid_count += 1
+            continue
+
+        if not g.replay_ok:
+            invalid_count += 1
+            continue
+
+        base_fname = os.path.basename(fpath)
+        meta = meta_dict.get(base_fname)
+        if meta is None and base_fname.endswith(".sav"):
+            meta = meta_dict.get(base_fname[:-4])
+
+        game_samples = process_single_game(g, cfg, meta_record=meta)
+        if len(game_samples) < min_plies:
+            filtered_short_count += 1
+            continue
+
+        valid_game_entries.append((fpath, meta, game_samples))
+
+    print(f"[Dataset] 清洗完成: 原始 {total_files} 局, 有效保留 {len(valid_game_entries)} 局, "
+          f"损坏滤除 {invalid_count} 局, 短步数弃赛滤除 {filtered_short_count} 局")
+
+    if max_games is not None and max_games > 0:
+        valid_game_entries = valid_game_entries[:max_games]
+
+    # 3. 确定性按对局洗牌并划分 Train / Val / Test
     rng = random.Random(seed)
-    shuffled_files = list(sav_files)
-    rng.shuffle(shuffled_files)
+    rng.shuffle(valid_game_entries)
 
-    n_train = int(total_files * split_ratios[0])
-    n_val = int(total_files * split_ratios[1])
+    n_total_valid = len(valid_game_entries)
+    n_train = int(n_total_valid * split_ratios[0])
+    n_val = int(n_total_valid * split_ratios[1])
 
-    train_files = shuffled_files[:n_train]
-    val_files = shuffled_files[n_train:n_train + n_val]
-    test_files = shuffled_files[n_train + n_val:]
+    train_entries = valid_game_entries[:n_train]
+    val_entries = valid_game_entries[n_train:n_train + n_val]
+    test_entries = valid_game_entries[n_train + n_val:]
 
     splits = {
-        "train": train_files,
-        "val": val_files,
-        "test": test_files
+        "train": train_entries,
+        "val": val_entries,
+        "test": test_entries
     }
 
     stats = DatasetStats(
         version=version,
         created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         seed=seed,
+        min_plies=min_plies,
         total_sav_files=total_files,
-        train_games=len(train_files),
-        val_games=len(val_files),
-        test_games=len(test_files),
+        valid_games=n_total_valid,
+        invalid_games=invalid_count,
+        filtered_short_games=filtered_short_count,
+        train_games=len(train_entries),
+        val_games=len(val_entries),
+        test_games=len(test_entries),
         phase_distribution={"opening": 0, "midgame": 0, "endgame": 0},
         outcome_distribution={"decided_win": 0, "rule_draw": 0, "special_or_unfinished": 0},
         hashes={}
     )
 
-    for split_name, files in splits.items():
+    for split_name, entries in splits.items():
         all_states = []
         all_masks = []
         all_actions = []
@@ -355,25 +396,7 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
         all_val_classes = []
         all_has_values = []
 
-        for fpath in files:
-            try:
-                g = parse_sav(fpath)
-                g = replay_sav(g, cfg=cfg, check=True)
-            except Exception:
-                stats.invalid_games += 1
-                continue
-
-            if not g.replay_ok:
-                stats.invalid_games += 1
-                continue
-
-            stats.valid_games += 1
-
-            base_fname = os.path.basename(fpath)
-            meta = meta_dict.get(base_fname)
-            if meta is None and base_fname.endswith(".sav"):
-                meta = meta_dict.get(base_fname[:-4])
-
+        for fpath, meta, game_samples in entries:
             if meta is not None:
                 rc = meta.get("reason_code", 0)
                 wc = meta.get("winner", 3)
@@ -384,14 +407,15 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
                 else:
                     stats.outcome_distribution["special_or_unfinished"] += 1
             else:
-                if g.winner in (0, 1) and not g.stopped_on_event:
+                has_win = any(s["has_value"] and s["val_class"] in (0, 2) for s in game_samples)
+                has_draw = any(s["has_value"] and s["val_class"] == 1 for s in game_samples)
+                if has_win:
                     stats.outcome_distribution["decided_win"] += 1
-                elif g.winner == -1 and not g.stopped_on_event:
+                elif has_draw:
                     stats.outcome_distribution["rule_draw"] += 1
                 else:
                     stats.outcome_distribution["special_or_unfinished"] += 1
 
-            game_samples = process_single_game(g, cfg, meta_record=meta)
             for s in game_samples:
                 all_states.append(s["state"])
                 all_masks.append(s["mask"])
@@ -433,6 +457,7 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
             has_values=np.array(all_has_values, dtype=bool)
         )
         stats.hashes[f"{split_name}.npz"] = compute_file_sha256(out_npz)
+        print(f"  [Split: {split_name}] 写入 {len(entries)} 局, {n_samples} plies -> {out_npz}")
 
     # 写入元数据 JSON
     meta_path = os.path.join(out_dir, "metadata.json")
@@ -499,20 +524,22 @@ if __name__ == "__main__":
     sub = parser.add_subparsers(dest="cmd")
 
     p_export = sub.add_parser("export", help="从复盘数据导出标准行为克隆数据集 (npz)")
-    p_export.add_argument("--sav-dir", default="../军旗复盘", help=".sav 复盘文件目录")
-    p_export.add_argument("--out-dir", default="datasets/p1_v1", help="输出 npz 目录")
+    p_export.add_argument("--sav-dir", default="军旗复盘", help=".sav 复盘文件目录")
+    p_export.add_argument("--out-dir", default="datasets/p1_v2", help="输出 npz 目录")
+    p_export.add_argument("--min-plies", type=int, default=20, help="异常短局过滤最小步数阈值 (默认 20)")
     p_export.add_argument("--seed", type=int, default=2026, help="随机种子")
-    p_export.add_argument("--version", default="1.0.0", help="数据集版本号")
+    p_export.add_argument("--version", default="2.0.0", help="数据集版本号")
 
     p_eval = sub.add_parser("eval", help="评估数据集 Policy 基准指标")
-    p_eval.add_argument("--dataset", default="datasets/p1_v1/val.npz", help="npz 数据集文件路径")
+    p_eval.add_argument("--dataset", default="datasets/p1_v2/val.npz", help="npz 数据集文件路径")
     p_eval.add_argument("--samples", type=int, default=1000, help="评估样本量")
 
     args = parser.parse_args()
     if args.cmd == "export":
-        stats = export_replay_dataset(args.sav_dir, out_dir=args.out_dir, seed=args.seed, version=args.version)
-        print(f"P1 数据集已成功生成至 {args.out_dir}:")
-        print(f"  - 总局数: {stats.total_sav_files} (有效: {stats.valid_games}, 无效: {stats.invalid_games})")
+        stats = export_replay_dataset(args.sav_dir, out_dir=args.out_dir, seed=args.seed,
+                                      version=args.version, min_plies=args.min_plies)
+        print(f"P1/P2 高质量数据集已成功生成至 {args.out_dir}:")
+        print(f"  - 总局数: {stats.total_sav_files} (有效: {stats.valid_games}, 损坏滤除: {stats.invalid_games}, 短局滤除: {stats.filtered_short_games})")
         print(f"  - 切分: Train {stats.train_games} 局 ({stats.train_plies} plies), Val {stats.val_games} 局 ({stats.val_plies} plies), Test {stats.test_games} 局 ({stats.test_plies} plies)")
         print(f"  - Policy 样本数: {stats.policy_samples_count}, Value 样本数: {stats.value_samples_count}")
         print(f"  - 阶段覆盖率: {stats.phase_distribution}")

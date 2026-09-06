@@ -94,10 +94,29 @@ def score_to_class(score: float) -> int:
     return 1
 
 
+def _label_worker(task: tuple) -> int:
+    """子进程独立打标：使用独立种子和 SearchConfig 对单局面执行搜索。"""
+    st, depth, time_limit_ms, seed = task
+    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms), seed=seed)
+    scored = agent.choose_actions(st, topn=1)
+    if not scored:
+        return 2
+    return score_to_class(scored[0][1])
+
+
 def label_with_expert(states: List[GameState], depth: int = 3,
                       time_limit_ms: int = 300,
-                      seed: int = 2026) -> List[int]:
-    """用专家搜索为局面打伪标签（走子方视角）。无合法走法判负（困毙）。"""
+                      seed: int = 2026, workers: int = 0) -> List[int]:
+    """用专家搜索为局面打伪标签（走子方视角）。无合法走法判负（困毙）。支持多进程加速。"""
+    if workers is None or workers <= 0:
+        workers = min(8, os.cpu_count() or 4)
+    if workers > 1 and len(states) > 10:
+        import multiprocessing as mp
+        tasks = [(st, depth, time_limit_ms, seed + i) for i, st in enumerate(states)]
+        print(f"[蒸馏] 启动 {workers} 个并行 Worker 进程加速打标...")
+        with mp.Pool(processes=workers) as pool:
+            return pool.map(_label_worker, tasks)
+
     agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms),
                         seed=seed)
     labels = []
@@ -114,10 +133,11 @@ def label_with_expert(states: List[GameState], depth: int = 3,
 
 def train_value_distill(base_model: str = "models/bc_best.pt",
                         out_path: str = "models/value_distilled.pt",
-                        n_samples: int = 1200, epochs: int = 3,
+                        n_samples: int = 1200, epochs: int = 5,
                         batch_size: int = 128, lr: float = 5e-4,
                         val_ratio: float = 0.15, seed: int = 2026,
                         depth: int = 3, time_limit_ms: int = 300,
+                        workers: int = 0,
                         device: str | None = None) -> dict:
     """执行价值蒸馏：采样局面 → 专家打标 → 仅训练价值头 → 保存。
     策略头与主干冻结，保证 BC 策略能力不被破坏。返回指标字典。"""
@@ -137,7 +157,7 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     print(f"[蒸馏] 有效局面 {len(positions)}，开始专家打标 "
           f"(depth={depth}, time_limit={time_limit_ms}ms) ...")
     labels = label_with_expert([st for st, _ in positions], depth=depth,
-                               time_limit_ms=time_limit_ms, seed=seed)
+                               time_limit_ms=time_limit_ms, seed=seed, workers=workers)
 
     from collections import Counter
     label_dist = dict(Counter(labels))
@@ -214,7 +234,28 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     if best_sd is not None:
         net.value_head.load_state_dict(best_sd)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    net.save(out_path)
+
+    import time
+    out_dict = {
+        "model_state": net.state_dict(),
+        "in_channels": net.in_channels,
+        "num_blocks": len(net.blocks),
+        "channels": net.in_conv[0].out_channels,
+        "base_model": base_model,
+        "distill_samples": len(samples),
+        "val_acc": best_acc,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    try:
+        base_ckpt = torch.load(base_model, map_location="cpu", weights_only=False)
+        if isinstance(base_ckpt, dict):
+            for k in ("val_top1", "val_top3", "val_metrics"):
+                if k in base_ckpt:
+                    out_dict[k] = base_ckpt[k]
+    except Exception:
+        pass
+
+    torch.save(out_dict, out_path)
     print(f"[蒸馏] 完成：最佳验证准确率 {best_acc * 100:.1f}%，已保存 {out_path}")
 
     return {
@@ -230,7 +271,7 @@ def main():
     parser.add_argument("--base", default="models/bc_best.pt", help="基座模型路径")
     parser.add_argument("--out", default="models/value_distilled.pt", help="输出权重路径")
     parser.add_argument("--samples", type=int, default=1200, help="蒸馏局面数")
-    parser.add_argument("--epochs", type=int, default=3, help="训练轮数")
+    parser.add_argument("--epochs", type=int, default=5, help="训练轮数")
     parser.add_argument("--batch-size", type=int, default=128, help="批大小")
     parser.add_argument("--lr", type=float, default=5e-4, help="学习率")
     parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集占比")
@@ -238,6 +279,7 @@ def main():
     parser.add_argument("--depth", type=int, default=3, help="专家搜索深度")
     parser.add_argument("--time-limit-ms", type=int, default=300,
                         help="专家搜索单步时间预算（毫秒）")
+    parser.add_argument("--workers", type=int, default=0, help="并行打标进程数 (0 为自动)")
     parser.add_argument("--device", default=None, help="计算设备")
     args = parser.parse_args()
     train_value_distill(base_model=args.base, out_path=args.out,
@@ -245,6 +287,7 @@ def main():
                         batch_size=args.batch_size, lr=args.lr,
                         val_ratio=args.val_ratio, seed=args.seed,
                         depth=args.depth, time_limit_ms=args.time_limit_ms,
+                        workers=args.workers,
                         device=args.device)
 
 

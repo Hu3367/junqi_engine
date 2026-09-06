@@ -27,12 +27,7 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
         device_str = "cuda:0" if torch.cuda.is_available() else "cpu"
     dev = torch.device(device_str)
 
-    ckpt = torch.load(model_path, map_location=dev, weights_only=False)
-    num_blocks = ckpt.get("num_blocks", 6)
-    channels = ckpt.get("channels", 128)
-
-    model = JunqiNet(in_channels=36, num_blocks=num_blocks, channels=channels).to(dev)
-    model.load_state_dict(ckpt["model_state"])
+    model = JunqiNet.load_from_file(model_path, device=dev)
     model.eval()
 
     test_ds = NpzReplayDataset(test_npz)
@@ -47,13 +42,22 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
     total_value_loss = 0.0
     value_samples = 0
     illegal_pred_count = 0
+    total_val_loss = 0.0
+    val_correct = 0
 
     phase_counts = {0: 0, 1: 0, 2: 0}
     phase_top1 = {0: 0, 1: 0, 2: 0}
     phase_top3 = {0: 0, 1: 0, 2: 0}
 
     with torch.no_grad():
-        for states, masks, actions, values, has_values, phases in loader:
+        for batch_data in loader:
+            if len(batch_data) == 7:
+                states, masks, actions, values, val_classes, has_values, phases = batch_data
+                val_classes = val_classes.to(dev)
+            else:
+                states, masks, actions, values, has_values, phases = batch_data
+                val_classes = None
+
             states = states.to(dev)
             masks = masks.to(dev)
             actions = actions.to(dev)
@@ -68,13 +72,33 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
             loss_p = F.cross_entropy(logits, actions)
             total_policy_loss += loss_p.item() * batch_sz
 
-            if has_values.sum() > 0:
-                pred_v_sub = pred_val.squeeze(-1)[has_values]
-                target_v_sub = values[has_values]
-                loss_v = F.mse_loss(pred_v_sub, target_v_sub)
-                n_v = has_values.sum().item()
+            n_v = has_values.sum().item()
+            if n_v > 0:
                 value_samples += n_v
-                total_value_loss += loss_v.item() * n_v
+                if pred_val.shape[-1] == 3:
+                    if val_classes is None:
+                        target_c = torch.where(values > 0.5, torch.tensor(0, device=dev),
+                                               torch.where(values < -0.5, torch.tensor(2, device=dev),
+                                                           torch.tensor(1, device=dev)))
+                    else:
+                        target_c = val_classes
+                    loss_v = F.cross_entropy(pred_val[has_values], target_c[has_values])
+                    total_val_loss += loss_v.item() * n_v
+
+                    pred_c = pred_val[has_values].argmax(dim=-1)
+                    val_correct += (pred_c == target_c[has_values]).sum().item()
+
+                    # 期望胜率标量: P(win) - P(loss)
+                    probs = F.softmax(pred_val[has_values], dim=-1)
+                    pred_scalar = probs[:, 0] - probs[:, 2]
+                    target_v_sub = values[has_values]
+                    loss_mse = F.mse_loss(pred_scalar, target_v_sub)
+                    total_value_loss += loss_mse.item() * n_v
+                else:
+                    pred_v_sub = pred_val.squeeze(-1)[has_values]
+                    target_v_sub = values[has_values]
+                    loss_v = F.mse_loss(pred_v_sub, target_v_sub)
+                    total_value_loss += loss_v.item() * n_v
 
             # Top-1
             pred_top1 = logits.argmax(dim=-1)
@@ -104,12 +128,14 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
         "model_path": model_path,
         "test_samples": total_samples,
         "value_samples": value_samples,
-        "policy_cross_entropy": total_policy_loss / total_samples,
+        "policy_cross_entropy": total_policy_loss / total_samples if total_samples else 0.0,
+        "value_loss": total_val_loss / value_samples if value_samples else 0.0,
+        "value_accuracy": val_correct / value_samples if value_samples else 0.0,
         "value_mse": total_value_loss / value_samples if value_samples else 0.0,
-        "top1_accuracy": correct_top1 / total_samples,
-        "top3_accuracy": correct_top3 / total_samples,
-        "top5_accuracy": correct_top5 / total_samples,
-        "illegal_prediction_rate": illegal_pred_count / total_samples,
+        "top1_accuracy": correct_top1 / total_samples if total_samples else 0.0,
+        "top3_accuracy": correct_top3 / total_samples if total_samples else 0.0,
+        "top5_accuracy": correct_top5 / total_samples if total_samples else 0.0,
+        "illegal_prediction_rate": illegal_pred_count / total_samples if total_samples else 0.0,
         "phase_breakdown": {
             "opening": {
                 "count": phase_counts[0],
@@ -146,13 +172,14 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
 
 ## 1. 核心综合指标
 
-| 评估指标 | 模型实际得分 | 随机基线 (Random) | 提升幅度 |
+| 评估指标 | 模型实际得分 | 随机基线 (Random) | 提升幅度 / 判定 |
 |---|---|---|---|
 | **Top-1 准确率 (准确命中人类走法)** | **{res['top1_accuracy']*100:.2f}%** | 2.34% | **+{res['top1_accuracy']*100 - 2.34:.2f}%** 🚀 |
 | **Top-3 准确率 (人类走法在候选前三)** | **{res['top3_accuracy']*100:.2f}%** | 7.02% | **+{res['top3_accuracy']*100 - 7.02:.2f}%** 🚀 |
 | **Top-5 准确率** | **{res['top5_accuracy']*100:.2f}%** | 11.50% | **+{res['top5_accuracy']*100 - 11.50:.2f}%** |
 | **Policy 交叉熵损失 (Cross Entropy)** | **{res['policy_cross_entropy']:.4f}** | 3.790 | 显著收敛下降 |
-| **Value MSE 损失 (真实终局评估)** | **{res['value_mse']:.4f}** | 1.000 | 准确预测胜率 |
+| **Value 三分类准确率 (胜/和/负判断)** | **{res.get('value_accuracy', 0.0)*100:.2f}%** | 33.33% | **+{res.get('value_accuracy', 0.0)*100 - 33.33:.2f}%** 🚀 |
+| **Value 期望 MSE 损失** | **{res['value_mse']:.4f}** | 1.000 | 准确预测胜率期望 |
 | **非法动作预测率 (Illegal Rate)** | **{res['illegal_prediction_rate']*100:.2f}%** | - | **100% 严格遵守规则** |
 
 ---
@@ -177,3 +204,22 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
     with open(out_md, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"[Eval BC] 报告已成功输出至 {out_md}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="P2 阶段：行为克隆模型独立测试集评测")
+    parser.add_argument("--model", default="models/bc_best.pt", help="待评测模型路径")
+    parser.add_argument("--test-npz", default="datasets/p1_v2/test.npz", help="测试集 npz 路径")
+    parser.add_argument("--batch-size", type=int, default=256, help="批大小")
+    parser.add_argument("--device", default=None, help="评测设备 (cuda:0 / cpu)")
+    parser.add_argument("--out-report", default="reports/p2_bc_report.md", help="输出 Markdown 报告路径")
+    args = parser.parse_args()
+
+    res = evaluate_test_set(
+        model_path=args.model,
+        test_npz=args.test_npz,
+        batch_size=args.batch_size,
+        device_str=args.device,
+    )
+    generate_p2_report(res, out_md=args.out_report)
+

@@ -21,6 +21,10 @@ def main(argv=None):
     sub.add_parser("calc", help="交互式局面计算器")
     sub.add_parser("gui", help="人机对战图形界面")
 
+    lg = sub.add_parser("label_gui", help="启动实战交火打标与核验 GUI 工作台")
+    lg.add_argument("--data", default="datasets/distill_tactical_labeled.json",
+                    help="待核验打标数据集 JSON 路径")
+
     sp = sub.add_parser("selfplay", help="自对弈批量研究")
     sp.add_argument("--games", type=int, default=100, help="每组对局数")
     sp.add_argument("--a", default="greedy", help="先手策略: random/greedy/search2/search3")
@@ -143,8 +147,11 @@ def main(argv=None):
         from .calculator import Calculator
         Calculator().loop()
     elif args.cmd == "gui":
-        from .gui import main as gui_main
-        gui_main()
+        from .gui import main as run_gui
+        run_gui()
+    elif args.cmd == "label_gui":
+        from .label_gui import main as run_label_gui
+        run_label_gui(["--data", args.data])
     elif args.cmd == "selfplay":
         from .selfplay import run_selfplay
         result = run_selfplay(args.a, args.b, args.games, workers=args.workers,

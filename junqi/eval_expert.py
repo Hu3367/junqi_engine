@@ -203,24 +203,29 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     for pos, pc in revealed_mine:
         if is_camp(pos):
             my_camps += 1
-            score += w.camp_occ
+            # 行营绝对保护分：在营内完全免死，额外+5基础防守分
+            score += w.camp_occ + 5.0
+            if pc.rank == Rank.ZHA:
+                score += 12.0  # 己方炸弹在营：绝对免死堡垒与前沿核威慑
             # 行营围杀压力：营内子对能击杀或兑掉的邻接敌明子施加围杀压力 (杜绝小子在营里对大子产生假围杀加分)
             siege = sum(1 for np in NEIGHBORS[pos]
                         if (e := state.board.get(np)) is not None and e.revealed and e.color == opp
                         and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score += w.camp_siege * siege
-        if is_hq(pos) and pc.rank != Rank.QI:
+        if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
             score += w.hq_locked
 
     for pos, pc in revealed_opp:
         if is_camp(pos):
             opp_camps += 1
-            score -= w.camp_occ
+            score -= (w.camp_occ + 5.0)
+            if pc.rank == Rank.ZHA:
+                score -= 12.0  # 敌方炸弹入营：敌核武固若金汤，严重威胁己方
             siege = sum(1 for np in NEIGHBORS[pos]
                         if (e := state.board.get(np)) is not None and e.revealed and e.color == my
                         and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score -= w.camp_siege * siege
-        if is_hq(pos) and pc.rank != Rank.QI:
+        if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
             score -= w.hq_locked
 
     # 3.1.1 占营比例非线性矩阵增益 (2026-09-06 实证：5:5 38.2% -> 6:4 52.1% -> 7:3 68.4% -> 8:2 83.3%)
@@ -232,16 +237,55 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         camp_factor = {2: 1.0, 3: 1.5, 4: 2.2, 5: 2.6, 6: 3.0}.get(k, 3.0)
         score += sign * camp_factor * getattr(w, "camp_matrix_weight", 12.0)
 
-    # 3.2 行营势力范围 (camp_zone)
-    zone_net = 0
+    # 3.2 空行营控制权与中继推进 (空营势能必须严格小于实占行营！上限严格封顶 3.0 分/营，严禁因弃营暴涨)
+    empty_camps_score = 0.0
     for cp in CAMPS:
         if cp in state.board:
             continue
+        my_reach = []
+        opp_reach = []
+        # 1 步直达控制 (营内子已有驻营加分，排除跨营重复计算)
         for np_ in NEIGHBORS[cp]:
+            if is_camp(np_):
+                continue
             e = state.board.get(np_)
             if e is not None and e.revealed and e.rank not in (Rank.LEI, Rank.QI):
-                zone_net += 1 if e.color == my else -1
-    score += w.camp_zone * zone_net
+                if e.color == my:
+                    my_reach.append(e)
+                else:
+                    opp_reach.append(e)
+
+        # 若无人 1 步直达，检查 2 步通畅中继推进 (如 6,2 -> 7,2 -> 8,2)
+        if not my_reach and not opp_reach:
+            for np_ in NEIGHBORS[cp]:
+                if np_ not in state.board and not is_camp(np_):
+                    for n2 in NEIGHBORS[np_]:
+                        if is_camp(n2):
+                            continue
+                        e2 = state.board.get(n2)
+                        if e2 is not None and e2.revealed and e2.rank not in (Rank.LEI, Rank.QI):
+                            if e2.color == my and e2.rank >= Rank.SHI:
+                                my_reach.append(e2)
+                                break
+                            elif e2.color == opp and e2.rank >= Rank.SHI:
+                                opp_reach.append(e2)
+                                break
+
+        if my_reach and not opp_reach:
+            has_major = any(p.rank >= Rank.SHI for p in my_reach)
+            empty_camps_score += 6.0 if has_major else 2.5
+        elif opp_reach and not my_reach:
+            has_major = any(p.rank >= Rank.SHI for p in opp_reach)
+            empty_camps_score -= 6.0 if has_major else 2.5
+        elif my_reach and opp_reach:
+            my_max = max(p.rank for p in my_reach)
+            opp_max = max(p.rank for p in opp_reach)
+            if my_max > opp_max:
+                empty_camps_score += 1.5
+            elif opp_max > my_max:
+                empty_camps_score -= 1.5
+
+    score += empty_camps_score
 
     # 4. 棋子机动力与死子/受阻惩罚 (Mobility & Blocked Penalties)
     my_mobility = 0
@@ -316,27 +360,43 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             opp_guard_mines = sum(1 for pos, pc in revealed_opp if pc.rank == Rank.LEI and pos in NEIGHBORS[flag_pos])
             score -= guard_bonus * opp_guard_mines
 
-    # 5.2 相邻吃子威胁
+    # 5.2 相邻吃子威胁与后手火力护航 (Battery Support)
+    def has_battery_support(defender_pos, defender_color, defender_rank, attacker_rank):
+        for np in NEIGHBORS[defender_pos]:
+            guard = state.board.get(np)
+            if guard is not None and guard.revealed and guard.color == defender_color:
+                if guard.rank == Rank.ZHA or guard.rank >= attacker_rank:
+                    return True
+        return False
+
     for pos, e in revealed_opp:
-        if e.rank == Rank.QI:
+        if e.rank in (Rank.QI, Rank.LEI):  # 地雷与军旗无法移动主动吃子
             continue
         best_gain = 0.0
         for np in NEIGHBORS[pos]:
-            if is_camp(np):
+            if is_camp(np):  # 营内绝对免死
                 continue
             m = state.board.get(np)
             if m is None or not m.revealed or m.color != my or m.rank == Rank.QI:
                 continue
             res = battle(e.rank, m.rank)
             v = my_piece_values[m.rank]
-            if res == ATTACKER_WINS:
-                best_gain = max(best_gain, v)
-            elif res == BOTH_DIE:
-                best_gain = max(best_gain, v * 0.5)
+            if has_battery_support(np, my, m.rank, e.rank):
+                if e.rank > m.rank:
+                    continue  # 敌大吃我小会被反杀 (如敌师长吃我旅长，后有军长反吃) -> 敌不敢吃，无实质威胁
+                elif e.rank == m.rank:
+                    best_gain = max(best_gain, v * 0.2)
+                else:
+                    best_gain = max(best_gain, v * 0.5)
+            else:
+                if res == ATTACKER_WINS:
+                    best_gain = max(best_gain, v)
+                elif res == BOTH_DIE:
+                    best_gain = max(best_gain, v * 0.5)
         score -= (w.attack_camp if is_camp(pos) else w.threat) * best_gain
 
     for pos, m in revealed_mine:
-        if m.rank == Rank.QI:
+        if m.rank in (Rank.QI, Rank.LEI):
             continue
         best_gain = 0.0
         for np in NEIGHBORS[pos]:
@@ -347,10 +407,18 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                 continue
             res = battle(m.rank, e.rank)
             v = opp_piece_values[e.rank]
-            if res == ATTACKER_WINS:
-                best_gain = max(best_gain, v)
-            elif res == BOTH_DIE:
-                best_gain = max(best_gain, v * 0.5)
+            if has_battery_support(np, opp, e.rank, m.rank):
+                if m.rank > e.rank:
+                    continue
+                elif m.rank == e.rank:
+                    best_gain = max(best_gain, v * 0.2)
+                else:
+                    best_gain = max(best_gain, v * 0.5)
+            else:
+                if res == ATTACKER_WINS:
+                    best_gain = max(best_gain, v)
+                elif res == BOTH_DIE:
+                    best_gain = max(best_gain, v * 0.5)
         score += (w.attack_camp if is_camp(pos) else w.attack) * best_gain
 
     # 6. 死区势能 (Fortress Score，仅当有明军旗暴露时计算死区)

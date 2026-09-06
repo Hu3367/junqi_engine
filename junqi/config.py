@@ -58,6 +58,10 @@ class EvalWeights:
     use_dynamic_bomb: bool = True            # 动态炸弹定价：随敌方存活最大军衔缩放 (0x600ca 公式)
     bomb_ratio: float = 0.3333333333333333   # 炸弹动态比例：默认 1/3
     mine_flag_guard_bonus: float = 80.0      # 地雷守护军旗关键通道加分 (0x124094 +80)
+    # 2026-09-06 实战战术缺陷修复 (P1: 行营阻断守护、空营中继推进与严禁弃营送死)
+    camp_gatekeeper_ratio: float = 0.35      # 行营阻断守护加成：己方弱子在营内阻挡敌方大子时赋予其价值的 35% 守护分
+    camp_staging_bonus: float = 18.0         # 空行营中继推进加成：大子占据直通空营安全中继点时加分
+    camp_abandon_penalty: float = 250000.0   # 严禁弃营惩罚：被敌方大子窥视时盲目离开行营的搜索排序重罚
 
     def __post_init__(self):
         if self.piece is None:
@@ -112,7 +116,10 @@ class EvalWeights:
                 "piece_scale_mode": self.piece_scale_mode,
                 "use_dynamic_bomb": self.use_dynamic_bomb,
                 "bomb_ratio": self.bomb_ratio,
-                "mine_flag_guard_bonus": self.mine_flag_guard_bonus}
+                "mine_flag_guard_bonus": self.mine_flag_guard_bonus,
+                "camp_gatekeeper_ratio": self.camp_gatekeeper_ratio,
+                "camp_staging_bonus": self.camp_staging_bonus,
+                "camp_abandon_penalty": self.camp_abandon_penalty}
 
     @classmethod
     def from_dict(cls, d: dict) -> "EvalWeights":
@@ -135,4 +142,7 @@ class EvalWeights:
         w.use_dynamic_bomb = d.get("use_dynamic_bomb", cls.use_dynamic_bomb)
         w.bomb_ratio = d.get("bomb_ratio", cls.bomb_ratio)
         w.mine_flag_guard_bonus = d.get("mine_flag_guard_bonus", cls.mine_flag_guard_bonus)
+        w.camp_gatekeeper_ratio = d.get("camp_gatekeeper_ratio", cls.camp_gatekeeper_ratio)
+        w.camp_staging_bonus = d.get("camp_staging_bonus", cls.camp_staging_bonus)
+        w.camp_abandon_penalty = d.get("camp_abandon_penalty", cls.camp_abandon_penalty)
         return w

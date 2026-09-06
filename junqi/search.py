@@ -86,18 +86,40 @@ class ExpertSearchEngine:
             target = state.board.get(act.to)
             mover = state.board.get(act.frm)
             mover_rank = mover.rank if mover else Rank.PAI
+            attacker_val = self.w.piece.get(mover_rank, 30.0)
 
             # 2. 吃明子: MVV-LVA 排序 (Most Valuable Victim - Least Valuable Attacker)
             if target is not None and target.revealed and target.color != my:
                 res = battle(mover_rank, target.rank)
                 victim_val = self.w.piece.get(target.rank, 30.0)
-                attacker_val = self.w.piece.get(mover_rank, 30.0)
 
-                # 2.1 行营单向打击特权 (2026-09-06 实证：前20手吃子整整 50.1% 源自行营扑杀)
-                # 营内打营外绝对安全，营外打营内免疫；若在行营内发起吃子，赋予特权加分
+                # 2.1 行营单向打击特权与安全出营判定
+                # (用户核心准则：若出营击杀不会导致丢营，严禁扣分，吃子后下步能回营即属完全控制)
                 camp_outstrike_bonus = 0.0
+                camp_lose_risk = False
                 if is_camp(act.frm):
-                    camp_outstrike_bonus = getattr(self.w, "camp_outstrike_bias", 400_000.0)
+                    enemy_can_enter = False
+                    opp = other(my) if my else None
+                    if opp is not None:
+                        for np in NEIGHBORS[act.frm]:
+                            if np == act.to:
+                                continue
+                            e = state.board.get(np)
+                            if e is not None and e.revealed and e.color == opp and e.rank not in (Rank.LEI, Rank.QI):
+                                enemy_can_enter = True
+                                break
+                        if not enemy_can_enter and is_rail(act.frm):
+                            for rk_pos, rk_pc in state.board.items():
+                                if rk_pos == act.to:
+                                    continue
+                                if rk_pc.revealed and rk_pc.color == opp and is_rail(rk_pos) and rk_pc.rank not in (Rank.LEI, Rank.QI):
+                                    if rk_pos[0] == act.frm[0] or rk_pos[1] == act.frm[1]:
+                                        enemy_can_enter = True
+                                        break
+                    if enemy_can_enter:
+                        camp_lose_risk = True
+                    else:
+                        camp_outstrike_bonus = getattr(self.w, "camp_outstrike_bias", 400_000.0)
 
                 # 2.2 小子贴身拆弹定式 (2026-09-06 实证：炸弹 47.5% 杀伤连排团工营)
                 # 当目标是敌方炸弹，且攻击方是小子（连/排/工/营/团），主动撞弹消灭敌核武器，属于战略必争定式
@@ -113,10 +135,16 @@ class ExpertSearchEngine:
 
                 if res == ATTACKER_WINS:
                     # 稳赚吃子: 目标越值钱、攻击者越廉价越优先
-                    return 500_000.0 + camp_outstrike_bonus + victim_val * 100.0 - attacker_val
+                    score = 500_000.0 + camp_outstrike_bonus + victim_val * 100.0 - attacker_val
+                    if camp_lose_risk:
+                        score -= 100_000.0
+                    return score
                 elif res == BOTH_DIE:
                     # 兑子: 炸弹或同级兑换 (含小子贴身拆弹战略加分)
-                    return 300_000.0 + camp_outstrike_bonus + bomb_suicide_bonus + victim_val * 100.0 - attacker_val
+                    score = 300_000.0 + camp_outstrike_bonus + bomb_suicide_bonus + victim_val * 100.0 - attacker_val
+                    if camp_lose_risk:
+                        score -= 100_000.0
+                    return score
                 else:
                     # 亏损/送吃
                     return -100_000.0 + victim_val - attacker_val
@@ -125,7 +153,61 @@ class ExpertSearchEngine:
             if is_camp(act.to):
                 # 进驻空行营是绝对免死与据点化的战略特权，优先级高于普通翻棋
                 camp_prio = 250_000.0 if act.to not in state.board else 150_000.0
-                return camp_prio + self.w.piece.get(mover_rank, 20.0)
+                # 若进营位置邻接敌方炸弹，具有"卡营逼弹"免死压制特权
+                opp = other(my) if my else None
+                pin_bomb_bonus = 0.0
+                if opp is not None and act.to not in state.board:
+                    for np in NEIGHBORS[act.to]:
+                        e = state.board.get(np)
+                        if e is not None and e.revealed and e.color == opp and e.rank == Rank.ZHA:
+                            pin_bomb_bonus = 50_000.0
+                            break
+                return camp_prio + pin_bomb_bonus + self.w.piece.get(mover_rank, 20.0)
+
+            # 3.1 离开行营走入空地 (非吃子出营：除逃营外，无故弃营属于严重失误)
+            if is_camp(act.frm) and not is_camp(act.to):
+                if mover_rank == Rank.ZHA:
+                    return -350_000.0  # 严禁炸弹弃营乱窜
+                elif mover_rank >= Rank.SHI:
+                    return -250_000.0  # 严禁大子弃营乱走
+                else:
+                    opp = other(my) if my else None
+                    if opp is not None:
+                        for np in NEIGHBORS[act.frm]:
+                            e = state.board.get(np)
+                            if e is not None and e.revealed and e.color == opp and e.rank not in (Rank.LEI, Rank.QI):
+                                if battle(e.rank, mover_rank) in (ATTACKER_WINS, BOTH_DIE):
+                                    return -350_000.0  # 敌大子窥视下出营送死严惩
+                    return -150_000.0
+
+            # 3.2 大子向空行营安全中继推进 (2026-09-06 实战修复：截图19手师长安全挺进 (6,1)->(6,2)->中营)
+            if not is_camp(act.frm) and not is_camp(act.to) and mover_rank >= Rank.SHI:
+                # 检查落点 act.to 是否是通达空行营的安全中继站 (1步或2步可达空营)
+                reaches_empty_camp = False
+                for n1 in NEIGHBORS[act.to]:
+                    if is_camp(n1) and n1 not in state.board:
+                        reaches_empty_camp = True
+                        break
+                    if n1 not in state.board:
+                        for cp in NEIGHBORS[n1]:
+                            if is_camp(cp) and cp not in state.board:
+                                reaches_empty_camp = True
+                                break
+                    if reaches_empty_camp:
+                        break
+
+                if reaches_empty_camp:
+                    opp = other(my) if my else None
+                    is_safe = True
+                    if opp is not None:
+                        for np in NEIGHBORS[act.to]:
+                            e = state.board.get(np)
+                            if e is not None and e.revealed and e.color == opp and e.rank not in (Rank.LEI, Rank.QI):
+                                if battle(e.rank, mover_rank) in (ATTACKER_WINS, BOTH_DIE):
+                                    is_safe = False
+                                    break
+                    if is_safe:
+                        return 200_000.0 + attacker_val * 100.0
 
             # 4. 杀手着法 (Killer Moves)
             if ply_depth < len(self.killers) and act in self.killers[ply_depth]:
@@ -150,19 +232,30 @@ class ExpertSearchEngine:
             opp = other(my) if my else None
 
             # 1. 依托行营辐射拓荒 (实证：96.2% 邻营翻棋，开局首翻即据点)
-            # 若待翻暗子相邻有己方已占领的行营，享受高优先辐射翻棋
-            camp_adjacent_bonus = 0.0
-            if my is not None:
-                for np in NEIGHBORS[pos]:
-                    if is_camp(np):
-                        cb = state.board.get(np)
-                        if cb is not None and cb.revealed and cb.color == my:
-                            camp_adjacent_bonus = getattr(self.w, "camp_adjacent_flip_bias", 50_000.0)
-                            break
+            # 用户核心战略：依托己方已控行营，向无敌方染指的空行营辐射拓荒翻棋
+            # 翻出自子可立即延申进营，翻出敌子被营内子就近扑杀无损失
+            camp_expansion_bonus = 0.0
+            has_friendly_camp = False
+            has_safe_empty_camp = False
+            for np in NEIGHBORS[pos]:
+                if is_camp(np):
+                    cb = state.board.get(np)
+                    if cb is not None and cb.revealed and cb.color == my:
+                        has_friendly_camp = True
+                    elif np not in state.board:
+                        enemy_around_camp = any(
+                            (e := state.board.get(enp)) is not None and e.revealed and e.color == opp
+                            for enp in NEIGHBORS[np]
+                        )
+                        if not enemy_around_camp:
+                            has_safe_empty_camp = True
 
-            # 若待翻暗子相邻为空行营，拥有翻出即进营的极高据点潜力 (如 2,2 / 4,2 / 3,1 / 3,3 各邻接 3 个行营!)
-            empty_camps_adjacent = sum(1 for np in NEIGHBORS[pos] if is_camp(np) and np not in state.board)
-            camp_potential_bonus = empty_camps_adjacent * 25_000.0
+            if has_friendly_camp and has_safe_empty_camp:
+                camp_expansion_bonus = 70_000.0
+            elif has_friendly_camp:
+                camp_expansion_bonus = 45_000.0
+            elif has_safe_empty_camp:
+                camp_expansion_bonus = 30_000.0
 
             # 2. 开局领地与中前场咽喉偏好 (避免盲目翻自家底线或敌方底线禁区)
             territory_bias = 0.0
@@ -172,7 +265,6 @@ class ExpertSearchEngine:
                 elif r == 0:
                     territory_bias = -15_000.0
                 elif 6 <= r <= 11:
-                    # 敌方半场：开局己方无掩护时严禁盲目跨界替敌翻棋
                     territory_bias = -100_000.0
             elif my == "b":
                 if 6 <= r <= 10:
@@ -180,10 +272,8 @@ class ExpertSearchEngine:
                 elif r == 11:
                     territory_bias = -15_000.0
                 elif 0 <= r <= 5:
-                    # 敌方半场：开局己方无掩护时严禁盲目跨界替敌翻棋
                     territory_bias = -100_000.0
             else:
-                # 首翻未定色时，偏好中央四角咽喉据点 (2..4 或 7..9 行)
                 if 2 <= r <= 4 or 7 <= r <= 9:
                     territory_bias = 20_000.0
                 elif r in (0, 11):
@@ -206,7 +296,6 @@ class ExpertSearchEngine:
                         elif nb.rank not in (Rank.LEI, Rank.QI):
                             enemy_threats += 1
 
-            # 若在敌方半场但有己方部队就位压境，恢复前线翻棋进攻权
             if territory_bias < -50_000.0 and friendly_guards > 0:
                 territory_bias = 10_000.0 * friendly_guards
 
@@ -217,7 +306,7 @@ class ExpertSearchEngine:
             else:
                 safety_score = 20_000.0
 
-            return safety_score + camp_adjacent_bonus + camp_potential_bonus + territory_bias
+            return safety_score + camp_expansion_bonus + territory_bias
 
         return 0.0
 
@@ -591,18 +680,35 @@ class ExpertSearchEngine:
 
                 d_scores.append((a, score))
 
-                if score > current_d_best_score:
+                # 战术确定性优先准则 (用户核心原则：杜绝盲目翻暗棋赌概率)
+                # 翻棋为几率节点期望，若期望与确定性战术走法差距 <= 0.5 分，优先由确定性走法胜出
+                is_better = False
+                if current_d_best_act is None:
+                    is_better = True
+                elif a.kind == "flip" and current_d_best_act.kind == "move":
+                    if score > current_d_best_score + 0.5:
+                        is_better = True
+                elif a.kind == "move" and current_d_best_act.kind == "flip":
+                    if score >= current_d_best_score - 0.5:
+                        is_better = True
+                elif score > current_d_best_score:
+                    is_better = True
+
+                if is_better:
                     current_d_best_score = score
                     current_d_best_act = a
-
-                if score > alpha:
-                    alpha = score
+                    if score > alpha:
+                        alpha = score
 
             if not self.stopped:
                 best_action = current_d_best_act
                 best_score = current_d_best_score
                 self.stats.max_depth = d
-                self.stats.root_scores = sorted(d_scores, key=lambda t: t[1], reverse=True)
+                sorted_roots = sorted(d_scores, key=lambda t: t[1], reverse=True)
+                if best_action is not None:
+                    best_tuple = next((t for t in sorted_roots if t[0] == best_action), (best_action, best_score))
+                    sorted_roots = [best_tuple] + [t for t in sorted_roots if t[0] != best_action]
+                self.stats.root_scores = sorted_roots
                 self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
 
         self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0

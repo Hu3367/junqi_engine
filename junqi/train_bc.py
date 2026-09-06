@@ -295,10 +295,10 @@ def train_bc(train_npz: str = "datasets/p1_v1/train.npz",
 
 def main():
     parser = argparse.ArgumentParser(description="军棋翻棋行为克隆 (BC) 训练")
-    parser.add_argument("--train-npz", default="datasets/p1_v1/train.npz", help="训练集 npz 路径")
-    parser.add_argument("--val-npz", default="datasets/p1_v1/val.npz", help="验证集 npz 路径")
+    parser.add_argument("--train-npz", default="datasets/p1_v2/train.npz", help="训练集 npz 路径")
+    parser.add_argument("--val-npz", default="datasets/p1_v2/val.npz", help="验证集 npz 路径")
     parser.add_argument("--out", default="models/bc_best.pt", help="输出模型路径")
-    parser.add_argument("--epochs", type=int, default=15, help="训练轮数")
+    parser.add_argument("--epochs", type=int, default=20, help="训练轮数")
     parser.add_argument("--batch-size", type=int, default=256, help="批大小")
     parser.add_argument("--lr", type=float, default=1e-3, help="初始学习率")
     parser.add_argument("--value-weight", type=float, default=0.5, help="Value 损失权重")
