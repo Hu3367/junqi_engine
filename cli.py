@@ -52,7 +52,7 @@ Examples:
         if args.command == 'test':
             run_tests(args)
         elif args.command == 'gui':
-            from ui.gui import launch_gui
+            from junqi.gui import launch_gui
             launch_gui()
         elif args.command == 'calc':
             from ui.calculator import main as calc_main

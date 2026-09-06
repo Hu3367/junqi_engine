@@ -17,6 +17,7 @@ from .config import EvalWeights, SearchConfig
 from .eval_expert import evaluate_expert
 from .rules import (CAMPS, COMPOSITION, NEIGHBORS, Rank, battle, is_camp,
                     is_hq, other)
+from .apk_agent import ApkNativeAgent
 from .search import ExpertSearchEngine
 from .state import WIN_SCORE, Action, GameState, position_key
 from .tt import TranspositionTable
@@ -227,6 +228,14 @@ class Agent:
                         key=lambda t: t[1], reverse=True)
         return result[:topn]
 
+    def select_action(self, state: GameState, avoid: set | None = None) -> Action:
+        """返回最优单步决策动作 (统一 Agent 规范)。"""
+        scored = self.choose_actions(state, topn=1, avoid=avoid)
+        if scored:
+            return scored[0][0]
+        acts = state.legal_actions()
+        return acts[0] if acts else Action("pass")
+
     # ------------------------------------------------------------- 搜索
 
     def _order(self, st: GameState, acts):
@@ -322,6 +331,14 @@ class ExpertAgent:
             scored.append((a, score))
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:topn]
+
+    def select_action(self, state: GameState, avoid: set | None = None) -> Action:
+        """返回最优单步决策动作 (统一 Agent 规范)。"""
+        scored = self.choose_actions(state, topn=1, avoid=avoid)
+        if scored:
+            return scored[0][0]
+        acts = state.legal_actions()
+        return acts[0] if acts else Action("pass")
 
 
 def win_probability(score: float, scale: float = 250.0) -> float:

@@ -52,7 +52,7 @@ CENTER_GAP = 34         # 两军前线间隙
 BOARD_W = MX * 2 + COLS * CELL_W
 BOARD_H = TITLE_H + MY * 2 + ROWS * CELL_H + CENTER_GAP
 PANEL_W = 300
-WIN_W, WIN_H = BOARD_W + PANEL_W, BOARD_H + 16
+WIN_W, WIN_H = BOARD_W + PANEL_W + 20, BOARD_H + 4
 
 FONT = ("Microsoft YaHei", 11)
 FONT_S = ("Microsoft YaHei", 9)
@@ -104,6 +104,13 @@ class GuiApp:
         self.root = root
         root.title("军棋翻棋 · 人机对战")
         root.configure(bg=BG)
+        # 初始窗口尺寸与屏幕居中
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        x = max(0, (screen_w - WIN_W) // 2)
+        y = max(0, (screen_h - WIN_H) // 2)
+        root.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        root.resizable(False, False)
         self.cfg = RuleConfig()
         self.weights = EvalWeights()
         self.depth = tk.IntVar(value=2)
@@ -155,7 +162,7 @@ class GuiApp:
 
     def _build_panel(self):
         p = tk.Frame(self.root, bg=BG, width=PANEL_W)
-        p.pack(side="right", fill="y", padx=8, pady=8)
+        p.pack(side="left", fill="both", expand=True, padx=(4, 10), pady=8)
 
         tk.Label(p, text="军 棋 对 战", font=FONT_TITLE, bg=BG,
                  fg="#2F5D1E").pack(pady=(0, 4))
@@ -224,8 +231,14 @@ class GuiApp:
         self.pool_text.pack(pady=2)
 
         tk.Label(p, text="对局记录", font=FONT_S, bg=BG, fg="#555").pack(anchor="w")
-        self.logbox = tk.Listbox(p, height=13, font=FONT_S, bg="#F7F7F0")
-        self.logbox.pack(fill="x", pady=2)
+        log_frame = tk.Frame(p, bg=BG)
+        log_frame.pack(fill="both", expand=True, pady=2)
+        log_scroll = tk.Scrollbar(log_frame)
+        log_scroll.pack(side="right", fill="y")
+        self.logbox = tk.Listbox(log_frame, font=FONT_S, bg="#F7F7F0",
+                                 yscrollcommand=log_scroll.set)
+        self.logbox.pack(side="left", fill="both", expand=True)
+        log_scroll.config(command=self.logbox.yview)
 
     # ------------------------------------------------------------- 对局控制
 
@@ -240,10 +253,18 @@ class GuiApp:
         self.logbox.delete(0, "end")
         self.log("new", f"新局 种子={seed} 你执座位{self.human_seat}"
                         f"（{'先手' if self.human_seat == 0 else '后手'}）")
-        # 对战记录（用于人类战法分析，结束自动存 games/）
-        self.record = {"seed": seed, "human_seat": self.human_seat,
-                       "moves": [], "winner": None, "reason": None,
-                       "plies": 0}
+        # 对战记录（用于人类战法分析与审计回放，结束自动存 games/）
+        self.record = {
+            "seed": seed,
+            "human_seat": self.human_seat,
+            "engine_type": self.ai_engine.get(),
+            "depth": self.depth.get(),
+            "samples": self.samples.get(),
+            "moves": [],
+            "winner": None,
+            "reason": None,
+            "plies": 0,
+        }
         self.busy = False
         self.pending_flip = None
         self.selected = None
@@ -344,13 +365,17 @@ class GuiApp:
         self.selected = None
         self.refresh()
 
-    def do_action(self, act: Action):
+    def do_action(self, act: Action, ai_meta: dict | None = None):
         st = self.state
         desc = self.describe(act)
         self.history.append((st.copy(), len(self.log_lines)))
-        self.record["moves"].append({
+        move_rec = {
             "ply": st.ply, "seat": st.turn, "kind": act.kind,
-            "frm": list(act.frm), "to": list(act.to) if act.to else None})
+            "frm": list(act.frm), "to": list(act.to) if act.to else None
+        }
+        if ai_meta:
+            move_rec.update(ai_meta)
+        self.record["moves"].append(move_rec)
         self.state = st.apply(act)
         self.pos_seen[position_key(self.state)] += 1
         self.selected = self.pending_flip = self.hint_action = None
@@ -363,8 +388,26 @@ class GuiApp:
             self.root.after(300, self.ai_move)
 
     def save_record(self):
-        self.record.update(winner=self.state.winner, reason=self.state.win_reason,
-                           plies=self.state.ply)
+        import hashlib
+        model_p = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
+        model_sha = None
+        if os.path.exists(model_p):
+            try:
+                with open(model_p, "rb") as f:
+                    model_sha = hashlib.sha256(f.read()).hexdigest()[:16]
+            except Exception:
+                pass
+
+        self.record.update(
+            winner=self.state.winner,
+            reason=self.state.win_reason,
+            plies=self.state.ply,
+            engine_type=self.ai_engine.get(),
+            depth=self.depth.get(),
+            samples=self.samples.get(),
+            model_path=model_p if os.path.exists(model_p) else None,
+            model_sha256=model_sha,
+        )
         try:
             os.makedirs("games", exist_ok=True)
             name = time.strftime("games/game_%Y%m%d_%H%M%S") + ".json"
@@ -407,32 +450,52 @@ class GuiApp:
         avoid = self._avoid_set()
 
         def work():
-            if engine_type == "p4_hybrid":
-                from .hybrid_engine import HybridDecisionEngine
-                mp = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
-                k = 4 if depth <= 2 else 8
-                agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
-                scored = agent.choose_actions(st, topn=1, avoid=avoid, history_counts=self.pos_seen)
-            elif engine_type == "hybrid":
-                from .ai import HybridAgent
-                mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
-                agent = HybridAgent(model_path=mp, search_depth=depth, weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=1, avoid=avoid)
-            elif engine_type == "expert":
-                from .ai import ExpertAgent
-                time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
-                agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=1, avoid=avoid)
-            elif engine_type == "nn" and os.path.exists("models/best.pt"):
-                from .ai import NNAgent
-                sims = 15 if depth == 1 else (30 if depth == 2 else 50)
-                agent = NNAgent(model_path="models/best.pt", simulations=sims, seed=seed)
-                scored = agent.choose_actions(st, topn=1, avoid=avoid)
-            else:
-                agent = Agent(SearchConfig(depth=depth, samples=samples),
-                              weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=1, avoid=avoid)
-            self.result_q.put(("move", scored[0][0] if scored else None, gen))
+            try:
+                if engine_type == "p4_hybrid":
+                    from .hybrid_engine import HybridDecisionEngine
+                    mp = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
+                    k = 4 if depth <= 2 else 8
+                    agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid, history_counts=self.pos_seen)
+                elif engine_type == "hybrid":
+                    from .ai import HybridAgent
+                    mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
+                    agent = HybridAgent(model_path=mp, search_depth=depth, weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                elif engine_type == "expert":
+                    from .ai import ExpertAgent
+                    time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
+                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                elif engine_type == "nn" and os.path.exists("models/best.pt"):
+                    from .ai import NNAgent
+                    sims = 15 if depth == 1 else (30 if depth == 2 else 50)
+                    agent = NNAgent(model_path="models/best.pt", simulations=sims, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                else:
+                    agent = Agent(SearchConfig(depth=depth, samples=samples),
+                                  weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+
+                if not scored:
+                    acts = st.legal_actions()
+                    if acts:
+                        scored = [(acts[0], 0.0)]
+
+                best_act = scored[0][0] if scored else None
+                ai_meta = {
+                    "engine": engine_type,
+                    "ai_seed": seed,
+                    "top_scored": [(str(a), round(float(s), 2)) for a, s in scored[:3]],
+                }
+                self.result_q.put(("move", (best_act, ai_meta), gen))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                acts = st.legal_actions()
+                emergency_act = acts[0] if acts else None
+                ai_meta = {"engine": engine_type, "ai_seed": seed, "top_scored": [], "error": str(e)}
+                self.result_q.put(("move", (emergency_act, ai_meta), gen))
 
         threading.Thread(target=work, daemon=True).start()
         self.root.after(120, self._poll)
@@ -450,32 +513,38 @@ class GuiApp:
         avoid = self._avoid_set()
 
         def work():
-            if engine_type == "p4_hybrid":
-                from .hybrid_engine import HybridDecisionEngine
-                mp = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
-                k = 4 if depth <= 2 else 8
-                agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
-                scored = agent.choose_actions(st, topn=3, avoid=avoid, history_counts=self.pos_seen)
-            elif engine_type == "hybrid":
-                from .ai import HybridAgent
-                mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
-                agent = HybridAgent(model_path=mp, search_depth=depth, weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=3, avoid=avoid)
-            elif engine_type == "expert":
-                from .ai import ExpertAgent
-                time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
-                agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=3, avoid=avoid)
-            elif engine_type == "nn" and os.path.exists("models/best.pt"):
-                from .ai import NNAgent
-                sims = 15 if depth == 1 else (30 if depth == 2 else 50)
-                agent = NNAgent(model_path="models/best.pt", simulations=sims, seed=seed)
-                scored = agent.choose_actions(st, topn=3, avoid=avoid)
-            else:
-                agent = Agent(SearchConfig(depth=depth, samples=samples),
-                              weights=self.weights, seed=seed)
-                scored = agent.choose_actions(st, topn=3, avoid=avoid)
-            self.result_q.put(("hint", scored, gen))
+            try:
+                if engine_type == "p4_hybrid":
+                    from .hybrid_engine import HybridDecisionEngine
+                    mp = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
+                    k = 4 if depth <= 2 else 8
+                    agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid, history_counts=self.pos_seen)
+                elif engine_type == "hybrid":
+                    from .ai import HybridAgent
+                    mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
+                    agent = HybridAgent(model_path=mp, search_depth=depth, weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                elif engine_type == "expert":
+                    from .ai import ExpertAgent
+                    time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
+                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                elif engine_type == "nn" and os.path.exists("models/best.pt"):
+                    from .ai import NNAgent
+                    sims = 15 if depth == 1 else (30 if depth == 2 else 50)
+                    agent = NNAgent(model_path="models/best.pt", simulations=sims, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                else:
+                    agent = Agent(SearchConfig(depth=depth, samples=samples),
+                                  weights=self.weights, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
+                self.result_q.put(("hint", scored, gen))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                acts = st.legal_actions()
+                self.result_q.put(("hint", [(acts[0], 0.0)] if acts else [], gen))
 
         threading.Thread(target=work, daemon=True).start()
         self.root.after(120, self._poll)
@@ -492,7 +561,11 @@ class GuiApp:
             return
         self.busy = False
         if kind == "move" and payload is not None:
-            self.do_action(payload)
+            act, ai_meta = payload
+            if act is not None:
+                self.do_action(act, ai_meta=ai_meta)
+            else:
+                self.refresh()
         elif kind == "hint":
             if payload:
                 self.hint_action = payload[0][0]
@@ -522,34 +595,43 @@ class GuiApp:
                 return (100.0, 0.0, 0.0) if st.winner == r_seat else (0.0, 0.0, 100.0)
             return (100.0, 0.0, 0.0) if st.winner == 0 else (0.0, 0.0, 100.0)
 
-        # 优先使用 P4 多世界混合推演引擎与三分类概率
-        model_p = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
-        if os.path.exists(model_p):
-            try:
-                if not hasattr(self, "_cached_hybrid_engine") or getattr(self, "_cached_model_path", "") != model_p:
-                    from .hybrid_engine import HybridDecisionEngine
-                    self._cached_hybrid_engine = HybridDecisionEngine(model_path=model_p, k_worlds=4)
-                    self._cached_model_path = model_p
-                info = self._cached_hybrid_engine.evaluate_position(st, history_counts=self.pos_seen)
-                p_win = info["win"]
-                p_draw = info["draw"]
-                p_loss = info["loss"]
-                turn_color = st.my_color()
-                if turn_color == "r":
-                    p_red = p_win
-                    p_blue = p_loss
-                elif turn_color == "b":
-                    p_red = p_loss
-                    p_blue = p_win
-                else:
-                    rem = 1.0 - p_draw
-                    p_red = 0.5 * rem
-                    p_blue = 0.5 * rem
-                return p_red * 100.0, p_draw * 100.0, p_blue * 100.0
-            except Exception:
-                pass
+        # 0. 顶层结构性必和死锁断言（Dead Draw Assertion）
+        from .analysis import is_dead_draw
+        is_draw, _ = is_dead_draw(st)
+        if is_draw:
+            return 0.0, 100.0, 0.0
 
-        # 传统专家搜索估值映射回退
+        engine_type = self.ai_engine.get() if hasattr(self, "ai_engine") else "expert"
+
+        # 仅当显式选择 P4 混合智能时，才尝试调用神经网络模型
+        if engine_type in ("p4_hybrid", "hybrid"):
+            model_p = "models/best.pt" if os.path.exists("models/best.pt") else "models/bc_best.pt"
+            if os.path.exists(model_p):
+                try:
+                    if not hasattr(self, "_cached_hybrid_engine") or getattr(self, "_cached_model_path", "") != model_p:
+                        from .hybrid_engine import HybridDecisionEngine
+                        self._cached_hybrid_engine = HybridDecisionEngine(model_path=model_p, k_worlds=4)
+                        self._cached_model_path = model_p
+                    info = self._cached_hybrid_engine.evaluate_position(st, history_counts=self.pos_seen)
+                    p_win = info["win"]
+                    p_draw = info["draw"]
+                    p_loss = info["loss"]
+                    turn_color = st.my_color()
+                    if turn_color == "r":
+                        p_red = p_win
+                        p_blue = p_loss
+                    elif turn_color == "b":
+                        p_red = p_loss
+                        p_blue = p_win
+                    else:
+                        rem = 1.0 - p_draw
+                        p_red = 0.5 * rem
+                        p_blue = 0.5 * rem
+                    return p_red * 100.0, p_draw * 100.0, p_blue * 100.0
+                except Exception:
+                    pass
+
+        # 专家搜索引擎估值映射（根据局面评分、残局时钟与和棋拓扑平滑映射）
         from .ai import evaluate_expert
         seat0_color = st.seat_color.get(0)
         score0 = evaluate_expert(st, seat=0, w=self.weights)
@@ -559,10 +641,23 @@ class GuiApp:
             red_score = -score0
         else:
             red_score = 0.0
-        p_red_raw = 1.0 / (1.0 + math.exp(-max(-600.0, min(600.0, red_score)) / 150.0))
-        p_draw = 0.20
-        p_red = p_red_raw * 0.80
-        p_blue = (1.0 - p_red_raw) * 0.80
+
+        # 根据残局阶段、无吃子步数动态估计和棋概率
+        quiet = getattr(st, "quiet", 0)
+        max_q = getattr(st.cfg, "no_capture_draw_plies", 70)
+        progress = min(1.0, quiet / max_q) if max_q > 0 else 0.0
+        p_draw_base = 0.20 + 0.60 * (progress ** 1.5)
+
+        # 估值越接近 0，和棋概率越逼近 100%
+        abs_score = abs(red_score)
+        score_draw_factor = math.exp(-abs_score / 60.0)
+        p_draw = min(0.99, p_draw_base + (1.0 - p_draw_base) * score_draw_factor)
+
+        # 胜负概率分配
+        p_red_raw = 1.0 / (1.0 + math.exp(-max(-600.0, min(600.0, red_score)) / 100.0))
+        p_rem = max(0.01, 1.0 - p_draw)
+        p_red = p_red_raw * p_rem
+        p_blue = (1.0 - p_red_raw) * p_rem
         return p_red * 100.0, p_draw * 100.0, p_blue * 100.0
 
     def update_winrate(self):
@@ -742,12 +837,11 @@ class GuiApp:
 
 def main():
     root = tk.Tk()
-    try:
-        root.state("zoomed")
-    except tk.TclError:
-        pass
     GuiApp(root)
     root.mainloop()
+
+
+launch_gui = main
 
 
 if __name__ == "__main__":

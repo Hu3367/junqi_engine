@@ -8,7 +8,7 @@ from collections import deque
 from typing import Optional
 
 from .config import EvalWeights
-from .rules import CAMPS, COMPOSITION, NEIGHBORS, Rank, other
+from .rules import CAMPS, COMPOSITION, NEIGHBORS, Rank, other, is_camp
 from .state import GameState
 
 # 阶段常量
@@ -172,3 +172,183 @@ def fortress_score(state: GameState, seat: int) -> float:
         if np in perm_walls or (state.board.get(np) is not None and state.board[np].revealed and state.board[np].color == my_color)
     )
     return round(0.3 * (blocked_count / len(flag_adj)), 3)
+
+
+# ------------------------------------------------------------- 理论必和死锁检测器
+
+def is_dead_draw(state: GameState) -> tuple[bool, str]:
+    """判断当前局面是否属于结构性/理论必和 (Dead Draw)。
+
+    核心拓扑涵盖四大原型：
+    1. 双无工兵死锁 (Zero Engineer Bilateral Lockout)
+    2. 1v1 单大子追单小子死锁 (Single Chaser vs Camp/Corridor Fugitive)
+    3. 双向军旗死区 (Bilateral Dead Fortress)
+    4. 70步无吃子极限时钟逼近 (Near-Limit Quiet Moves)
+
+    返回: (is_draw: bool, reason: str)
+    """
+    my_color = state.my_color()
+    if my_color is None:
+        return False, "color_not_assigned"
+    opp_color = other(my_color)
+
+    # 0. 规则层无吃子限步优先检测（达到 APK 70 步限步直接判和）
+    max_quiet = getattr(state.cfg, "no_capture_draw_plies", 70)
+    if max_quiet > 0 and state.quiet >= max_quiet:
+        return True, "quiet_moves_limit_reached"
+
+    # 若场上仍有未翻开暗子，绝不轻易判定结构性死锁（翻棋永远拥有破局可能）
+    hidden_pos = state.hidden_positions()
+    if len(hidden_pos) > 0:
+        return False, "too_many_hidden"
+
+    dead_my = [p for p in state.dead if p.color == my_color]
+    dead_opp = [p for p in state.dead if p.color == opp_color]
+
+    my_gong_dead = sum(1 for p in dead_my if p.rank == Rank.GONG)
+    opp_gong_dead = sum(1 for p in dead_opp if p.rank == Rank.GONG)
+
+    my_gong_alive = COMPOSITION[Rank.GONG] - my_gong_dead
+    opp_gong_alive = COMPOSITION[Rank.GONG] - opp_gong_dead
+
+    # 双方棋盘现存明地雷
+    my_mines = sum(1 for p in state.board.values() if p.revealed and p.color == my_color and p.rank == Rank.LEI)
+    opp_mines = sum(1 for p in state.board.values() if p.revealed and p.color == opp_color and p.rank == Rank.LEI)
+
+    # 存活可移动作战子力
+    combat_my = [(pos, p) for pos, p in state.board.items()
+                 if p.revealed and p.color == my_color and p.rank not in (Rank.QI, Rank.LEI)]
+    combat_opp = [(pos, p) for pos, p in state.board.items()
+                  if p.revealed and p.color == opp_color and p.rank not in (Rank.QI, Rank.LEI)]
+
+    # -------------------------------------------------------------
+    # 原型 1: 双无工兵死锁 (Zero Engineer Bilateral Deadlock)
+    # -------------------------------------------------------------
+    my_can_flag = True
+    opp_can_flag = True
+
+    # 规则：仅工兵能吃旗，或必须挖完地雷才能吃旗
+    if state.cfg.flag_gong_only:
+        if my_gong_alive == 0:
+            my_can_flag = False
+        if opp_gong_alive == 0:
+            opp_can_flag = False
+
+    if state.cfg.flag_needs_mines_cleared:
+        if my_gong_alive == 0 and opp_mines > 0:
+            my_can_flag = False
+        if opp_gong_alive == 0 and my_mines > 0:
+            opp_can_flag = False
+
+    if not my_can_flag and not opp_can_flag:
+        # 双方均永久失去吃旗可能！
+        # 此时只能通过歼灭战（吃光所有可移动子）获胜
+        if not combat_my and not combat_opp:
+            return True, "both_sides_no_mobile_pieces"
+        if not combat_my or not combat_opp:
+            return False, "one_side_wiped"
+
+        max_rank_my = max(p.rank for pos, p in combat_my)
+        max_rank_opp = max(p.rank for pos, p in combat_opp)
+
+        has_zha_my = any(p.rank == Rank.ZHA for pos, p in combat_my)
+        has_zha_opp = any(p.rank == Rank.ZHA for pos, p in combat_opp)
+
+        # 我方是否能消灭敌方最高战力？
+        can_kill_opp_max = (max_rank_my >= max_rank_opp) or has_zha_my
+        # 敌方是否能消灭我方最高战力？
+        can_kill_my_max = (max_rank_opp >= max_rank_my) or has_zha_opp
+
+        # A. 双方均无法消灭对方最高战力（例如双方仅剩完全对称的同级子力且无炸）
+        if not can_kill_opp_max and not can_kill_my_max:
+            ranks_my = sorted([p.rank for _, p in combat_my])
+            ranks_opp = sorted([p.rank for _, p in combat_opp])
+            if ranks_my == ranks_opp:
+                return True, "bilateral_cannot_kill_supreme"
+
+        # B. 一方有绝对无敌大子（如司令/师长），另一方无有效对抗子力
+        # 严格机制死锁判定：
+        # 1. 优势方必须仅有单单一颗压制大子（若有多颗大子如双师长，完全可以多路合围围剿）
+        # 2. 弱势方不可有暴露在外的易俘子力（弱势方所有子力均已在行营内免死，或在极端长局 ply>=140 下至少2子在营对峙）
+        long_standoff = (state.quiet >= 25 or state.ply >= 140)
+
+        if not can_kill_opp_max:
+            # 我方无法消灭对方大子 -> 我方绝无可能歼灭敌方
+            opp_dominating = sum(1 for _, p in combat_opp if p.rank > max_rank_my)
+            my_in_camps = sum(1 for pos, p in combat_my if is_camp(pos))
+            all_in_camps = (my_in_camps == len(combat_my))
+            if opp_dominating <= 1 and (all_in_camps or (my_in_camps >= 2 and long_standoff)):
+                return True, "opp_has_invincible_si_but_cannot_annihilate"
+
+        if not can_kill_my_max:
+            # 对方无法消灭我方大子 -> 对方绝无可能歼灭我方
+            my_dominating = sum(1 for _, p in combat_my if p.rank > max_rank_opp)
+            opp_in_camps = sum(1 for pos, p in combat_opp if is_camp(pos))
+            all_opp_in_camps = (opp_in_camps == len(combat_opp))
+            if my_dominating <= 1 and (all_opp_in_camps or (opp_in_camps >= 2 and long_standoff)):
+                return True, "my_has_invincible_si_but_cannot_annihilate"
+
+    # -------------------------------------------------------------
+    # 原型 2: 1v1 追逐死锁 (Single Combat Piece vs Single Combat Piece)
+    # -------------------------------------------------------------
+    if len(combat_my) == 1 and len(combat_opp) == 1 and len(hidden_pos) == 0 and len(state.dead) >= 30:
+        pos_m, p_m = combat_my[0]
+        pos_o, p_o = combat_opp[0]
+
+        # 同级子力（如旅长对旅长）：若攻击则同归于尽
+        if p_m.rank == p_o.rank:
+            return True, "1v1_equal_rank_deadlock"
+
+        # 劣势方与优势方
+        superior_pos, inferior_pos = (pos_m, pos_o) if p_m.rank > p_o.rank else (pos_o, pos_m)
+
+        # 劣势方身处行营中
+        if is_camp(inferior_pos):
+            return True, "1v1_inferior_in_camp"
+
+        # 检查劣势方到最近行营的距离
+        q = deque([(inferior_pos, 0)])
+        visited = {inferior_pos}
+        dist_to_camp = 999
+        while q:
+            curr, d = q.popleft()
+            if is_camp(curr):
+                dist_to_camp = d
+                break
+            for nxt in NEIGHBORS[curr]:
+                if nxt not in visited and nxt != superior_pos:
+                    visited.add(nxt)
+                    q.append((nxt, d + 1))
+        if dist_to_camp <= 2:
+            return True, "1v1_inferior_near_camp"
+
+        # 底线往复走棋安全走廊 (row 0 或 row 11，且列在 1, 2, 3)
+        if inferior_pos[0] in (0, 11) and inferior_pos[1] in (1, 2, 3):
+            return True, "1v1_inferior_bottom_line_corridor"
+
+    # -------------------------------------------------------------
+    # 原型 3: 工兵灭绝下的地雷物理阻断子图 (Physical Partition Lockout)
+    # -------------------------------------------------------------
+    if not my_can_flag and not opp_can_flag and combat_my and combat_opp:
+        # 当双方均无工兵且双方军旗皆不可达时，检查双方现存作战子力之间是否存在物理连通路径
+        # （地雷与军旗为不可逾越的绝对障碍物）
+        impassable = {pos for pos, p in state.board.items()
+                      if p.revealed and p.rank in (Rank.LEI, Rank.QI)}
+        q = deque([pos for pos, _ in combat_my])
+        visited = set(q)
+        can_reach_opp = False
+        opp_positions = {pos for pos, _ in combat_opp}
+        while q:
+            curr = q.popleft()
+            if curr in opp_positions:
+                can_reach_opp = True
+                break
+            for nxt in NEIGHBORS[curr]:
+                if nxt not in visited and nxt not in impassable:
+                    visited.add(nxt)
+                    q.append(nxt)
+        if not can_reach_opp:
+            return True, "mines_partition_board_disconnected"
+
+    return False, "normal_play"
+

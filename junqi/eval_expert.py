@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from .analysis import fortress_score
+from .analysis import fortress_score, is_dead_draw
 from .config import EvalWeights
 from .rules import (ATTACKER_WINS, BOTH_DIE, CAMPS, COMPOSITION, HQS,
                     NEIGHBORS, PLAY_POSITIONS, RANK_CN, Rank, battle,
@@ -75,6 +75,12 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         return 0.0
     opp = other(my)
 
+    # 0. 结构性必和死锁前置断言 (Dead Draw Assertion)
+    # 若满足双无工兵死锁、1v1 追逐死锁或拓扑断绝，终局胜负期望严格为 0.0，杜绝虚假分值
+    is_draw, _ = is_dead_draw(state)
+    if is_draw:
+        return 0.0
+
     # 1. 存活子力统计（用于动态制霸与物质分）
     my_counts, opp_counts = _get_alive_counts(state, my=my)
 
@@ -99,9 +105,9 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     opp_has_gong = opp_counts.get((opp, Rank.GONG), 0) > 0
     my_has_gong = my_counts.get((my, Rank.GONG), 0) > 0
 
-    # 动态子力价值加成
-    my_piece_values = dict(DEFAULT_PIECE_VALUES)
-    opp_piece_values = dict(DEFAULT_PIECE_VALUES)
+    # 动态子力价值加成 (以配置中的 piece 表为基准，兼顾默认线性表与 APK 等比表)
+    my_piece_values = dict(w.piece if w and w.piece else DEFAULT_PIECE_VALUES)
+    opp_piece_values = dict(w.piece if w and w.piece else DEFAULT_PIECE_VALUES)
 
     # 敌方无司令时，我方司令大幅增值且军长称霸
     if not opp_has_si and my_has_si:
@@ -146,18 +152,42 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         opp_echelon = min(1.0, opp_echelon_units / 2.0) * getattr(w, "echelon_si_compensation", 18.0)
 
     # 敌方工兵全灭时：我方地雷与军旗安全系数飙升（敌方无法挖雷吃旗）
-    if not opp_has_gong:
+    if not opp_has_gong and my_has_gong:
         my_piece_values[Rank.LEI] += 15.0
         my_piece_values[Rank.QI] += 25.0
-    if not my_has_gong:
+    elif not my_has_gong and opp_has_gong:
         opp_piece_values[Rank.LEI] += 15.0
         opp_piece_values[Rank.QI] += 25.0
+    elif not my_has_gong and not opp_has_gong:
+        # 双无工兵：地雷与军旗无法移动也无法被拔，纯属死棋，不计入机动进攻物质分
+        my_piece_values[Rank.LEI] = 10.0
+        opp_piece_values[Rank.LEI] = 10.0
+        my_piece_values[Rank.QI] = 10.0
+        opp_piece_values[Rank.QI] = 10.0
 
-    # 炸弹联动价值：若敌方有大官(司/军)，我方炸弹价值提升；反之降低
-    if opp_has_si or opp_has_jun:
-        my_piece_values[Rank.ZHA] += 10.0
-    if my_has_si or my_has_jun:
-        opp_piece_values[Rank.ZHA] += 10.0
+    # 炸弹联动价值：支持原版 APK 动态定价公式 (0x600ca) 或传统定额加成
+    if getattr(w, "use_dynamic_bomb", False):
+        ratio = getattr(w, "bomb_ratio", 1.0 / 3.0)
+        opp_combat_ranks = [rk for (clr, rk), cnt in opp_counts.items()
+                            if cnt > 0 and rk not in (Rank.LEI, Rank.QI, Rank.ZHA)]
+        if opp_combat_ranks:
+            opp_max_rk = max(opp_combat_ranks, key=lambda r: opp_piece_values[r])
+            my_piece_values[Rank.ZHA] = opp_piece_values[opp_max_rk] * ratio
+        else:
+            my_piece_values[Rank.ZHA] = opp_piece_values.get(Rank.PAI, 30.0) * ratio
+
+        my_combat_ranks = [rk for (clr, rk), cnt in my_counts.items()
+                           if cnt > 0 and rk not in (Rank.LEI, Rank.QI, Rank.ZHA)]
+        if my_combat_ranks:
+            my_max_rk = max(my_combat_ranks, key=lambda r: my_piece_values[r])
+            opp_piece_values[Rank.ZHA] = my_piece_values[my_max_rk] * ratio
+        else:
+            opp_piece_values[Rank.ZHA] = my_piece_values.get(Rank.PAI, 30.0) * ratio
+    else:
+        if opp_has_si or opp_has_jun:
+            my_piece_values[Rank.ZHA] += 10.0
+        if my_has_si or my_has_jun:
+            opp_piece_values[Rank.ZHA] += 10.0
 
     # 计算存活物质总分 (棋盘明子 + 暗子池期望份额)
     my_material = sum(my_piece_values[rk] * cnt for (clr, rk), cnt in my_counts.items())
@@ -274,6 +304,18 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         if any(flag_pos in NEIGHBORS[ap] and can_take_flag(opp, m.rank) for ap, m in revealed_mine):
             score += w.flag_exposed * 1.5
 
+    # 5.1.1 地雷护旗阵地加分 (对齐原版 APK 0x124094 地雷护旗额外 +80 分)
+    guard_bonus = getattr(w, "mine_flag_guard_bonus", 0.0)
+    if guard_bonus > 0.0:
+        if my_flag:
+            flag_pos = my_flag[0]
+            my_guard_mines = sum(1 for pos, pc in revealed_mine if pc.rank == Rank.LEI and pos in NEIGHBORS[flag_pos])
+            score += guard_bonus * my_guard_mines
+        if opp_flag:
+            flag_pos = opp_flag[0]
+            opp_guard_mines = sum(1 for pos, pc in revealed_opp if pc.rank == Rank.LEI and pos in NEIGHBORS[flag_pos])
+            score -= guard_bonus * opp_guard_mines
+
     # 5.2 相邻吃子威胁
     for pos, e in revealed_opp:
         if e.rank == Rank.QI:
@@ -326,6 +368,13 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         if my_mines > 0 and opp_mines > 0:
             damping = 0.75 if total_gong <= 1 else 0.85
             score *= damping
+
+    # 6.2 70 步无吃子限步时钟衰减
+    # 当连续多手未吃子且逐步逼近判和时限（70步）时，非吃旗性物质优势随时间按二次方强力衰减归零
+    limit_quiet = getattr(state.cfg, "no_capture_draw_plies", 70)
+    if limit_quiet > 0 and state.quiet >= 20:
+        progress = min(1.0, state.quiet / limit_quiet)
+        score *= max(0.05, (1.0 - progress) ** 2)
 
     # 7. 暗子时差与节奏 (Hidden Tempo)
     my_active = sum(1 for p, pc in revealed_mine if pc.rank not in (Rank.LEI, Rank.QI))

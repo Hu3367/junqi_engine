@@ -40,6 +40,7 @@ class SearchStats:
     tt_hits: int = 0
     chance_nodes: int = 0
     star1_cutoffs: int = 0
+    pvs_researches: int = 0
     max_depth: int = 0
     time_elapsed_ms: float = 0.0
     root_scores: list[tuple[Action, float]] = field(default_factory=list)
@@ -105,6 +106,10 @@ class ExpertSearchEngine:
                     Rank.LIAN, Rank.PAI, Rank.GONG, Rank.YING, Rank.TUAN
                 ):
                     bomb_suicide_bonus = getattr(self.w, "bomb_suicide_exchange", 150_000.0)
+
+                if target.rank == Rank.QI:
+                    # 一步扛旗直接制胜，赋予最高战术排序优先级
+                    return 900_000.0
 
                 if res == ATTACKER_WINS:
                     # 稳赚吃子: 目标越值钱、攻击者越廉价越优先
@@ -335,7 +340,20 @@ class ExpertSearchEngine:
                     first_flip_done=ffd, ply=state.ply + 1, winner=state.winner,
                     win_reason=state.win_reason, cfg=state.cfg, quiet=state.quiet + 1
                 )
-                expected += prob * (-evaluate_expert(child, child.turn, self.w))
+                # 检查翻开暗子后是否触发终局（如无暗子且对手无棋可走困毙）
+                if not child.hidden_positions() and not child._has_any_move():
+                    child.winner, child.win_reason = state.turn, "immobilized"
+
+                if child.is_terminal():
+                    if child.winner == -1:
+                        child_val = 0.0
+                    else:
+                        win = WIN_SCORE - child.ply
+                        child_val = win if child.winner == child.turn else -win
+                else:
+                    child_val = evaluate_expert(child, child.turn, self.w)
+
+                expected += prob * (-child_val)
             return expected
 
         # 构建概率分布 [((color, rank), prob)]
@@ -388,6 +406,9 @@ class ExpertSearchEngine:
                 cfg=state.cfg,
                 quiet=state.quiet + 1
             )
+            # 检查翻开暗子后是否触发终局
+            if not child.hidden_positions() and not child._has_any_move():
+                child.winner, child.win_reason = state.turn, "immobilized"
 
             # 递归搜索子节点：几率子节点使用全窗口搜索，杜绝父节点期望剪枝窗引起子节点提前截断失真
             v = -self._negamax(child, depth - 1, ply_depth + 1, -WIN_SCORE, WIN_SCORE, path_history)
@@ -446,7 +467,7 @@ class ExpertSearchEngine:
 
         path_history.add(zobrist_key)
 
-        for a in ordered_acts:
+        for i, a in enumerate(ordered_acts):
             if self.stopped:
                 break
 
@@ -454,7 +475,16 @@ class ExpertSearchEngine:
                 score = self._evaluate_chance_flip(state, a, depth, ply_depth, alpha, beta, path_history)
             else:
                 child = state.apply(a)
-                score = -self._negamax(child, depth - 1, ply_depth + 1, -beta, -alpha, path_history)
+                if i == 0:
+                    # 主变例走法 (PV move): 全窗口搜索
+                    score = -self._negamax(child, depth - 1, ply_depth + 1, -beta, -alpha, path_history)
+                else:
+                    # 非主变例走法 (Non-PV moves): 采用零窗口探测 (Null Window Search) 快速验证截断
+                    score = -self._negamax(child, depth - 1, ply_depth + 1, -alpha - 1, -alpha, path_history)
+                    if alpha < score < beta and not self.stopped:
+                        # 探测击穿 (Fail-High): 该走法好于预期，触发全窗口重新搜索
+                        self.stats.pvs_researches += 1
+                        score = -self._negamax(child, depth - 1, ply_depth + 1, -beta, -score, path_history)
 
             if self.stopped:
                 break
@@ -523,8 +553,8 @@ class ExpertSearchEngine:
         if len(acts) == 1:
             return acts[0], 0.0, self.stats
 
-        best_action: Optional[Action] = acts[0]
-        best_score: float = 0.0
+        best_action: Optional[Action] = None
+        best_score: float = -math.inf
 
         path_history: set[int] = set()
 
@@ -576,4 +606,4 @@ class ExpertSearchEngine:
                 self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
 
         self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-        return best_action, best_score, self.stats
+        return best_action or acts[0], best_score, self.stats

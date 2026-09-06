@@ -17,7 +17,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from .ai import Agent, ExpertSearchEngine, HybridAgent, NNAgent, evaluate_expert
+from .ai import (Agent, ApkNativeAgent, ExpertSearchEngine, HybridAgent, NNAgent,
+                evaluate_expert)
 from .config import EvalWeights, RuleConfig, SearchConfig
 from .encoder import action_to_index, encode_state, encode_state_np, legal_action_mask
 from .net import JunqiNet
@@ -473,6 +474,26 @@ def run_tournament_match(agent_a: Agent, agent_b: Agent, n_games: int = 40,
         "avg_plies": avg_len,
         "elo_diff": elo_diff,
     }
+
+
+def run_apk_challenge(candidate_agent, n_games: int = 40, level: str = "advanced",
+                      base_seed: int = 2026, cfg: Optional[RuleConfig] = None) -> dict:
+    """P4 假想敌挑战赛：将自研候选模型与官方 APK 原版智能体 (ApkNativeAgent) 进行对抗评测。
+
+    参数:
+        candidate_agent: 参评自研智能体 (Agent/ExpertAgent/HybridAgent/NNAgent)
+        n_games: 对局局数 (先后手各半)
+        level: APK 原生假想敌难度 ("beginner", "intermediate", "advanced")
+        base_seed: 基础发牌随机种子
+        cfg: 规则开关
+    返回:
+        字典包含对抗得分率、胜率、和棋率、重复率、平均手数及相对 Elo 分差。
+    """
+    opponent = ApkNativeAgent(level=level, seed=base_seed)
+    res = run_tournament_match(candidate_agent, opponent, n_games=n_games,
+                               base_seed=base_seed, cfg=cfg)
+    res["apk_level"] = level
+    return res
 
 
 # ---------------------------------------------------------------- 看板日志持久化

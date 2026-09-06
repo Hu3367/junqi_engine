@@ -53,17 +53,46 @@ class EvalWeights:
     bomb_suicide_exchange: float = 150000.0 # 小子贴身拆弹在搜索排序中的战略特权加分 (47.5%炸中坚小子)
     camp_outstrike_bias: float = 400000.0   # 行营单向扑杀在走法排序中的特权加分 (开局50.1%吃子源自行营)
     camp_adjacent_flip_bias: float = 50000.0 # 据点邻域辐射翻棋启发加分 (96.2%邻营翻棋)
+    # 原版 APK (libjunqi.so) 逆向工业级特性 (P1)
+    piece_scale_mode: str = "default"        # "default" (线性 18~100) 或 "apk_exponential" (等比 30~2560)
+    use_dynamic_bomb: bool = True            # 动态炸弹定价：随敌方存活最大军衔缩放 (0x600ca 公式)
+    bomb_ratio: float = 0.3333333333333333   # 炸弹动态比例：默认 1/3
+    mine_flag_guard_bonus: float = 80.0      # 地雷守护军旗关键通道加分 (0x124094 +80)
 
     def __post_init__(self):
         if self.piece is None:
             from .rules import Rank
-            # 军旗的胜负价值由搜索的终局分体现，估值中只保留小额物质分，
-            # 避免 1000 分进入暗子期望分摊后放大"翻子增值"假象。
-            self.piece = {
-                Rank.SI: 100, Rank.JUN: 90, Rank.SHI: 75, Rank.LV: 60,
-                Rank.TUAN: 45, Rank.YING: 35, Rank.LIAN: 25, Rank.PAI: 18,
-                Rank.GONG: 42, Rank.ZHA: 52, Rank.LEI: 30, Rank.QI: 50,
-            }
+            if self.piece_scale_mode == "apk_exponential":
+                # 官方 APK 0x124094 权威等比价值表
+                self.piece = {
+                    Rank.SI: 2560.0, Rank.JUN: 1280.0, Rank.SHI: 640.0, Rank.LV: 320.0,
+                    Rank.TUAN: 160.0, Rank.YING: 80.0, Rank.LIAN: 40.0, Rank.PAI: 30.0,
+                    Rank.GONG: 80.0, Rank.ZHA: 426.0, Rank.LEI: 70.0, Rank.QI: 50.0,
+                }
+            else:
+                # 军旗的胜负价值由搜索的终局分体现，估值中只保留小额物质分，
+                # 避免 1000 分进入暗子期望分摊后放大"翻子增值"假象。
+                self.piece = {
+                    Rank.SI: 100, Rank.JUN: 90, Rank.SHI: 75, Rank.LV: 60,
+                    Rank.TUAN: 45, Rank.YING: 35, Rank.LIAN: 25, Rank.PAI: 18,
+                    Rank.GONG: 42, Rank.ZHA: 52, Rank.LEI: 30, Rank.QI: 50,
+                }
+
+    @classmethod
+    def apk_weights(cls) -> "EvalWeights":
+        """获取完全对齐官方 APK 原生库的传统博弈评估权重。"""
+        return cls(
+            piece_scale_mode="apk_exponential",
+            use_dynamic_bomb=True,
+            bomb_ratio=1.0 / 3.0,
+            mine_flag_guard_bonus=80.0,
+            camp_occ=100.0,
+            camp_siege=20.0,
+            threat=0.35,
+            attack=0.30,
+            attack_camp=0.25,
+            flag_exposed=200.0,
+        )
 
     # ------------------------------------------------------- 序列化（tune 用）
 
@@ -79,7 +108,11 @@ class EvalWeights:
                 "camp_matrix_weight": self.camp_matrix_weight,
                 "bomb_suicide_exchange": self.bomb_suicide_exchange,
                 "camp_outstrike_bias": self.camp_outstrike_bias,
-                "camp_adjacent_flip_bias": self.camp_adjacent_flip_bias}
+                "camp_adjacent_flip_bias": self.camp_adjacent_flip_bias,
+                "piece_scale_mode": self.piece_scale_mode,
+                "use_dynamic_bomb": self.use_dynamic_bomb,
+                "bomb_ratio": self.bomb_ratio,
+                "mine_flag_guard_bonus": self.mine_flag_guard_bonus}
 
     @classmethod
     def from_dict(cls, d: dict) -> "EvalWeights":
@@ -98,4 +131,8 @@ class EvalWeights:
         w.bomb_suicide_exchange = d.get("bomb_suicide_exchange", cls.bomb_suicide_exchange)
         w.camp_outstrike_bias = d.get("camp_outstrike_bias", cls.camp_outstrike_bias)
         w.camp_adjacent_flip_bias = d.get("camp_adjacent_flip_bias", cls.camp_adjacent_flip_bias)
+        w.piece_scale_mode = d.get("piece_scale_mode", cls.piece_scale_mode)
+        w.use_dynamic_bomb = d.get("use_dynamic_bomb", cls.use_dynamic_bomb)
+        w.bomb_ratio = d.get("bomb_ratio", cls.bomb_ratio)
+        w.mine_flag_guard_bonus = d.get("mine_flag_guard_bonus", cls.mine_flag_guard_bonus)
         return w

@@ -1,6 +1,157 @@
 # CHANGELOG
 
-## [2026-09-06] — 专家搜索模型开局战术重构：根治乱翻跨界与缩营不杀，全面落地“首翻据点化进营与行营单向扑杀”
+## [2026-09-06] — P1 传统搜索估值增强与 P4 官方 APK 逆向假想敌 (ApkNativeAgent) 上线
+
+阶段归属：**P1 阶段（传统搜索增强与估值基线）** 与 **P4 阶段（基准评测与假想敌对弈体系）**。严格遵循 `AGENTS.md` 与 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md`（“公共 Policy/传统估值严禁读取真实暗子身份”、“严禁添加吃子中间奖励”）。
+
+### 核心改进与技术实现
+1. **P1 传统博弈树估值与搜索增强（`junqi/config.py`、`junqi/eval_expert.py`、`junqi/search.py`）**：
+   - **动态炸弹定价机制（0x600ca 权威公式）**：在 `EvalWeights` 中引入 `use_dynamic_bomb` 与 `bomb_ratio`（默认 1/3），基于全盘（明子+暗子期望池）中敌方存活最大军衔实时缩放炸弹价值（敌有司令时值 853，仅剩师长时值 213）；
+   - **等比子力阶梯（0x124094 权威分值）**：引入 `EvalWeights.apk_weights()` 预设，采用官方等比价值阶梯（司令 2560 至排长 30），工兵高权值（80），地雷护旗阵地追加 80 分加成；
+   - **PVS (Principal Variation Search / NegaScout) 零窗口剪枝**：在 `ExpertSearchEngine._negamax` 中全面替换普通全窗遍历，对非主变例走法先做零窗口探测 `[-alpha-1, -alpha]`，探测击穿再做全窗重搜，大幅降低分支因子；
+   - **修复迭代加深根节点 dummy action 虚假先验**：消除根节点未搜索前将 `acts[0]` 误当成 TT Move 的假高分，确保首层以启发式真实排序（如一步吃旗 900,000）优先展开。
+2. **P4 官方 APK 原生算法 1:1 复刻假想敌（`junqi/apk_agent.py`、`junqi/ai.py`、`junqi/benchmark.py`）**：
+   - **假想敌智能体 `ApkNativeAgent`**：纯 Python/Cython 原生复刻，提供初级（depth=2, 100ms）、中级（depth=3, 300ms）、高级（depth=4, 1000ms）三档官方预设；严格遵守公共信息屏障（暗子统一遮罩为代号 13），100% 不透视；
+   - **统一 Agent 决策接口**：为所有 Agent（`Agent`、`ExpertAgent`、`ApkNativeAgent`）统一补充 `select_action` 接口；
+   - **自动化基准对抗接口**：在 `benchmark.py` 中新增 `run_apk_challenge(candidate_agent, n_games=40, level="advanced", ...)`，一键对决原版假想敌，输出胜/和/负率、Elo 分差与对局报告。
+3. **单元测试与回归覆盖（`tests/test_p1_apk_search.py`、`tests/test_p4_apk_agent.py`）**：
+   - 新增 7 项定向单元测试，覆盖动态炸弹定价缩放、地雷护旗加分、PVS 搜索绝杀、ApkNativeAgent 三档初始化、信息屏障验证、战术一步扛旗与轻量对战；
+   - 全部 7 项测试通过（`Ran 7 tests in 3.849s, OK`）。
+
+## [2026-09-06] — 自博弈挖掘失误针对性修复与人类高手复盘分歧率扫描工具
+
+阶段归属：**P1 阶段（传统搜索增强与战术规则验证）** 与 **P2 阶段（混合决策引擎策略验证与自博弈评估）**。严格遵循 `AGENTS.md`（“每项实现必须有对应测试或固定评测证据”）。
+
+### 核心病灶剖析与技术解法
+1. **针对自博弈报告捕获失误的规则级修复（`junqi/hybrid_engine.py`）**：
+   - **炸弹主动攻击廉价小子自爆（严重贱卖）**：在 `res == "both_die"` 分支，针对 `mover.rank == Rank.ZHA` 且目标非 `(QI, SI, JUN, SHI)` 施加 `-350.0` 严惩，彻底制止炸弹撞排长/工兵等自爆；
+   - **弃营出击面临致命反杀（Fatal Threat in Camp Exit）**：在 `leaves_camp` 分支，只要检测到走步后次手目标格面临反杀（`fatal_threat`），无论出于何种目的，统一顶格扣除 `-400.0` 分；
+   - **行营龟缩拒不翻棋（消除 48 次 `camp_turtling`）**：为翻棋动作引入**据点辐射拓荒战略加分**——若翻开的暗子邻接己方已占领的行营，赋予 `+15.0` 战术激励，驱使 AI 主动由据点向外拓荒，破除行营无谓来回踱步。
+2. **人类高手复盘分歧率与胜率断崖自动化扫描器（`scripts/scan_replays.py`）**：
+   - 自动批量加载 `军旗复盘/*.sav` 样本库；
+   - 逐手回放人类动作并与 AI 决策对比，实时统计 Top-1 / Top-3 吻合率与分歧点（Divergence）；
+   - 结合全盘真值演进探测胜率断崖（Valuation Cliff）；
+   - 实测 5 局（451 手）：Top-1 吻合率 48.34%，Top-3 吻合率 65.85%，捕获 167 处战术分歧点，0 处致命断崖；
+   - 自动输出结构化数据 `reports/replays/replay_blunders_<timestamp>.json` 与诊断报告 `reports/replays/replay_divergence_report_<timestamp>.md`。
+3. **单元测试与全量回归**：
+   - 在 `tests/test_replay_review_fixes.py` 中新增 `test_bomb_suicide_on_minor_penalized` 与 `test_camp_adjacent_flip_bonus`；
+   - 运行全量测试套件：**147 passed, 3 skipped，0 失败**。
+
+## [2026-09-06] — 自动化战术漏洞挖掘管道与全行营拓扑模糊测试体系
+
+阶段归属：**P1 阶段（传统搜索增强与战术规则验证）** 与 **P2 阶段（混合决策引擎策略验证与自博弈评估）**。严格遵循 `AGENTS.md`（“每项实现必须有对应测试或固定评测证据”）。
+
+### 新增工具与自动化基建
+1. **全盘 10 个行营参数化拓扑模糊测试（`tests/test_camp_topology_fuzz.py`）**：
+   - 彻底摆脱“单点局部人工试错”，利用参数化网状遍历覆盖全盘 10 个行营坐标、不同驻防军阶（工兵/排长/营长/司令）与不同诱饵兵种；
+   - 断言行营“据点庇护”、“占营优于吃小子”与“反杀保护”在全盘任意对称位置上 100% 成立，1.6 秒内完成全拓扑验证。
+2. **高速无头自博弈战术失误挖掘引擎（`scripts/mine_blunders.py`）**：
+   - 脱离 GUI 进行高并发对弈，集成 5 大战术病态探针（弃营丢营、大子白送/炸弹贱卖、工兵自杀、无意义往复踱步、行营龟缩拒不翻棋）；
+   - 实时拦截病态走法，自动生成结构化 JSON 错题库（`reports/blunders/blunders_<timestamp>.json`）与 Markdown 诊断复盘报告（`reports/blunders/blunder_report_<timestamp>.md`）；
+   - 实测 2 局 `hybrid2` vs `expert2` 自动捕获 71 处战术异常（含师长撞军长、炸弹炸工兵、司令进敌方反扑网等极端实战案例），为后续战术优化提供全自动流水线。
+
+## [2026-09-06] — 行营战略据点保护与“占营优于吃小子”战术硬约束重构
+
+阶段归属：**P1 阶段（传统搜索增强与启发式战术修正）** 与 **P2 阶段（混合决策引擎策略修正）**。严格遵循 `AGENTS.md` 硬约束（“严格遵循‘首翻子力即据点，依托行营辐射拓荒’与行营单向打击特权”）。
+
+### 核心病灶剖析与技术解法（基于对局 `games/game_20260906_192146.json` 第 8 手复盘）
+1. **行营据点弃守与贪吃诱饵反被杀（`junqi/hybrid_engine.py`）**：
+   - **根本病灶**：原战术规则 `_apply_tactical_rules` 在判断吃子时，只要满足 `battle(mover, target) == "attacker_wins"`（如工兵挖雷），无条件赋予 `+50.0 + 棋子价值 * 0.5`（工兵挖雷额外 `+30.0`），缺乏对“行营据点庇护”与“次手战术反扑”的全局感知。导致实战第 8 手红工兵占据核心行营 `(7, 3)` 庇护所时，为了贪吃铁路上的蓝地雷 `(6, 4)` 冒失出营，次手立刻被蓝连长 `(6, 3)` 反杀吃掉，并导致原本由 AI 占领的据点行营反遭敌军入驻占领；
+   - **重构方案**：
+     - **行营战略进出感知**：区分 `leaves_camp`（弃营）、`enters_camp`（占营）与 `camp_to_camp`（营间机动），对主动占领行营给予 `+25.0`，营间调动给予 `+15.0`；
+     - **1-ply 战术反杀网检测（Fatal Threat）**：预测走步后敌方次手所有合法走法，若敌方在目标格能立即反杀己方（尤其是以小换大或大换大），判定为陷阱走法；吃小亏大或弃营被反杀给予 `-300.0` 重罚；
+     - **丢营风险拦截（Camp Invadable）**：若离开行营后，该行营下一手即面临敌军合法入驻，判定为严重失守风险，扣除 `100.0` 分；
+     - **“占营优于吃小子”铁律（Camp Hegemony）**：离开行营去吃小子（排/连/营/地雷），若己方为中小子直接 `-150.0`，若为大子但面临反杀/丢营亦 `-150.0`；无目的闲走弃营 `-80.0`；
+     - 使得第 8 手 `走(7, 3)->(6, 4)` 综合评分从 `+95.02` 暴跌至 `-549.98`，彻底杜绝 AI 弃营贪吃廉价小子与白送；
+2. **回归与覆盖测试**：
+   - 在 `tests/test_replay_review_fixes.py` 中新增 `test_camp_preservation_over_minor_piece_bait`，精准复现 `game_20260906_192146` 第 8 手棋局，断言弃营吃小子被扣除大分且 AI 拒绝出营；
+   - 调整 `test_winning_captures_not_penalized` 棋盘布局，隔离炸弹铁路通道与工兵挖雷兵站，验证安全胜势吃子仍受保护且 142 项测试全绿。
+
+## [2026-09-06] — 残局结构性必和误判与 AI 决策卡死彻底修复
+
+阶段归属：**P0 阶段（规则正确性与信息边界契约）** 与 **P2 阶段（专家评估与残局死局判定）**。严格遵循 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` 与 `AGENTS.md`。
+
+### 核心病灶剖析与技术解法
+1. **残局结构性必和误判（`junqi/analysis.py`）**：
+   - **根本病灶**：原 `is_dead_draw` 逻辑过于粗暴：① 在双无工兵分支下，简单判定若弱势方 `len(combat_my) >= 3` 或 `my_in_camps >= 1` 即判定为必和；② 原型 3 无条件判定 `not my_can_flag and not opp_can_flag` 即必和。导致在优势方拥有双师长、弱势方仅有营连排且多子裸露在外的胜势围剿局面下，被误判为 `红胜 0.0% | 和 100.0% | 蓝胜 0.0%`；
+   - **重构方案**：
+     - 若场上仍有未翻开暗子，绝不提前判定结构性死锁；
+     - 严格约束无敌大子“歼灭不能”拓扑：优势方必须仅有单单一颗压制大子，且弱势方所有可动子力均已安全驻守行营（或在极端长局 `ply >= 140` 或 `quiet >= 25` 下多子在营对峙）；若优势方存在多颗大子（如双师长）或弱势方有子裸露在外，绝不判和；
+     - 原型 3 改为真正的 BFS 地雷物理阻断连通性检测，仅当地雷彻底将双方棋子割裂为互不连通的子图时才判和；
+     - 时钟判和严格遵循 `RuleConfig.no_capture_draw_plies`（70步）。
+2. **AI 决策卡死在“AI 思考中…”（`junqi/hybrid_engine.py` & `junqi/gui.py`）**：
+   - **根本病灶**：`is_dead_draw` 误判为和棋后，`HybridDecisionEngine.evaluate_position` 返回的字典遗漏了 `action_scores` 键，导致 `choose_actions` 返回空列表 `[]`；GUI 工作线程推入动作 `None`，UI 的 `_poll()` 因 `act is None` 直接跳过走法应用且未更新状态，导致界面永久死锁在“AI 思考中…”；
+   - **重构方案**：
+     - `HybridDecisionEngine.evaluate_position` 在和棋分支完备填充 `action_scores = [(a, 0.0) for a in acts]`；
+     - `HybridDecisionEngine.choose_actions` 增加合法动作兜底：若评分列表为空且存在合法走法，强制兜底为 `[(acts[0], 0.0)]`，绝不返回空列表；全明子局面采样世界优化为单世界 `[{}]`；
+     - `gui.py` 的 `ai_move()` 与 `ask_hint()` 增加顶级 `try...except` 异常捕获与合法动作安全兜底，且在 `_poll()` 中处理 `act is None` 时强制刷新界面状态并重置 `self.busy = False`，杜绝卡死。
+3. **新增单元测试**：
+   - 新增 `tests/test_endgame_deadlock_fixes.py`，完整覆盖截图实况局面（蓝方双师长压制营连排绝非必和、且专家估值正确评判蓝大优红大劣、AI 毫秒级生成跑营走法）、1v1 理论必和、地雷全线物理断连与 70 步限步，并通过全量 141 项回归测试。
+
+## [2026-09-06] — 实战对局审查根因整改：胜势吃子硬门、公共 Policy 信息解耦与几率终局修复
+
+阶段归属：**P0 阶段（规则正确性与信息边界契约）** 与 **P1 阶段（传统搜索增强与混合引擎推理约束）**。依据 `reports/expert_engine_v1/REPLAY_REVIEW_2026-09-06.md`，严格遵循 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` 与 `AGENTS.md`。
+
+### 核心病灶剖析与技术解法
+1. **胜势吃子硬门保护与自杀判定彻底修复（`junqi/hybrid_engine.py`）**：
+   - **根本病灶**：原代码在自杀检查中错误使用 `mover.rank > tgt.rank`（大子吃小子）判定自杀并扣除 100 分，直接导致军长吃排长、工兵挖雷等大量胜势吃子被判定为负分打压；
+   - **重构方案**：彻底废除反向的等级比较，统一调用 `rules.battle(mover.rank, tgt.rank)`；
+   - 对真实自杀（`defender_wins`）给予 `-500.0` 严惩；对胜势吃子（`attacker_wins`）给予 `+50.0 ~ +120.0` 战术保护分（工兵挖雷额外加 `+30.0`），确保合法胜势吃子绝不被无意义闲棋或翻棋掩盖；炸弹兑高价值大子给予 `+80.0` 战术换子加分。
+2. **公共 Policy 与采样世界 Value 彻底解耦（`junqi/hybrid_engine.py`）**：
+   - **信息边界合规**：严格践行“公共 Policy 不得读取真实暗子身份；采样世界只能用于 Value 评估”的硬约束；
+   - **执行隔离**：将公共局面通过 `world=None` 单次前向推理计算唯一合规的公共 Policy（`action_scores`）；K 个采样世界仅作为批量张量输入网络的 Value 头计算胜率和期望标量，彻底消除暗子底牌漂移；新增 `test_policy_invariance_across_sampled_worlds` 验证世界不变性。
+3. **翻棋几率节点统一结算终局价值（`junqi/search.py`）**：
+   - 修复在几率节点 `_evaluate_chance_flip` 深层截断及全树分支中，翻开暗子后遗漏困毙终局判定的缺陷；构造翻后状态优先调用 `child.is_terminal()`，若困毙则回传精确的 `WIN_SCORE` 终局价值。
+4. **GUI 引擎观测路由与对局审计元数据增强（`junqi/gui.py`）**：
+   - 修复第 544 行 `self.engine_mode`（实际控件变量为 `self.ai_engine`）导致胜率显示与当前选中引擎脱钩的 Bug；
+   - 对局记录（`games/game_*.json`）新增 `engine_type`、`depth`、`samples`、`model_sha256` 以及 AI 思考的 top-3 候选动作与评分快照，使对局可完全复现与回溯审计。
+5. **单元测试与实战局面验证**：
+   - 新增 `tests/test_replay_review_fixes.py`，全量覆盖吃子加分、自杀扣分、Policy 世界不变性与翻后困毙；
+   - 实测验证 `141119` 第 5 手（红军长吃蓝排长评分 59.99 高居第 1）与 `164701` 第 141 手（蓝工兵挖红地雷评分 95.00 高居第 1）。
+
+## [2026-09-06] — GUI 初始窗口尺寸与布局紧凑化重构（P4 阶段）
+
+阶段归属：**P4 阶段（GUI 人机交互与可视化工程）**。遵循 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` 与 `AGENTS.md`。
+
+### 核心病灶与技术解法
+1. **移除强制全屏最大化（`root.state("zoomed")`）**：
+   - 原代码在 `junqi/gui.py` 的 `main()` 中调用了 `root.state("zoomed")`，在 Windows 高分屏（1080p/2K/4K）下强行最大化铺满屏幕；
+   - 因棋盘与贴图为固定像素（520x756），且 Canvas 左浮动、Panel 右浮动，导致棋盘被甩在屏幕最左侧、面板被甩在数千像素外的最右侧，中间留下巨大空白断层。
+   - 彻底移除 `root.state("zoomed")`。
+2. **规范窗口初始几何尺寸与屏幕居中**：
+   - 设定基准尺寸 `WIN_W = 840, WIN_H = 760`；
+   - 启动时自动获取当前屏幕分辨率，精确计算居中坐标 `(x, y)` 并通过 `root.geometry()` 居中弹出；
+   - 设置 `root.resizable(False, False)`，禁用失真拉伸与误触全屏。
+3. **面板紧凑并列布局与对局记录滚动条支持**：
+   - Panel 改为贴合 Canvas 右侧并列排列（`side="left"`），消除大缝隙；
+   - 对局记录 Listbox 嵌入 `Scrollbar` 容器并启用纵向自适应伸缩，彻底解决长步数记录浏览与不同 DPI 字体下高度轻微溢出问题。
+4. **统一 `cli.py` 启动入口**：
+   - 将 `cli.py` 中 `args.command == 'gui'` 统一路由至 `junqi.gui.launch_gui`。
+
+## [2026-09-06] — 残局机制性必和断言器（Dead Draw Assertion Engine）与 GUI 胜率预测脱钩重构
+
+阶段归属：**P2 阶段（专家评估与残局攻坚）** 与 **P4 阶段（GUI 交互与胜率展现）**。遵循 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` 与 `AGENTS.md`。
+
+### 核心病灶与技术解法
+
+1. **结构性必和死锁断言器（`junqi/analysis.py` -> `is_dead_draw`）**：
+   - 彻底打破“单纯对子力加权乘折减系数”的局限，依据军棋四大底层机制（行营免死特权、公路同速距离守恒、70步无吃子限步时钟、图论连通性）实现硬性拓扑裁决；
+   - 覆盖四大典型必和原型：
+     - **原型 1（双无工兵死锁）**：双方工兵全灭且有雷护旗，拔旗通路100%封死；且双方无法全歼对方（如单方无敌司令 vs 对方多子扎营防守）；
+     - **原型 2（1v1 追逐死锁）**：单大子追单小子，防守方身处行营、或距离最近行营 $\le 2$、或位于底线 1/2/3 列安全往复区，在 5x5 Mini-Junqi 穷举与大盘上证实 100% 走满 70 步和棋；
+     - **原型 3（双向军旗死区）**：双方军旗皆处于不可攻破状态；
+     - **原型 4（时钟极限逼近）**：`quiet >= 50` 逼近 70 步判和时限。
+2. **专家评估函数前置拦截与时钟强衰减（`junqi/eval_expert.py`）**：
+   - 评估入口直连 `is_dead_draw(state)`：一旦命中必和，估值瞬间截断为严格的 `0.0`，彻底消灭 +327 分的伪优势泡沫；
+   - 修复工兵灭绝下的死棋估值：双无工兵时，不可移动的地雷与军旗不再算入机动攻击物质分；
+   - 引入 70 步限步二次方衰减：当 `quiet >= 20` 且局势僵持时，估值按 `(1 - quiet/70)^2` 动态向 0 平滑衰减。
+3. **GUI 胜率预测引擎路由解耦与顶层必和拦截（`junqi/gui.py`）**：
+   - 严格根据单选框（`engine_mode`）路由，当用户选择“专家搜索”时，100% 走专家评估与和棋概率模型，不再盲目绕道离线神经网络；
+   - GUI 胜率最顶层接入必和拦截：若触发 `is_dead_draw`，胜率直接显示 `红胜 0.0% | 和 100.0% | 蓝胜 0.0%`；
+   - 混合引擎 `junqi/hybrid_engine.py` 同步接入必和拦截，保证全架构端到端一致性。
+4. **自动化测试与对局验证**：
+   - 新增 `tests/test_dead_draw_detection.py`，实测 `games/game_20260906_152706.json`（第 152 手）准确判定为 `is_dead_draw=True`，估值 = 0.0，胜率和率 = 100%；
+   - 全量回归测试：**134 passed, 3 skipped**（137 项全部绿色通过）。
 
 阶段归属：**P1/P2 阶段（传统搜索增强与专家评估校准）**。遵循 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` 与 `AGENTS.md`。
 

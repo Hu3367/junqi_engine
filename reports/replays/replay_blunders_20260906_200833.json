@@ -1,0 +1,3020 @@
+{
+  "generated_at": "20260906_200833",
+  "total_games": 5,
+  "total_plies": 451,
+  "top1_matches": 218,
+  "top1_rate_percent": 48.34,
+  "top3_matches": 297,
+  "top3_rate_percent": 65.85,
+  "divergences_count": 167,
+  "cliffs_count": 0,
+  "divergences": [
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 2,
+      "seat": 0,
+      "act_human": "走(6,2)->(5,2)",
+      "act_human_desc": "走(6,2)->(5,2)[r营长吃b炸弹]",
+      "human_rank": 3,
+      "human_score": 0.93,
+      "act_ai": "走(6,2)->(7,3)",
+      "act_ai_desc": "走(6,2)->(7,3)[r营长占空地]",
+      "ai_score": 25.04,
+      "score_gap": 24.11
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 8,
+      "seat": 0,
+      "act_human": "翻(8,1)",
+      "act_human_desc": "翻(8,1)",
+      "human_rank": 5,
+      "human_score": 0.95,
+      "act_ai": "走(7,3)->(8,2)",
+      "act_ai_desc": "走(7,3)->(8,2)[r工兵占空地]",
+      "ai_score": 15.0,
+      "score_gap": 14.05
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 12,
+      "seat": 0,
+      "act_human": "翻(10,4)",
+      "act_human_desc": "翻(10,4)",
+      "human_rank": 5,
+      "human_score": 0.95,
+      "act_ai": "翻(8,3)",
+      "act_ai_desc": "翻(8,3)",
+      "ai_score": 15.0,
+      "score_gap": 14.06
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 16,
+      "seat": 0,
+      "act_human": "翻(4,2)",
+      "act_human_desc": "翻(4,2)",
+      "human_rank": 6,
+      "human_score": 0.97,
+      "act_ai": "翻(10,3)",
+      "act_ai_desc": "翻(10,3)",
+      "ai_score": 15.01,
+      "score_gap": 14.04
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 17,
+      "seat": 1,
+      "act_human": "走(7,3)->(8,3)",
+      "act_human_desc": "走(7,3)->(8,3)[b师长吃r团长]",
+      "human_rank": 42,
+      "human_score": -176.5,
+      "act_ai": "翻(6,4)",
+      "act_ai_desc": "翻(6,4)",
+      "ai_score": 15.0,
+      "score_gap": 191.5
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 18,
+      "seat": 0,
+      "act_human": "翻(3,3)",
+      "act_human_desc": "翻(3,3)",
+      "human_rank": 7,
+      "human_score": 0.99,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 22,
+      "seat": 0,
+      "act_human": "走(6,4)->(6,2)",
+      "act_human_desc": "走(6,4)->(6,2)[r师长占空地]",
+      "human_rank": 43,
+      "human_score": -399.01,
+      "act_ai": "走(2,3)->(3,2)",
+      "act_ai_desc": "走(2,3)->(3,2)[r连长占空地]",
+      "ai_score": 15.01,
+      "score_gap": 414.01
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 23,
+      "seat": 1,
+      "act_human": "翻(5,3)",
+      "act_human_desc": "翻(5,3)",
+      "human_rank": 11,
+      "human_score": 0.99,
+      "act_ai": "翻(9,2)",
+      "act_ai_desc": "翻(9,2)",
+      "ai_score": 15.01,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 24,
+      "seat": 0,
+      "act_human": "走(6,2)->(5,2)",
+      "act_human_desc": "走(6,2)->(5,2)[r师长占空地]",
+      "human_rank": 13,
+      "human_score": 1.0,
+      "act_ai": "走(2,3)->(3,2)",
+      "act_ai_desc": "走(2,3)->(3,2)[r连长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 25,
+      "seat": 1,
+      "act_human": "翻(3,1)",
+      "act_human_desc": "翻(3,1)",
+      "human_rank": 11,
+      "human_score": 0.98,
+      "act_ai": "翻(8,4)",
+      "act_ai_desc": "翻(8,4)",
+      "ai_score": 15.01,
+      "score_gap": 14.03
+    },
+    {
+      "game_id": 1,
+      "filename": "251122223849 棋手 62240-棋手 44374.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 44374"
+      ],
+      "ply": 27,
+      "seat": 1,
+      "act_human": "翻(3,0)",
+      "act_human_desc": "翻(3,0)",
+      "human_rank": 11,
+      "human_score": 0.98,
+      "act_ai": "翻(8,4)",
+      "act_ai_desc": "翻(8,4)",
+      "ai_score": 15.01,
+      "score_gap": 14.03
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 2,
+      "seat": 0,
+      "act_human": "翻(3,3)",
+      "act_human_desc": "翻(3,3)",
+      "human_rank": 4,
+      "human_score": 0.81,
+      "act_ai": "走(7,2)->(7,3)",
+      "act_ai_desc": "走(7,2)->(7,3)[r连长占空地]",
+      "ai_score": 25.08,
+      "score_gap": 24.27
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 4,
+      "seat": 0,
+      "act_human": "翻(2,2)",
+      "act_human_desc": "翻(2,2)",
+      "human_rank": 4,
+      "human_score": 1.0,
+      "act_ai": "走(7,2)->(7,3)",
+      "act_ai_desc": "走(7,2)->(7,3)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 5,
+      "seat": 1,
+      "act_human": "走(4,1)->(3,2)",
+      "act_human_desc": "走(4,1)->(3,2)[b连长占空地]",
+      "human_rank": 4,
+      "human_score": 16.0,
+      "act_ai": "走(3,3)->(4,3)",
+      "act_ai_desc": "走(3,3)->(4,3)[b连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 9.0
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 8,
+      "seat": 0,
+      "act_human": "翻(3,0)",
+      "act_human_desc": "翻(3,0)",
+      "human_rank": 9,
+      "human_score": 1.0,
+      "act_ai": "走(7,2)->(7,3)",
+      "act_ai_desc": "走(7,2)->(7,3)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 12,
+      "seat": 0,
+      "act_human": "翻(5,4)",
+      "act_human_desc": "翻(5,4)",
+      "human_rank": 15,
+      "human_score": 1.0,
+      "act_ai": "走(3,0)->(2,1)",
+      "act_ai_desc": "走(3,0)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 2,
+      "filename": "251122224105 棋手 92891-棋手 62240.sav",
+      "players": [
+        "棋手 92891",
+        "棋手 62240"
+      ],
+      "ply": 15,
+      "seat": 1,
+      "act_human": "走(4,3)->(5,4)",
+      "act_human_desc": "走(4,3)->(5,4)[b连长吃r炸弹]",
+      "human_rank": 47,
+      "human_score": -249.0,
+      "act_ai": "翻(5,2)",
+      "act_ai_desc": "翻(5,2)",
+      "ai_score": 15.0,
+      "score_gap": 264.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 8,
+      "seat": 0,
+      "act_human": "走(5,4)->(5,3)",
+      "act_human_desc": "走(5,4)->(5,3)[r工兵吃b地雷]",
+      "human_rank": 52,
+      "human_score": -299.0,
+      "act_ai": "走(6,1)->(7,1)",
+      "act_ai_desc": "走(6,1)->(7,1)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 324.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 10,
+      "seat": 0,
+      "act_human": "翻(3,4)",
+      "act_human_desc": "翻(3,4)",
+      "human_rank": 10,
+      "human_score": 0.85,
+      "act_ai": "走(6,1)->(7,1)",
+      "act_ai_desc": "走(6,1)->(7,1)[r师长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 24.16
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 12,
+      "seat": 0,
+      "act_human": "翻(3,1)",
+      "act_human_desc": "翻(3,1)",
+      "human_rank": 10,
+      "human_score": 0.94,
+      "act_ai": "走(6,1)->(7,1)",
+      "act_ai_desc": "走(6,1)->(7,1)[r师长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 24.07
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 18,
+      "seat": 0,
+      "act_human": "翻(1,1)",
+      "act_human_desc": "翻(1,1)",
+      "human_rank": 14,
+      "human_score": 0.99,
+      "act_ai": "走(6,1)->(7,1)",
+      "act_ai_desc": "走(6,1)->(7,1)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 19,
+      "seat": 1,
+      "act_human": "走(2,3)->(3,4)",
+      "act_human_desc": "走(2,3)->(3,4)[b排长占空地]",
+      "human_rank": 43,
+      "human_score": -79.01,
+      "act_ai": "走(3,2)->(2,1)",
+      "act_ai_desc": "走(3,2)->(2,1)[b司令占空地]",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 26,
+      "seat": 0,
+      "act_human": "走(3,3)->(3,4)",
+      "act_human_desc": "走(3,3)->(3,4)[r旅长占空地]",
+      "human_rank": 18,
+      "human_score": 0.99,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 28,
+      "seat": 0,
+      "act_human": "翻(4,4)",
+      "act_human_desc": "翻(4,4)",
+      "human_rank": 18,
+      "human_score": 0.99,
+      "act_ai": "翻(7,0)",
+      "act_ai_desc": "翻(7,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 31,
+      "seat": 1,
+      "act_human": "翻(10,2)",
+      "act_human_desc": "翻(10,2)",
+      "human_rank": 5,
+      "human_score": 0.98,
+      "act_ai": "走(1,4)->(2,4)",
+      "act_ai_desc": "走(1,4)->(2,4)[b师长吃r连长]",
+      "ai_score": 62.52,
+      "score_gap": 61.54
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 35,
+      "seat": 1,
+      "act_human": "翻(9,2)",
+      "act_human_desc": "翻(9,2)",
+      "human_rank": 5,
+      "human_score": 1.0,
+      "act_ai": "走(2,4)->(3,4)",
+      "act_ai_desc": "走(2,4)->(3,4)[b师长吃r旅长]",
+      "ai_score": 80.0,
+      "score_gap": 79.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 39,
+      "seat": 1,
+      "act_human": "走(4,3)->(4,2)",
+      "act_human_desc": "走(4,3)->(4,2)[b排长占空地]",
+      "human_rank": 46,
+      "human_score": -879.01,
+      "act_ai": "翻(1,2)",
+      "act_ai_desc": "翻(1,2)",
+      "ai_score": 15.0,
+      "score_gap": 894.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 44,
+      "seat": 0,
+      "act_human": "走(5,2)->(4,2)",
+      "act_human_desc": "走(5,2)->(4,2)[r排长吃b排长]",
+      "human_rank": 38,
+      "human_score": -99.01,
+      "act_ai": "走(9,1)->(8,1)",
+      "act_ai_desc": "走(9,1)->(8,1)[r军长吃b连长]",
+      "ai_score": 42.5,
+      "score_gap": 141.51
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 46,
+      "seat": 0,
+      "act_human": "走(7,1)->(8,1)",
+      "act_human_desc": "走(7,1)->(8,1)[r营长吃b连长]",
+      "human_rank": 35,
+      "human_score": -86.55,
+      "act_ai": "走(9,1)->(8,1)",
+      "act_ai_desc": "走(9,1)->(8,1)[r军长吃b连长]",
+      "ai_score": 42.54,
+      "score_gap": 129.08
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 48,
+      "seat": 0,
+      "act_human": "走(1,2)->(1,1)",
+      "act_human_desc": "走(1,2)->(1,1)[r炸弹占空地]",
+      "human_rank": 21,
+      "human_score": 1.0,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 50,
+      "seat": 0,
+      "act_human": "翻(0,2)",
+      "act_human_desc": "翻(0,2)",
+      "human_rank": 21,
+      "human_score": 0.99,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 51,
+      "seat": 1,
+      "act_human": "走(2,3)->(1,2)",
+      "act_human_desc": "走(2,3)->(1,2)[b连长占空地]",
+      "human_rank": 28,
+      "human_score": -79.01,
+      "act_ai": "翻(2,2)",
+      "act_ai_desc": "翻(2,2)",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 53,
+      "seat": 1,
+      "act_human": "走(0,3)->(1,3)",
+      "act_human_desc": "走(0,3)->(1,3)[b团长占空地]",
+      "human_rank": 3,
+      "human_score": 0.98,
+      "act_ai": "走(1,2)->(2,3)",
+      "act_ai_desc": "走(1,2)->(2,3)[b连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 54,
+      "seat": 0,
+      "act_human": "翻(0,4)",
+      "act_human_desc": "翻(0,4)",
+      "human_rank": 20,
+      "human_score": 0.98,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.03
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 55,
+      "seat": 1,
+      "act_human": "走(4,3)->(3,4)",
+      "act_human_desc": "走(4,3)->(3,4)[b师长占空地]",
+      "human_rank": 29,
+      "human_score": -79.02,
+      "act_ai": "走(1,3)->(2,3)",
+      "act_ai_desc": "走(1,3)->(2,3)[b团长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 104.04
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 56,
+      "seat": 0,
+      "act_human": "走(0,4)->(0,3)",
+      "act_human_desc": "走(0,4)->(0,3)[r旅长占空地]",
+      "human_rank": 20,
+      "human_score": 1.0,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 58,
+      "seat": 0,
+      "act_human": "走(0,3)->(1,3)",
+      "act_human_desc": "走(0,3)->(1,3)[r旅长占空地]",
+      "human_rank": 20,
+      "human_score": 1.0,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 59,
+      "seat": 1,
+      "act_human": "走(1,2)->(1,1)",
+      "act_human_desc": "走(1,2)->(1,1)[b连长吃r炸弹]",
+      "human_rank": 30,
+      "human_score": -99.01,
+      "act_ai": "走(3,4)->(4,3)",
+      "act_ai_desc": "走(3,4)->(4,3)[b师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 124.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 61,
+      "seat": 1,
+      "act_human": "走(3,4)->(1,4)",
+      "act_human_desc": "走(3,4)->(1,4)[b师长占空地]",
+      "human_rank": 3,
+      "human_score": 1.0,
+      "act_ai": "走(3,4)->(4,3)",
+      "act_ai_desc": "走(3,4)->(4,3)[b师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 62,
+      "seat": 0,
+      "act_human": "走(1,3)->(0,3)",
+      "act_human_desc": "走(1,3)->(0,3)[r旅长占空地]",
+      "human_rank": 19,
+      "human_score": 0.99,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 63,
+      "seat": 1,
+      "act_human": "走(2,3)->(3,3)",
+      "act_human_desc": "走(2,3)->(3,3)[b团长占空地]",
+      "human_rank": 33,
+      "human_score": -79.0,
+      "act_ai": "走(3,2)->(4,3)",
+      "act_ai_desc": "走(3,2)->(4,3)[b司令占空地]",
+      "ai_score": 15.0,
+      "score_gap": 94.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 64,
+      "seat": 0,
+      "act_human": "走(4,1)->(5,2)",
+      "act_human_desc": "走(4,1)->(5,2)[r营长占空地]",
+      "human_rank": 32,
+      "human_score": -179.03,
+      "act_ai": "走(8,1)->(7,1)",
+      "act_ai_desc": "走(8,1)->(7,1)[r营长占空地]",
+      "ai_score": 25.02,
+      "score_gap": 204.05
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 69,
+      "seat": 1,
+      "act_human": "走(3,2)->(4,2)",
+      "act_human_desc": "走(3,2)->(4,2)[b司令占空地]",
+      "human_rank": 39,
+      "human_score": -179.02,
+      "act_ai": "翻(0,1)",
+      "act_ai_desc": "翻(0,1)",
+      "ai_score": 0.0,
+      "score_gap": 179.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 71,
+      "seat": 1,
+      "act_human": "走(4,2)->(5,2)",
+      "act_human_desc": "走(4,2)->(5,2)[b司令占空地]",
+      "human_rank": 2,
+      "human_score": 1.0,
+      "act_ai": "走(1,0)->(2,1)",
+      "act_ai_desc": "走(1,0)->(2,1)[b排长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 76,
+      "seat": 0,
+      "act_human": "走(4,1)->(3,1)",
+      "act_human_desc": "走(4,1)->(3,1)[r营长占空地]",
+      "human_rank": 25,
+      "human_score": -79.01,
+      "act_ai": "翻(10,1)",
+      "act_ai_desc": "翻(10,1)",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 82,
+      "seat": 0,
+      "act_human": "翻(11,2)",
+      "act_human_desc": "翻(11,2)",
+      "human_rank": 10,
+      "human_score": 0.88,
+      "act_ai": "走(3,1)->(4,1)",
+      "act_ai_desc": "走(3,1)->(4,1)[r营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.12
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 84,
+      "seat": 0,
+      "act_human": "翻(11,3)",
+      "act_human_desc": "翻(11,3)",
+      "human_rank": 10,
+      "human_score": 0.92,
+      "act_ai": "走(5,0)->(4,1)",
+      "act_ai_desc": "走(5,0)->(4,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.08
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 88,
+      "seat": 0,
+      "act_human": "走(0,3)->(1,3)",
+      "act_human_desc": "走(0,3)->(1,3)[r旅长占空地]",
+      "human_rank": 9,
+      "human_score": 1.0,
+      "act_ai": "翻(3,0)",
+      "act_ai_desc": "翻(3,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 91,
+      "seat": 1,
+      "act_human": "走(2,3)->(1,3)",
+      "act_human_desc": "走(2,3)->(1,3)[b师长吃r旅长]",
+      "human_rank": 19,
+      "human_score": -169.01,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 184.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 95,
+      "seat": 1,
+      "act_human": "走(2,1)->(3,1)",
+      "act_human_desc": "走(2,1)->(3,1)[b排长占空地]",
+      "human_rank": 34,
+      "human_score": -979.01,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 994.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 96,
+      "seat": 0,
+      "act_human": "走(9,3)->(8,3)",
+      "act_human_desc": "走(9,3)->(8,3)[r工兵吃b工兵]",
+      "human_rank": 17,
+      "human_score": -149.01,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.0,
+      "score_gap": 164.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 99,
+      "seat": 1,
+      "act_human": "走(6,3)->(6,4)",
+      "act_human_desc": "走(6,3)->(6,4)[b营长占空地]",
+      "human_rank": 33,
+      "human_score": -399.01,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 414.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 106,
+      "seat": 0,
+      "act_human": "翻(11,4)",
+      "act_human_desc": "翻(11,4)",
+      "human_rank": 7,
+      "human_score": 0.95,
+      "act_ai": "走(8,2)->(7,2)",
+      "act_ai_desc": "走(8,2)->(7,2)[r师长吃b排长]",
+      "ai_score": 39.0,
+      "score_gap": 38.05
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 108,
+      "seat": 0,
+      "act_human": "走(9,1)->(10,1)",
+      "act_human_desc": "走(9,1)->(10,1)[r军长吃b军长]",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "走(8,2)->(7,2)",
+      "act_ai_desc": "走(8,2)->(7,2)[r师长吃b排长]",
+      "ai_score": 39.0,
+      "score_gap": 38.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 110,
+      "seat": 0,
+      "act_human": "走(10,3)->(10,4)",
+      "act_human_desc": "走(10,3)->(10,4)[r连长占空地]",
+      "human_rank": 7,
+      "human_score": 1.0,
+      "act_ai": "走(8,2)->(7,2)",
+      "act_ai_desc": "走(8,2)->(7,2)[r师长吃b排长]",
+      "ai_score": 39.0,
+      "score_gap": 38.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 111,
+      "seat": 1,
+      "act_human": "走(11,4)->(11,3)",
+      "act_human_desc": "走(11,4)->(11,3)[b炸弹吃r地雷]",
+      "human_rank": 28,
+      "human_score": -349.01,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 364.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 112,
+      "seat": 0,
+      "act_human": "走(7,1)->(7,2)",
+      "act_human_desc": "走(7,1)->(7,2)[r营长吃b排长]",
+      "human_rank": 25,
+      "human_score": -90.0,
+      "act_ai": "走(8,2)->(7,2)",
+      "act_ai_desc": "走(8,2)->(7,2)[r师长吃b排长]",
+      "ai_score": 39.0,
+      "score_gap": 129.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 114,
+      "seat": 0,
+      "act_human": "走(10,4)->(8,4)",
+      "act_human_desc": "走(10,4)->(8,4)[r连长吃b工兵]",
+      "human_rank": 8,
+      "human_score": 9.5,
+      "act_ai": "走(8,0)->(7,1)",
+      "act_ai_desc": "走(8,0)->(7,1)[r团长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 15.5
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 115,
+      "seat": 1,
+      "act_human": "走(7,4)->(8,4)",
+      "act_human_desc": "走(7,4)->(8,4)[b团长吃r连长]",
+      "human_rank": 27,
+      "human_score": -299.0,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 314.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 116,
+      "seat": 0,
+      "act_human": "走(8,2)->(9,1)",
+      "act_human_desc": "走(8,2)->(9,1)[r师长占空地]",
+      "human_rank": 5,
+      "human_score": 15.96,
+      "act_ai": "走(8,0)->(7,1)",
+      "act_ai_desc": "走(8,0)->(7,1)[r团长占空地]",
+      "ai_score": 25.02,
+      "score_gap": 9.07
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 117,
+      "seat": 1,
+      "act_human": "走(8,4)->(10,4)",
+      "act_human_desc": "走(8,4)->(10,4)[b团长占空地]",
+      "human_rank": 28,
+      "human_score": -399.0,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 414.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 124,
+      "seat": 0,
+      "act_human": "走(7,0)->(8,0)",
+      "act_human_desc": "走(7,0)->(8,0)[r排长占空地]",
+      "human_rank": 25,
+      "human_score": -399.01,
+      "act_ai": "翻(4,0)",
+      "act_ai_desc": "翻(4,0)",
+      "ai_score": 15.0,
+      "score_gap": 414.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 128,
+      "seat": 0,
+      "act_human": "走(9,1)->(8,1)",
+      "act_human_desc": "走(9,1)->(8,1)[r师长占空地]",
+      "human_rank": 9,
+      "human_score": -79.04,
+      "act_ai": "翻(4,0)",
+      "act_ai_desc": "翻(4,0)",
+      "ai_score": 15.0,
+      "score_gap": 94.04
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 131,
+      "seat": 1,
+      "act_human": "翻(11,0)",
+      "act_human_desc": "翻(11,0)",
+      "human_rank": 3,
+      "human_score": 0.99,
+      "act_ai": "走(10,0)->(8,0)",
+      "act_ai_desc": "走(10,0)->(8,0)[b司令吃r排长]",
+      "ai_score": 59.0,
+      "score_gap": 58.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 132,
+      "seat": 0,
+      "act_human": "走(11,0)->(10,0)",
+      "act_human_desc": "走(11,0)->(10,0)[r司令吃b司令]",
+      "human_rank": 7,
+      "human_score": 0.99,
+      "act_ai": "走(8,1)->(8,2)",
+      "act_ai_desc": "走(8,1)->(8,2)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 134,
+      "seat": 0,
+      "act_human": "走(7,3)->(8,4)",
+      "act_human_desc": "走(7,3)->(8,4)[r师长占空地]",
+      "human_rank": 12,
+      "human_score": -79.02,
+      "act_ai": "走(8,1)->(8,2)",
+      "act_ai_desc": "走(8,1)->(8,2)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 104.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 136,
+      "seat": 0,
+      "act_human": "走(8,4)->(10,4)",
+      "act_human_desc": "走(8,4)->(10,4)[r师长占空地]",
+      "human_rank": 7,
+      "human_score": 1.0,
+      "act_ai": "走(8,1)->(8,2)",
+      "act_ai_desc": "走(8,1)->(8,2)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 138,
+      "seat": 0,
+      "act_human": "走(8,1)->(8,2)",
+      "act_human_desc": "走(8,1)->(8,2)[r师长占空地]",
+      "human_rank": 2,
+      "human_score": 26.0,
+      "act_ai": "走(10,4)->(10,1)",
+      "act_ai_desc": "走(10,4)->(10,1)[r师长吃b旅长]",
+      "ai_score": 80.0,
+      "score_gap": 54.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 140,
+      "seat": 0,
+      "act_human": "走(8,2)->(7,3)",
+      "act_human_desc": "走(8,2)->(7,3)[r师长占空地]",
+      "human_rank": 2,
+      "human_score": 15.98,
+      "act_ai": "走(10,4)->(10,1)",
+      "act_ai_desc": "走(10,4)->(10,1)[r师长吃b旅长]",
+      "ai_score": 80.0,
+      "score_gap": 64.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 142,
+      "seat": 0,
+      "act_human": "走(8,0)->(10,0)",
+      "act_human_desc": "走(8,0)->(10,0)[r排长占空地]",
+      "human_rank": 38,
+      "human_score": -399.0,
+      "act_ai": "走(10,4)->(10,1)",
+      "act_ai_desc": "走(10,4)->(10,1)[r师长吃b旅长]",
+      "ai_score": 80.0,
+      "score_gap": 479.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 143,
+      "seat": 1,
+      "act_human": "走(10,1)->(10,0)",
+      "act_human_desc": "走(10,1)->(10,0)[b旅长吃r排长]",
+      "human_rank": 21,
+      "human_score": -299.0,
+      "act_ai": "翻(4,0)",
+      "act_ai_desc": "翻(4,0)",
+      "ai_score": 0.0,
+      "score_gap": 299.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 145,
+      "seat": 1,
+      "act_human": "走(11,1)->(10,1)",
+      "act_human_desc": "走(11,1)->(10,1)[b炸弹占空地]",
+      "human_rank": 22,
+      "human_score": -399.04,
+      "act_ai": "翻(4,0)",
+      "act_ai_desc": "翻(4,0)",
+      "ai_score": 0.0,
+      "score_gap": 399.04
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 146,
+      "seat": 0,
+      "act_human": "走(9,1)->(10,1)",
+      "act_human_desc": "走(9,1)->(10,1)[r营长吃b炸弹]",
+      "human_rank": 31,
+      "human_score": -149.0,
+      "act_ai": "走(7,1)->(8,2)",
+      "act_ai_desc": "走(7,1)->(8,2)[r团长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 164.0
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 147,
+      "seat": 1,
+      "act_human": "走(4,3)->(3,3)",
+      "act_human_desc": "走(4,3)->(3,3)[b团长占空地]",
+      "human_rank": 8,
+      "human_score": -179.02,
+      "act_ai": "走(5,3)->(5,2)",
+      "act_ai_desc": "走(5,3)->(5,2)[b师长占空地]",
+      "ai_score": 0.0,
+      "score_gap": 179.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 150,
+      "seat": 0,
+      "act_human": "走(4,1)->(5,2)",
+      "act_human_desc": "走(4,1)->(5,2)[r炸弹占空地]",
+      "human_rank": 37,
+      "human_score": -979.04,
+      "act_ai": "走(10,0)->(9,1)",
+      "act_ai_desc": "走(10,0)->(9,1)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 1004.04
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 153,
+      "seat": 1,
+      "act_human": "走(3,3)->(3,4)",
+      "act_human_desc": "走(3,3)->(3,4)[b团长占空地]",
+      "human_rank": 4,
+      "human_score": 0.99,
+      "act_ai": "走(2,0)->(2,1)",
+      "act_ai_desc": "走(2,0)->(2,1)[b营长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.02
+    },
+    {
+      "game_id": 3,
+      "filename": "251122224306 棋手 82954-棋手 62240.sav",
+      "players": [
+        "棋手 82954",
+        "棋手 62240"
+      ],
+      "ply": 154,
+      "seat": 0,
+      "act_human": "走(10,0)->(10,4)",
+      "act_human_desc": "走(10,0)->(10,4)[r师长占空地]",
+      "human_rank": 5,
+      "human_score": 0.99,
+      "act_ai": "走(10,0)->(9,1)",
+      "act_ai_desc": "走(10,0)->(9,1)[r师长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 1,
+      "seat": 1,
+      "act_human": "翻(6,3)",
+      "act_human_desc": "翻(6,3)",
+      "human_rank": 11,
+      "human_score": 0.01,
+      "act_ai": "翻(4,2)",
+      "act_ai_desc": "翻(4,2)",
+      "ai_score": 0.32,
+      "score_gap": 0.31
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 5,
+      "seat": 1,
+      "act_human": "翻(6,4)",
+      "act_human_desc": "翻(6,4)",
+      "human_rank": 4,
+      "human_score": 15.98,
+      "act_ai": "走(8,1)->(9,1)",
+      "act_ai_desc": "走(8,1)->(9,1)[b连长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 9.03
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 7,
+      "seat": 1,
+      "act_human": "走(7,3)->(8,2)",
+      "act_human_desc": "走(7,3)->(8,2)[b连长占空地]",
+      "human_rank": 4,
+      "human_score": 16.0,
+      "act_ai": "走(8,1)->(9,1)",
+      "act_ai_desc": "走(8,1)->(9,1)[b连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 9.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 10,
+      "seat": 0,
+      "act_human": "翻(5,1)",
+      "act_human_desc": "翻(5,1)",
+      "human_rank": 7,
+      "human_score": 0.97,
+      "act_ai": "翻(5,2)",
+      "act_ai_desc": "翻(5,2)",
+      "ai_score": 15.01,
+      "score_gap": 14.04
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 31,
+      "seat": 1,
+      "act_human": "走(8,2)->(8,3)",
+      "act_human_desc": "走(8,2)->(8,3)[b连长吃r炸弹]",
+      "human_rank": 44,
+      "human_score": -149.0,
+      "act_ai": "翻(10,2)",
+      "act_ai_desc": "翻(10,2)",
+      "ai_score": 15.0,
+      "score_gap": 164.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 36,
+      "seat": 0,
+      "act_human": "走(4,1)->(3,0)",
+      "act_human_desc": "走(4,1)->(3,0)[r连长吃b排长]",
+      "human_rank": 40,
+      "human_score": -90.0,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 105.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 39,
+      "seat": 1,
+      "act_human": "走(8,2)->(8,1)",
+      "act_human_desc": "走(8,2)->(8,1)[b旅长占空地]",
+      "human_rank": 35,
+      "human_score": -79.01,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 42,
+      "seat": 0,
+      "act_human": "走(4,1)->(3,0)",
+      "act_human_desc": "走(4,1)->(3,0)[r连长占空地]",
+      "human_rank": 39,
+      "human_score": -79.0,
+      "act_ai": "翻(3,1)",
+      "act_ai_desc": "翻(3,1)",
+      "ai_score": 15.0,
+      "score_gap": 94.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 43,
+      "seat": 1,
+      "act_human": "走(8,2)->(7,2)",
+      "act_human_desc": "走(8,2)->(7,2)[b工兵吃r地雷]",
+      "human_rank": 37,
+      "human_score": -54.0,
+      "act_ai": "走(8,1)->(9,1)",
+      "act_ai_desc": "走(8,1)->(9,1)[b旅长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 79.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 45,
+      "seat": 1,
+      "act_human": "翻(5,2)",
+      "act_human_desc": "翻(5,2)",
+      "human_rank": 16,
+      "human_score": 0.99,
+      "act_ai": "走(8,1)->(8,2)",
+      "act_ai_desc": "走(8,1)->(8,2)[b旅长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 46,
+      "seat": 0,
+      "act_human": "走(4,3)->(5,2)",
+      "act_human_desc": "走(4,3)->(5,2)[r排长吃b工兵]",
+      "human_rank": 43,
+      "human_score": -949.0,
+      "act_ai": "翻(1,0)",
+      "act_ai_desc": "翻(1,0)",
+      "ai_score": 15.0,
+      "score_gap": 964.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 48,
+      "seat": 0,
+      "act_human": "走(2,1)->(1,1)",
+      "act_human_desc": "走(2,1)->(1,1)[r营长吃b炸弹]",
+      "human_rank": 38,
+      "human_score": -149.0,
+      "act_ai": "翻(1,0)",
+      "act_ai_desc": "翻(1,0)",
+      "ai_score": 15.0,
+      "score_gap": 164.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 51,
+      "seat": 1,
+      "act_human": "走(4,1)->(3,2)",
+      "act_human_desc": "走(4,1)->(3,2)[b团长占空地]",
+      "human_rank": 4,
+      "human_score": 16.0,
+      "act_ai": "走(8,1)->(8,2)",
+      "act_ai_desc": "走(8,1)->(8,2)[b旅长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 9.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 53,
+      "seat": 1,
+      "act_human": "翻(3,1)",
+      "act_human_desc": "翻(3,1)",
+      "human_rank": 4,
+      "human_score": 15.99,
+      "act_ai": "走(8,1)->(9,1)",
+      "act_ai_desc": "走(8,1)->(9,1)[b旅长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 9.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 55,
+      "seat": 1,
+      "act_human": "翻(4,4)",
+      "act_human_desc": "翻(4,4)",
+      "human_rank": 19,
+      "human_score": 0.96,
+      "act_ai": "走(8,1)->(9,1)",
+      "act_ai_desc": "走(8,1)->(9,1)[b旅长占空地]",
+      "ai_score": 25.02,
+      "score_gap": 24.06
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 56,
+      "seat": 0,
+      "act_human": "翻(0,0)",
+      "act_human_desc": "翻(0,0)",
+      "human_rank": 7,
+      "human_score": 0.99,
+      "act_ai": "翻(2,2)",
+      "act_ai_desc": "翻(2,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 58,
+      "seat": 0,
+      "act_human": "走(1,0)->(5,0)",
+      "act_human_desc": "走(1,0)->(5,0)[r旅长占空地]",
+      "human_rank": 7,
+      "human_score": 1.0,
+      "act_ai": "翻(2,4)",
+      "act_ai_desc": "翻(2,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 60,
+      "seat": 0,
+      "act_human": "翻(5,4)",
+      "act_human_desc": "翻(5,4)",
+      "human_rank": 7,
+      "human_score": 0.98,
+      "act_ai": "翻(2,4)",
+      "act_ai_desc": "翻(2,4)",
+      "ai_score": 15.02,
+      "score_gap": 14.04
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 64,
+      "seat": 0,
+      "act_human": "走(5,0)->(3,0)",
+      "act_human_desc": "走(5,0)->(3,0)[r旅长占空地]",
+      "human_rank": 6,
+      "human_score": 1.0,
+      "act_ai": "翻(3,4)",
+      "act_ai_desc": "翻(3,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 66,
+      "seat": 0,
+      "act_human": "走(3,0)->(3,1)",
+      "act_human_desc": "走(3,0)->(3,1)[r旅长占空地]",
+      "human_rank": 6,
+      "human_score": 1.0,
+      "act_ai": "翻(3,4)",
+      "act_ai_desc": "翻(3,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 68,
+      "seat": 0,
+      "act_human": "走(2,1)->(1,1)",
+      "act_human_desc": "走(2,1)->(1,1)[r连长占空地]",
+      "human_rank": 28,
+      "human_score": -179.01,
+      "act_ai": "翻(2,2)",
+      "act_ai_desc": "翻(2,2)",
+      "ai_score": 15.0,
+      "score_gap": 194.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 69,
+      "seat": 1,
+      "act_human": "走(5,4)->(8,4)",
+      "act_human_desc": "走(5,4)->(8,4)[b军长占空地]",
+      "human_rank": 14,
+      "human_score": 1.0,
+      "act_ai": "走(3,2)->(2,1)",
+      "act_ai_desc": "走(3,2)->(2,1)[b团长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 72,
+      "seat": 0,
+      "act_human": "走(6,2)->(6,4)",
+      "act_human_desc": "走(6,2)->(6,4)[r炸弹占空地]",
+      "human_rank": 37,
+      "human_score": -399.0,
+      "act_ai": "翻(3,4)",
+      "act_ai_desc": "翻(3,4)",
+      "ai_score": 15.0,
+      "score_gap": 414.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 75,
+      "seat": 1,
+      "act_human": "走(3,4)->(6,4)",
+      "act_human_desc": "走(3,4)->(6,4)[b排长吃r炸弹]",
+      "human_rank": 13,
+      "human_score": 1.0,
+      "act_ai": "翻(9,2)",
+      "act_ai_desc": "翻(9,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 76,
+      "seat": 0,
+      "act_human": "翻(0,2)",
+      "act_human_desc": "翻(0,2)",
+      "human_rank": 5,
+      "human_score": 0.99,
+      "act_ai": "翻(3,3)",
+      "act_ai_desc": "翻(3,3)",
+      "ai_score": 15.0,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 78,
+      "seat": 0,
+      "act_human": "翻(0,4)",
+      "act_human_desc": "翻(0,4)",
+      "human_rank": 5,
+      "human_score": 0.99,
+      "act_ai": "翻(2,2)",
+      "act_ai_desc": "翻(2,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 82,
+      "seat": 0,
+      "act_human": "走(2,1)->(2,2)",
+      "act_human_desc": "走(2,1)->(2,2)[r旅长吃b工兵]",
+      "human_rank": 22,
+      "human_score": -178.0,
+      "act_ai": "翻(1,2)",
+      "act_ai_desc": "翻(1,2)",
+      "ai_score": 15.0,
+      "score_gap": 193.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 84,
+      "seat": 0,
+      "act_human": "翻(10,3)",
+      "act_human_desc": "翻(10,3)",
+      "human_rank": 6,
+      "human_score": 0.98,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.02
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 85,
+      "seat": 1,
+      "act_human": "走(9,1)->(10,2)",
+      "act_human_desc": "走(9,1)->(10,2)[b旅长占空地]",
+      "human_rank": 19,
+      "human_score": -79.0,
+      "act_ai": "翻(6,1)",
+      "act_ai_desc": "翻(6,1)",
+      "ai_score": 15.0,
+      "score_gap": 94.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 86,
+      "seat": 0,
+      "act_human": "翻(9,0)",
+      "act_human_desc": "翻(9,0)",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 87,
+      "seat": 1,
+      "act_human": "走(8,2)->(9,1)",
+      "act_human_desc": "走(8,2)->(9,1)[b工兵占空地]",
+      "human_rank": 3,
+      "human_score": 16.0,
+      "act_ai": "走(10,2)->(10,3)",
+      "act_ai_desc": "走(10,2)->(10,3)[b旅长吃r排长]",
+      "ai_score": 59.0,
+      "score_gap": 43.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 88,
+      "seat": 0,
+      "act_human": "翻(10,0)",
+      "act_human_desc": "翻(10,0)",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 90,
+      "seat": 0,
+      "act_human": "翻(7,0)",
+      "act_human_desc": "翻(7,0)",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 92,
+      "seat": 0,
+      "act_human": "翻(6,0)",
+      "act_human_desc": "翻(6,0)",
+      "human_rank": 6,
+      "human_score": 0.98,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.02
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 94,
+      "seat": 0,
+      "act_human": "走(9,0)->(8,0)",
+      "act_human_desc": "走(9,0)->(8,0)[r师长占空地]",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 95,
+      "seat": 1,
+      "act_human": "走(9,3)->(8,3)",
+      "act_human_desc": "走(9,3)->(8,3)[b军长占空地]",
+      "human_rank": 18,
+      "human_score": -79.0,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.0,
+      "score_gap": 94.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 96,
+      "seat": 0,
+      "act_human": "走(8,0)->(8,1)",
+      "act_human_desc": "走(8,0)->(8,1)[r师长占空地]",
+      "human_rank": 6,
+      "human_score": 1.0,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 98,
+      "seat": 0,
+      "act_human": "翻(10,1)",
+      "act_human_desc": "翻(10,1)",
+      "human_rank": 6,
+      "human_score": 0.98,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.01,
+      "score_gap": 24.03
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 100,
+      "seat": 0,
+      "act_human": "走(10,1)->(10,4)",
+      "act_human_desc": "走(10,1)->(10,4)[r司令占空地]",
+      "human_rank": 6,
+      "human_score": 1.0,
+      "act_ai": "走(1,1)->(2,1)",
+      "act_ai_desc": "走(1,1)->(2,1)[r连长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 101,
+      "seat": 1,
+      "act_human": "翻(1,2)",
+      "act_human_desc": "翻(1,2)",
+      "human_rank": 5,
+      "human_score": 0.98,
+      "act_ai": "走(3,2)->(2,1)",
+      "act_ai_desc": "走(3,2)->(2,1)[b团长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 103,
+      "seat": 1,
+      "act_human": "翻(1,4)",
+      "act_human_desc": "翻(1,4)",
+      "human_rank": 4,
+      "human_score": 0.98,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.01,
+      "score_gap": 14.03
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 105,
+      "seat": 1,
+      "act_human": "翻(0,3)",
+      "act_human_desc": "翻(0,3)",
+      "human_rank": 4,
+      "human_score": 1.0,
+      "act_ai": "走(1,4)->(0,4)",
+      "act_ai_desc": "走(1,4)->(0,4)[b司令吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 70.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 109,
+      "seat": 1,
+      "act_human": "走(1,4)->(1,3)",
+      "act_human_desc": "走(1,4)->(1,3)[b司令占空地]",
+      "human_rank": 5,
+      "human_score": 1.0,
+      "act_ai": "走(0,3)->(0,4)",
+      "act_ai_desc": "走(0,3)->(0,4)[b师长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 70.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 111,
+      "seat": 1,
+      "act_human": "走(0,1)->(1,1)",
+      "act_human_desc": "走(0,1)->(1,1)[b炸弹占空地]",
+      "human_rank": 23,
+      "human_score": -399.01,
+      "act_ai": "走(0,3)->(0,4)",
+      "act_ai_desc": "走(0,3)->(0,4)[b师长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 470.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 112,
+      "seat": 0,
+      "act_human": "走(2,1)->(1,1)",
+      "act_human_desc": "走(2,1)->(1,1)[r连长吃b炸弹]",
+      "human_rank": 39,
+      "human_score": -249.0,
+      "act_ai": "翻(3,3)",
+      "act_ai_desc": "翻(3,3)",
+      "ai_score": 15.0,
+      "score_gap": 264.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 113,
+      "seat": 1,
+      "act_human": "走(3,2)->(2,1)",
+      "act_human_desc": "走(3,2)->(2,1)[b团长占空地]",
+      "human_rank": 2,
+      "human_score": 16.0,
+      "act_ai": "走(0,3)->(0,4)",
+      "act_ai_desc": "走(0,3)->(0,4)[b师长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 55.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 115,
+      "seat": 1,
+      "act_human": "走(1,3)->(1,4)",
+      "act_human_desc": "走(1,3)->(1,4)[b司令占空地]",
+      "human_rank": 4,
+      "human_score": 0.99,
+      "act_ai": "走(0,3)->(0,4)",
+      "act_ai_desc": "走(0,3)->(0,4)[b师长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 70.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 123,
+      "seat": 1,
+      "act_human": "走(2,1)->(1,0)",
+      "act_human_desc": "走(2,1)->(1,0)[b团长占空地]",
+      "human_rank": 15,
+      "human_score": -179.01,
+      "act_ai": "走(1,3)->(1,4)",
+      "act_ai_desc": "走(1,3)->(1,4)[b司令占空地]",
+      "ai_score": 0.0,
+      "score_gap": 179.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 126,
+      "seat": 0,
+      "act_human": "走(3,4)->(10,4)",
+      "act_human_desc": "走(3,4)->(10,4)[r司令占空地]",
+      "human_rank": 4,
+      "human_score": 1.0,
+      "act_ai": "走(2,1)->(3,2)",
+      "act_ai_desc": "走(2,1)->(3,2)[r旅长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 129,
+      "seat": 1,
+      "act_human": "走(7,3)->(6,2)",
+      "act_human_desc": "走(7,3)->(6,2)[b军长占空地]",
+      "human_rank": 10,
+      "human_score": -79.01,
+      "act_ai": "走(3,2)->(4,3)",
+      "act_ai_desc": "走(3,2)->(4,3)[b营长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 131,
+      "seat": 1,
+      "act_human": "翻(11,1)",
+      "act_human_desc": "翻(11,1)",
+      "human_rank": 4,
+      "human_score": 0.99,
+      "act_ai": "走(6,2)->(7,3)",
+      "act_ai_desc": "走(6,2)->(7,3)[b军长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 133,
+      "seat": 1,
+      "act_human": "翻(11,0)",
+      "act_human_desc": "翻(11,0)",
+      "human_rank": 4,
+      "human_score": 0.99,
+      "act_ai": "走(6,2)->(7,3)",
+      "act_ai_desc": "走(6,2)->(7,3)[b军长占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.01
+    },
+    {
+      "game_id": 4,
+      "filename": "251122230041 棋手 62240-棋手 37417.sav",
+      "players": [
+        "棋手 62240",
+        "棋手 37417"
+      ],
+      "ply": 135,
+      "seat": 1,
+      "act_human": "翻(11,3)",
+      "act_human_desc": "翻(11,3)",
+      "human_rank": 4,
+      "human_score": 0.96,
+      "act_ai": "走(6,2)->(7,3)",
+      "act_ai_desc": "走(6,2)->(7,3)[b军长占空地]",
+      "ai_score": 25.02,
+      "score_gap": 24.06
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 5,
+      "seat": 1,
+      "act_human": "翻(10,0)",
+      "act_human_desc": "翻(10,0)",
+      "human_rank": 8,
+      "human_score": 1.0,
+      "act_ai": "翻(5,3)",
+      "act_ai_desc": "翻(5,3)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 6,
+      "seat": 0,
+      "act_human": "走(9,1)->(9,0)",
+      "act_human_desc": "走(9,1)->(9,0)[r营长吃b工兵]",
+      "human_rank": 48,
+      "human_score": -78.0,
+      "act_ai": "翻(8,0)",
+      "act_ai_desc": "翻(8,0)",
+      "ai_score": 15.0,
+      "score_gap": 93.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 10,
+      "seat": 0,
+      "act_human": "翻(3,4)",
+      "act_human_desc": "翻(3,4)",
+      "human_rank": 6,
+      "human_score": 0.95,
+      "act_ai": "翻(8,0)",
+      "act_ai_desc": "翻(8,0)",
+      "ai_score": 15.01,
+      "score_gap": 14.06
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 16,
+      "seat": 0,
+      "act_human": "走(2,3)->(3,3)",
+      "act_human_desc": "走(2,3)->(3,3)[r师长吃b工兵]",
+      "human_rank": 46,
+      "human_score": -178.0,
+      "act_ai": "翻(10,1)",
+      "act_ai_desc": "翻(10,1)",
+      "ai_score": 15.0,
+      "score_gap": 193.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 20,
+      "seat": 0,
+      "act_human": "翻(5,2)",
+      "act_human_desc": "翻(5,2)",
+      "human_rank": 11,
+      "human_score": 0.98,
+      "act_ai": "翻(10,1)",
+      "act_ai_desc": "翻(10,1)",
+      "ai_score": 15.01,
+      "score_gap": 14.03
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 25,
+      "seat": 1,
+      "act_human": "走(4,3)->(4,2)",
+      "act_human_desc": "走(4,3)->(4,2)[b师长占空地]",
+      "human_rank": 41,
+      "human_score": -79.01,
+      "act_ai": "翻(3,1)",
+      "act_ai_desc": "翻(3,1)",
+      "ai_score": 15.0,
+      "score_gap": 94.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 26,
+      "seat": 0,
+      "act_human": "翻(3,0)",
+      "act_human_desc": "翻(3,0)",
+      "human_rank": 9,
+      "human_score": 1.0,
+      "act_ai": "翻(2,2)",
+      "act_ai_desc": "翻(2,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 32,
+      "seat": 0,
+      "act_human": "走(2,3)->(2,2)",
+      "act_human_desc": "走(2,3)->(2,2)[r师长吃b团长]",
+      "human_rank": 37,
+      "human_score": -176.5,
+      "act_ai": "翻(10,2)",
+      "act_ai_desc": "翻(10,2)",
+      "ai_score": 15.0,
+      "score_gap": 191.5
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 36,
+      "seat": 0,
+      "act_human": "走(1,2)->(2,2)",
+      "act_human_desc": "走(1,2)->(2,2)[r团长占空地]",
+      "human_rank": 7,
+      "human_score": 1.0,
+      "act_ai": "翻(9,2)",
+      "act_ai_desc": "翻(9,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 38,
+      "seat": 0,
+      "act_human": "翻(11,2)",
+      "act_human_desc": "翻(11,2)",
+      "human_rank": 6,
+      "human_score": 0.99,
+      "act_ai": "翻(8,0)",
+      "act_ai_desc": "翻(8,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 39,
+      "seat": 1,
+      "act_human": "翻(10,2)",
+      "act_human_desc": "翻(10,2)",
+      "human_rank": 7,
+      "human_score": 1.0,
+      "act_ai": "翻(5,0)",
+      "act_ai_desc": "翻(5,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 40,
+      "seat": 0,
+      "act_human": "翻(8,3)",
+      "act_human_desc": "翻(8,3)",
+      "human_rank": 5,
+      "human_score": 0.99,
+      "act_ai": "翻(8,0)",
+      "act_ai_desc": "翻(8,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 43,
+      "seat": 1,
+      "act_human": "走(10,1)->(10,2)",
+      "act_human_desc": "走(10,1)->(10,2)[b旅长占空地]",
+      "human_rank": 12,
+      "human_score": 1.0,
+      "act_ai": "翻(9,2)",
+      "act_ai_desc": "翻(9,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 44,
+      "seat": 0,
+      "act_human": "翻(11,0)",
+      "act_human_desc": "翻(11,0)",
+      "human_rank": 7,
+      "human_score": 0.99,
+      "act_ai": "翻(8,0)",
+      "act_ai_desc": "翻(8,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 47,
+      "seat": 1,
+      "act_human": "走(8,0)->(7,1)",
+      "act_human_desc": "走(8,0)->(7,1)[b排长占空地]",
+      "human_rank": 2,
+      "human_score": 26.0,
+      "act_ai": "走(10,2)->(9,2)",
+      "act_ai_desc": "走(10,2)->(9,2)[b旅长吃r连长]",
+      "ai_score": 62.5,
+      "score_gap": 36.5
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 48,
+      "seat": 0,
+      "act_human": "翻(6,4)",
+      "act_human_desc": "翻(6,4)",
+      "human_rank": 4,
+      "human_score": 0.99,
+      "act_ai": "翻(7,2)",
+      "act_ai_desc": "翻(7,2)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 49,
+      "seat": 1,
+      "act_human": "走(6,4)->(7,3)",
+      "act_human_desc": "走(6,4)->(7,3)[b连长占空地]",
+      "human_rank": 2,
+      "human_score": 26.0,
+      "act_ai": "走(10,2)->(9,2)",
+      "act_ai_desc": "走(10,2)->(9,2)[b旅长吃r连长]",
+      "ai_score": 62.5,
+      "score_gap": 36.5
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 53,
+      "seat": 1,
+      "act_human": "走(9,2)->(10,2)",
+      "act_human_desc": "走(9,2)->(10,2)[b旅长占空地]",
+      "human_rank": 17,
+      "human_score": 1.0,
+      "act_ai": "翻(10,3)",
+      "act_ai_desc": "翻(10,3)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 55,
+      "seat": 1,
+      "act_human": "翻(11,1)",
+      "act_human_desc": "翻(11,1)",
+      "human_rank": 17,
+      "human_score": 0.98,
+      "act_ai": "翻(8,4)",
+      "act_ai_desc": "翻(8,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.02
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 56,
+      "seat": 0,
+      "act_human": "走(11,1)->(10,1)",
+      "act_human_desc": "走(11,1)->(10,1)[r炸弹占空地]",
+      "human_rank": 32,
+      "human_score": -399.0,
+      "act_ai": "翻(7,2)",
+      "act_ai_desc": "翻(7,2)",
+      "ai_score": 15.0,
+      "score_gap": 414.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 57,
+      "seat": 1,
+      "act_human": "走(10,2)->(9,2)",
+      "act_human_desc": "走(10,2)->(9,2)[b旅长占空地]",
+      "human_rank": 17,
+      "human_score": 1.0,
+      "act_ai": "翻(10,3)",
+      "act_ai_desc": "翻(10,3)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 61,
+      "seat": 1,
+      "act_human": "走(11,2)->(11,1)",
+      "act_human_desc": "走(11,2)->(11,1)[b团长占空地]",
+      "human_rank": 15,
+      "human_score": 0.99,
+      "act_ai": "翻(9,4)",
+      "act_ai_desc": "翻(9,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 63,
+      "seat": 1,
+      "act_human": "翻(9,4)",
+      "act_human_desc": "翻(9,4)",
+      "human_rank": 2,
+      "human_score": 16.0,
+      "act_ai": "走(11,1)->(11,0)",
+      "act_ai_desc": "走(11,1)->(11,0)[b团长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 55.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 65,
+      "seat": 1,
+      "act_human": "翻(8,4)",
+      "act_human_desc": "翻(8,4)",
+      "human_rank": 2,
+      "human_score": 16.0,
+      "act_ai": "走(11,1)->(11,0)",
+      "act_ai_desc": "走(11,1)->(11,0)[b团长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 55.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 67,
+      "seat": 1,
+      "act_human": "走(11,1)->(10,1)",
+      "act_human_desc": "走(11,1)->(10,1)[b团长占空地]",
+      "human_rank": 14,
+      "human_score": 0.99,
+      "act_ai": "走(11,1)->(11,0)",
+      "act_ai_desc": "走(11,1)->(11,0)[b团长吃r工兵]",
+      "ai_score": 71.0,
+      "score_gap": 70.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 70,
+      "seat": 0,
+      "act_human": "走(7,4)->(8,4)",
+      "act_human_desc": "走(7,4)->(8,4)[r旅长吃b旅长]",
+      "human_rank": 23,
+      "human_score": -99.0,
+      "act_ai": "翻(7,2)",
+      "act_ai_desc": "翻(7,2)",
+      "ai_score": 15.0,
+      "score_gap": 114.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 75,
+      "seat": 1,
+      "act_human": "走(9,4)->(3,4)",
+      "act_human_desc": "走(9,4)->(3,4)[b司令占空地]",
+      "human_rank": 8,
+      "human_score": 1.0,
+      "act_ai": "翻(6,1)",
+      "act_ai_desc": "翻(6,1)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 77,
+      "seat": 1,
+      "act_human": "走(3,4)->(6,4)",
+      "act_human_desc": "走(3,4)->(6,4)[b司令占空地]",
+      "human_rank": 8,
+      "human_score": 1.0,
+      "act_ai": "走(3,4)->(4,3)",
+      "act_ai_desc": "走(3,4)->(4,3)[b司令占空地]",
+      "ai_score": 25.0,
+      "score_gap": 24.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 80,
+      "seat": 0,
+      "act_human": "走(6,0)->(5,0)",
+      "act_human_desc": "走(6,0)->(5,0)[r师长吃b排长]",
+      "human_rank": 25,
+      "human_score": -299.0,
+      "act_ai": "走(3,2)->(4,3)",
+      "act_ai_desc": "走(3,2)->(4,3)[r师长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 314.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 81,
+      "seat": 1,
+      "act_human": "走(6,3)->(6,4)",
+      "act_human_desc": "走(6,3)->(6,4)[b司令占空地]",
+      "human_rank": 6,
+      "human_score": 1.0,
+      "act_ai": "翻(2,4)",
+      "act_ai_desc": "翻(2,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 83,
+      "seat": 1,
+      "act_human": "走(6,4)->(5,4)",
+      "act_human_desc": "走(6,4)->(5,4)[b司令占空地]",
+      "human_rank": 5,
+      "human_score": 0.99,
+      "act_ai": "翻(2,4)",
+      "act_ai_desc": "翻(2,4)",
+      "ai_score": 15.0,
+      "score_gap": 14.01
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 84,
+      "seat": 0,
+      "act_human": "走(4,0)->(3,0)",
+      "act_human_desc": "走(4,0)->(3,0)[r连长占空地]",
+      "human_rank": 26,
+      "human_score": -399.0,
+      "act_ai": "走(3,2)->(4,3)",
+      "act_ai_desc": "走(3,2)->(4,3)[r师长占空地]",
+      "ai_score": 15.0,
+      "score_gap": 414.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 87,
+      "seat": 1,
+      "act_human": "翻(0,4)",
+      "act_human_desc": "翻(0,4)",
+      "human_rank": 5,
+      "human_score": 0.97,
+      "act_ai": "翻(2,4)",
+      "act_ai_desc": "翻(2,4)",
+      "ai_score": 15.02,
+      "score_gap": 14.05
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 88,
+      "seat": 0,
+      "act_human": "走(1,4)->(0,4)",
+      "act_human_desc": "走(1,4)->(0,4)[r炸弹吃b工兵]",
+      "human_rank": 24,
+      "human_score": -349.0,
+      "act_ai": "翻(0,2)",
+      "act_ai_desc": "翻(0,2)",
+      "ai_score": 0.0,
+      "score_gap": 349.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 91,
+      "seat": 1,
+      "act_human": "走(2,4)->(5,4)",
+      "act_human_desc": "走(2,4)->(5,4)[b营长占空地]",
+      "human_rank": 4,
+      "human_score": 1.0,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 14.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 93,
+      "seat": 1,
+      "act_human": "走(4,3)->(3,4)",
+      "act_human_desc": "走(4,3)->(3,4)[b司令占空地]",
+      "human_rank": 16,
+      "human_score": -179.0,
+      "act_ai": "翻(2,0)",
+      "act_ai_desc": "翻(2,0)",
+      "ai_score": 15.0,
+      "score_gap": 194.0
+    },
+    {
+      "game_id": 5,
+      "filename": "251122230722 棋手 75274-棋手 62240.sav",
+      "players": [
+        "棋手 75274",
+        "棋手 62240"
+      ],
+      "ply": 106,
+      "seat": 0,
+      "act_human": "走(1,0)->(2,0)",
+      "act_human_desc": "走(1,0)->(2,0)[r排长吃b炸弹]",
+      "human_rank": 14,
+      "human_score": -99.0,
+      "act_ai": "走(11,2)->(11,1)",
+      "act_ai_desc": "走(11,2)->(11,1)[r司令占空地]",
+      "ai_score": 0.0,
+      "score_gap": 99.0
+    }
+  ],
+  "cliffs": []
+}
