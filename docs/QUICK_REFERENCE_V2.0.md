@@ -76,7 +76,7 @@ python cli.py benchmark --model models/pool/bc_best.pt
 - `flag_gong_only`: 是否只有工兵能吃军旗 (true)
 - `allow_suicide_attack`: 是否允许小子撞大子 (false)
 - `hq_locks_pieces`: 大本营是否锁死棋子 (false)
-- `no_capture_draw_plies`: 70 步无吃子判和
+- `no_capture_draw_plies`: 40 步无吃子判和
 - `repetition_draw_count`: 3 次循环判和
 
 ### 训练参数 (`configs/training.yaml`)

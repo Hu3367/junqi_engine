@@ -183,7 +183,7 @@ def is_dead_draw(state: GameState) -> tuple[bool, str]:
     1. 双无工兵死锁 (Zero Engineer Bilateral Lockout)
     2. 1v1 单大子追单小子死锁 (Single Chaser vs Camp/Corridor Fugitive)
     3. 双向军旗死区 (Bilateral Dead Fortress)
-    4. 70步无吃子极限时钟逼近 (Near-Limit Quiet Moves)
+    4. 40步无吃子极限时钟逼近 (Near-Limit Quiet Moves)
 
     返回: (is_draw: bool, reason: str)
     """
@@ -192,8 +192,8 @@ def is_dead_draw(state: GameState) -> tuple[bool, str]:
         return False, "color_not_assigned"
     opp_color = other(my_color)
 
-    # 0. 规则层无吃子限步优先检测（达到 APK 70 步限步直接判和）
-    max_quiet = getattr(state.cfg, "no_capture_draw_plies", 70)
+    # 0. 规则层无吃子限步优先检测（达到 40 步限步直接判和）
+    max_quiet = getattr(state.cfg, "no_capture_draw_plies", 40)
     if max_quiet > 0 and state.quiet >= max_quiet:
         return True, "quiet_moves_limit_reached"
 

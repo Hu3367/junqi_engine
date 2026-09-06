@@ -437,10 +437,10 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             damping = 0.75 if total_gong <= 1 else 0.85
             score *= damping
 
-    # 6.2 70 步无吃子限步时钟衰减
-    # 当连续多手未吃子且逐步逼近判和时限（70步）时，非吃旗性物质优势随时间按二次方强力衰减归零
-    limit_quiet = getattr(state.cfg, "no_capture_draw_plies", 70)
-    if limit_quiet > 0 and state.quiet >= 20:
+    # 6.2 40 步无吃子限步时钟衰减
+    # 当连续多手未吃子且逐步逼近判和时限（40步）时，非吃旗性物质优势随时间按二次方强力衰减归零
+    limit_quiet = getattr(state.cfg, "no_capture_draw_plies", 40)
+    if limit_quiet > 0 and state.quiet >= max(10, limit_quiet // 2):
         progress = min(1.0, state.quiet / limit_quiet)
         score *= max(0.05, (1.0 - progress) ** 2)
 

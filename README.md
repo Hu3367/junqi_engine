@@ -41,7 +41,7 @@
 - **禁止自杀攻击**：小子不可撞大子、非工兵不可碰雷（可用 `allow_suicide_attack` 开启旧规则）
 - 战斗：大吃小、同级同尽；炸弹与任何子同尽；地雷不能动（工兵挖除、炸弹同尽）
 - **扛旗双门槛（APK ruleflip.txt 原文）**：需先清光对方 3 雷（`flag_needs_mines_cleared`），且**只有工兵能扛旗**（`flag_gong_only`，对应 App"吃军旗:工兵"默认档）
-- **和棋三线（APK 官方细则）**：连续 70 步未吃子判和（`no_capture_draw_plies`）；总步数 1000 判和（`max_plies`）；可观察局面重复 3 次判和（`repetition_draw_count`，对局层计数并把临界局面传给搜索主动规避）
+- **和棋三线（APK 官方细则）**：连续 40 步未吃子判和（`no_capture_draw_plies`）；总步数 1000 判和（`max_plies`）；可观察局面重复 3 次判和（`repetition_draw_count`，对局层计数并把临界局面传给搜索主动规避）
 
 与具体 App 细则有差异时，改 `junqi/config.py` 即可对齐（App"规则设置"对话框另有 大本营吃子开关/吃地雷者/吃军旗者 三项可选档；引擎默认取其"工兵/允许吃"默认档，中间档"最小棋子"未建模）。
 

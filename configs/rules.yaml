@@ -11,6 +11,6 @@ hq_locks_pieces: false           # 大本营锁死棋子（翻棋模式为 false
 engineer_rail_turns: true        # 工兵铁路可任意转弯
 engineer_can_fly_over_pieces: false  # 工兵不可越过轨道上的棋子
 
-no_capture_draw_plies: 70        # 连续 70 步未吃子判和
+no_capture_draw_plies: 40        # 连续 40 步未吃子判和
 max_plies: 1000                  # 总步数 1000 判和
 repetition_draw_count: 3         # 相同局面出现 3 次判和

@@ -213,10 +213,10 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
         self.assertEqual(_terminal_value(nxt), 1.0)
 
     def test_terminal_value_draw(self):
-        """70 步无吃子判和：终局值为 0。"""
+        """40 步无吃子判和：终局值为 0。"""
         from junqi.mcts import _terminal_value
         st = self._mk({(5, 2): ("r", "PAI", True), (9, 0): ("b", "PAI", True)},
-                      quiet=69)
+                      quiet=39)
         nxt = st.apply(Action("move", (5, 2), (5, 1)))
         self.assertEqual((nxt.winner, nxt.win_reason), (-1, "no_capture"))
         self.assertEqual(_terminal_value(nxt), 0.0)
@@ -249,10 +249,10 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
                          f"困毙着法未被选中，实际选择: {act}")
 
     def test_mcts_draw_line_value(self):
-        """强制拖和：所有分支一步后均触发 70 步判和，根节点估值应 ≈ 0，
+        """强制拖和：所有分支一步后均触发 40 步判和，根节点估值应 ≈ 0，
         且搜索全程无异常。"""
         st = self._mk({(5, 2): ("r", "PAI", True), (9, 0): ("b", "PAI", True)},
-                      quiet=68)
+                      quiet=38)
         mcts = MCTS(self.net, simulations=80, device="cpu")
         act, pi_vec, _, _ = mcts.search(st, temperature=1.0, add_noise=False,
                                         rng=random.Random(13))

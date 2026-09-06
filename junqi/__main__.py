@@ -25,6 +25,15 @@ def main(argv=None):
     lg.add_argument("--data", default="datasets/distill_tactical_labeled.json",
                     help="待核验打标数据集 JSON 路径")
 
+    rg = sub.add_parser("replay_gui", help="启动对局复盘与决策点评工作台")
+    rg.add_argument("--file", "-f", default=None, help="初始载入的复盘文件 (.sav 或 .json)")
+
+    sr = sub.add_parser("summarize_reviews", help="一键全量汇总复盘点评并导出算法改进数据集")
+    sr.add_argument("--storage", default="reviews/annotations.json", help="点评数据存储路径")
+    sr.add_argument("--out-report", default="reports/review_summary_report.md", help="输出诊断报告路径")
+    sr.add_argument("--out-dataset", default="datasets/user_review_labeled.json", help="输出算法改进数据集路径")
+    sr.add_argument("--out-test", default="tests/test_user_reviewed_tactics.py", help="输出自动化回归测试代码路径")
+
     sp = sub.add_parser("selfplay", help="自对弈批量研究")
     sp.add_argument("--games", type=int, default=100, help="每组对局数")
     sp.add_argument("--a", default="greedy", help="先手策略: random/greedy/search2/search3")
@@ -76,8 +85,10 @@ def main(argv=None):
     dv = sub.add_parser("distill_value", help="S2: 专家价值蒸馏预热（仅训练价值头）")
     dv.add_argument("--base", default="models/bc_best.pt", help="基座模型路径")
     dv.add_argument("--out", default="models/value_distilled.pt", help="输出权重路径")
-    dv.add_argument("--samples", type=int, default=1200, help="蒸馏局面数")
-    dv.add_argument("--epochs", type=int, default=3, help="训练轮数")
+    dv.add_argument("--data", default="datasets/distill_tactical_labeled.json",
+                    help="预打标数据集 JSON 路径（若存在则优先加载）")
+    dv.add_argument("--samples", type=int, default=None, help="蒸馏局面数（默认使用全部数据或1200）")
+    dv.add_argument("--epochs", type=int, default=8, help="训练轮数")
     dv.add_argument("--batch-size", type=int, default=128, help="批大小")
     dv.add_argument("--lr", type=float, default=5e-4, help="学习率")
     dv.add_argument("--val-ratio", type=float, default=0.15, help="验证集占比")
@@ -179,6 +190,7 @@ def main(argv=None):
     elif args.cmd == "distill_value":
         from .train_value_distill import train_value_distill
         train_value_distill(base_model=args.base, out_path=args.out,
+                            data_path=getattr(args, "data", None),
                             n_samples=args.samples, epochs=args.epochs,
                             batch_size=args.batch_size, lr=args.lr,
                             val_ratio=args.val_ratio, seed=args.seed,
@@ -195,6 +207,20 @@ def main(argv=None):
         records = load_records(args.dir)
         print(analyze(records, args.out))
         print(f"\n报告已保存: {args.out}")
+    elif args.cmd == "replay_gui":
+        from .replay_gui import run_replay_gui
+        run_replay_gui(initial_file=args.file)
+    elif args.cmd == "summarize_reviews":
+        from .review_storage import ReviewStorage
+        from .review_summary import ReviewSummaryPipeline
+        storage = ReviewStorage(storage_path=args.storage)
+        pipeline = ReviewSummaryPipeline(storage=storage)
+        res = pipeline.run_all(
+            out_report_path=args.out_report,
+            out_dataset_path=args.out_dataset,
+            out_test_path=args.out_test,
+        )
+        print(json.dumps(res, indent=2, ensure_ascii=False))
     elif args.cmd == "replay":
         from .replay import load_dir, summarize
         games = load_dir(args.path, check=not args.no_check)

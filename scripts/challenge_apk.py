@@ -23,6 +23,9 @@ import sys
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # 确保项目根目录在 sys.path 中
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
@@ -30,6 +33,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from junqi.ai import Agent, ApkNativeAgent, ExpertAgent, HybridAgent, NNAgent
 from junqi.config import RuleConfig, SearchConfig
+from junqi.eval_expert import DEFAULT_PIECE_VALUES, _get_alive_counts, evaluate_expert
+from junqi.rules import other
 from junqi.state import GameState, deal, position_key
 
 
@@ -75,12 +80,28 @@ def _run_single_match_game(task_args: tuple) -> dict:
         pos_seen[pk] = pos_seen.get(pk, 0) + 1
 
     is_rep = (st.winner == -1 and st.win_reason == "repetition")
+
+    # 终局态势与物质统计
+    cand_color = st.seat_color.get(a_seat)
+    opp_color = other(cand_color) if cand_color else None
+    if cand_color:
+        my_counts, opp_counts = _get_alive_counts(st, my=cand_color)
+        std_my_mat = sum(DEFAULT_PIECE_VALUES[rk] * my_counts.get((cand_color, rk), 0) for rk in DEFAULT_PIECE_VALUES)
+        std_opp_mat = sum(DEFAULT_PIECE_VALUES[rk] * opp_counts.get((opp_color, rk), 0) for rk in DEFAULT_PIECE_VALUES)
+        mat_delta = std_my_mat - std_opp_mat
+        board_score = evaluate_expert(st, seat=a_seat)
+    else:
+        mat_delta = 0.0
+        board_score = 0.0
+
     return {
         "game_idx": game_idx,
         "winner": st.winner,
         "a_seat": a_seat,
         "plies": plies,
         "is_rep": is_rep,
+        "mat_delta": mat_delta,
+        "board_score": board_score,
     }
 
 
@@ -112,8 +133,8 @@ def main():
     args = parser.parse_args()
 
     dev_info = f", GPU设备: {args.device.upper()}" if args.agent in ("hybrid", "nn") else ""
-    print(f"=== 正在初始化参评智能体: {args.agent.upper()} (并发进程数: {args.workers}{dev_info}) ===")
-    print(f"=== 开始基准对抗: {args.agent} vs APK {args.level} (共 {args.games} 局) ===")
+    print(f"=== 正在初始化参评智能体: {args.agent.upper()} (并发进程数: {args.workers}{dev_info}) ===", flush=True)
+    print(f"=== 开始基准对抗: {args.agent} vs APK {args.level} (共 {args.games} 局) ===", flush=True)
 
     t0 = time.time()
     task_list = [
@@ -121,12 +142,23 @@ def main():
         for i in range(args.games)
     ]
 
+    results = []
     if args.workers <= 1:
-        results = [_run_single_match_game(task) for task in task_list]
+        for task in task_list:
+            r = _run_single_match_game(task)
+            results.append(r)
+            win_str = "胜 🏆" if r["winner"] == r["a_seat"] else ("负 ❌" if r["winner"] == (1 - r["a_seat"]) else "和 🤝")
+            role_str = "执红(先)" if r["a_seat"] == 0 else "执蓝(后)"
+            print(f"[{len(results)}/{args.games}] 局 #{r['game_idx']+1:02d}: {role_str}, 手数 {r['plies']:3d}, 终局: {win_str} (净物质: {r['mat_delta']:+.1f}, 场面分: {r['board_score']:+.1f})", flush=True)
     else:
         with mp.Pool(processes=args.workers) as pool:
-            results = pool.map(_run_single_match_game, task_list)
+            for r in pool.imap_unordered(_run_single_match_game, task_list):
+                results.append(r)
+                win_str = "胜 🏆" if r["winner"] == r["a_seat"] else ("负 ❌" if r["winner"] == (1 - r["a_seat"]) else "和 🤝")
+                role_str = "执红(先)" if r["a_seat"] == 0 else "执蓝(后)"
+                print(f"[{len(results)}/{args.games}] 局 #{r['game_idx']+1:02d}: {role_str}, 手数 {r['plies']:3d}, 终局: {win_str} (净物质: {r['mat_delta']:+.1f}, 场面分: {r['board_score']:+.1f})", flush=True)
 
+    results.sort(key=lambda r: r["game_idx"])
     elapsed = time.time() - t0
 
     # 统计指标
@@ -135,6 +167,9 @@ def main():
     draws = sum(1 for r in results if r["winner"] == -1)
     rep_draws = sum(1 for r in results if r["is_rep"])
     total_plies = sum(r["plies"] for r in results)
+    avg_mat_delta = sum(r["mat_delta"] for r in results) / args.games if args.games else 0.0
+    avg_board_score = sum(r["board_score"] for r in results) / args.games if args.games else 0.0
+    mat_advantage_count = sum(1 for r in results if r["mat_delta"] > 0)
 
     score_rate_a = (wins_a + 0.5 * draws) / args.games if args.games else 0.5
     draw_rate = draws / args.games if args.games else 0.0
@@ -144,18 +179,22 @@ def main():
     clipped_score = max(0.01, min(0.99, score_rate_a))
     elo_diff = -400.0 * math.log10(1.0 / clipped_score - 1.0)
 
-    print("\n" + "=" * 55)
-    print(f"           对战战报 (总耗时: {elapsed:.1f} 秒)")
-    print("=" * 55)
-    print(f" 对战双方     : {args.agent.upper()} vs 官方 APK 原生 AI ({args.level})")
-    print(f" 并发核心数   : {args.workers} 个进程")
-    print(f" 总局数       : {args.games} 局 (先后手各半)")
-    print(f" 战绩         : {wins_a} 胜 / {draws} 和 / {wins_b} 负")
-    print(f" 得分率       : {score_rate_a:.1%} (胜=1, 和=0.5, 负=0)")
-    print(f" 和棋率       : {draw_rate:.1%} (其中循环和棋: {rep_draws} 局)")
-    print(f" 平均对局手数 : {avg_len:.1f} 手")
-    print(f" 相对 Elo 分差: {elo_diff:+.1f}")
-    print("=" * 55 + "\n")
+    print("\n" + "=" * 60, flush=True)
+    print(f"           对战战报 (总耗时: {elapsed:.1f} 秒)", flush=True)
+    print("=" * 60, flush=True)
+    print(f" 对战双方     : {args.agent.upper()} vs 官方 APK 原生 AI ({args.level})", flush=True)
+    print(f" 并发核心数   : {args.workers} 个进程", flush=True)
+    print(f" 总局数       : {args.games} 局 (先后手各半)", flush=True)
+    print(f" 官方终局战绩 : {wins_a} 胜 / {draws} 和 / {wins_b} 负", flush=True)
+    print(f" 官方得分率   : {score_rate_a:.1%} (胜=1, 和=0.5, 负=0)", flush=True)
+    print(f" 和棋率       : {draw_rate:.1%} (其中循环和棋: {rep_draws} 局)", flush=True)
+    print(f" 平均对局手数 : {avg_len:.1f} 手", flush=True)
+    print(f" 相对 Elo 分差: {elo_diff:+.1f}", flush=True)
+    print("-" * 60, flush=True)
+    print(f" 物质净优势局 : {mat_advantage_count}/{args.games} 局 ({mat_advantage_count/args.games:.1%}) 终局物质领先", flush=True)
+    print(f" 平均净物质分 : {avg_mat_delta:+.1f} 分", flush=True)
+    print(f" 平均终局场面分: {avg_board_score:+.1f} 分", flush=True)
+    print("=" * 60 + "\n", flush=True)
 
 
 if __name__ == "__main__":

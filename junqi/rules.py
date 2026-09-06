@@ -106,11 +106,10 @@ ALL_POSITIONS = tuple((r, c) for r in range(ROWS) for c in range(COLS))
 CORNER_JUNCTIONS = frozenset({(1, 0), (1, 4), (10, 0), (10, 4)})
 T_JUNCTIONS = frozenset({(5, 0), (5, 4), (6, 0), (6, 4)})
 
-# 前线三通道的铁路阻断：col1/col3 完全不通（公路层已断开），
-# col2 是公路（可一步走过，但铁路滑行不可穿越）。
+# 前线通道阻断：col1/col3 完全不通（山界河流隔断，公路与铁路均阻断）；
+# col0、col2、col4 为三座铁桥（左桥、中桥、右桥），公路与铁路全线贯通。
 CROSS_BLOCKED = frozenset({
     frozenset(((5, 1), (6, 1))),
-    frozenset(((5, 2), (6, 2))),
     frozenset(((5, 3), (6, 3))),
 })
 

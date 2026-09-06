@@ -42,10 +42,9 @@ HQS = frozenset({(0, 1), (0, 3), (11, 1), (11, 3)})
 RAIL_ROWS = frozenset({1, 5, 6, 10})   # 横向铁路
 RAIL_COLS = frozenset({0, 4})          # 纵向铁路（贯通全场）
 
-# 前线三通道阻断（不可穿越）
+# 前线山界通道阻断（col1/col3 无桥阻断，col0/col2/col4 为三座铁桥贯通全场）
 CROSS_BLOCKED = frozenset({
     frozenset(((5, 1), (6, 1))),
-    frozenset(((5, 2), (6, 2))),
     frozenset(((5, 3), (6, 3))),
 })
 ```
@@ -54,7 +53,7 @@ CROSS_BLOCKED = frozenset({
 - 行营内棋子**不可被攻击**（绝对安全区）
 - 大本营进入后**不能再移动**（翻棋模式默认可解锁）
 - 铁路可长距离滑行（工兵可任意转弯飞行）
-- 前线三通道完全不通（必须绕行）
+- 前线三座铁桥（左桥 col0、中桥 col2、右桥 col4）铁路完全相通；col1/col3 山界阻断必须绕行中桥或两侧铁桥
 
 ### 1.2 棋子等级体系
 
@@ -138,7 +137,7 @@ class RuleConfig:
     engineer_can_fly_over_pieces: bool = False  # 工兵不可越过轨道上的棋子
     
     # 和棋规则
-    no_capture_draw_plies: int = 70         # 连续 70 步未吃子判和
+    no_capture_draw_plies: int = 40         # 连续 40 步未吃子判和
     max_plies: int = 1000                   # 总步数 1000 判和
     repetition_draw_count: int = 3          # 相同局面出现 3 次判和
 ```

@@ -26,7 +26,9 @@ def _load_game_state_at_ply(target_ply: int) -> GameState:
     with open(GAME_REPLAY_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    st = deal(random.Random(data["seed"]), RuleConfig())
+    # 该局复盘产生于 70 步无吃子限步规则下，重放切片需使用产生时的规则避免中途截断
+    replay_cfg = RuleConfig(no_capture_draw_plies=70)
+    st = deal(random.Random(data["seed"]), replay_cfg)
     for m in data["moves"]:
         if m["ply"] == target_ply:
             break
@@ -34,6 +36,7 @@ def _load_game_state_at_ply(target_ply: int) -> GameState:
             st = st.apply(Action("flip", tuple(m["frm"])))
         else:
             st = st.apply(Action("move", tuple(m["frm"]), tuple(m["to"])))
+    st.cfg = RuleConfig()
     return st
 
 

@@ -150,8 +150,8 @@ def encode_state_np(state: GameState, seat: int | None = None,
         tensor[30, 0:6, :] = (my_gong_ratio + my_lei_ratio) * 0.5
         tensor[30, 6:12, :] = (opp_gong_ratio + opp_lei_ratio) * 0.5
 
-    # 通道 31: 连续无吃子倒计时 quiet / 70.0
-    max_quiet = state.cfg.no_capture_draw_plies or 70
+    # 通道 31: 连续无吃子倒计时 quiet / 40.0
+    max_quiet = state.cfg.no_capture_draw_plies or 40
     tensor[31, :, :] = min(1.0, state.quiet / max_quiet)
 
     # 通道 32: 总步数进度 ply / 1000.0

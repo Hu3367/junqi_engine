@@ -66,7 +66,7 @@ CELLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 REASON_CN = {
     "flag": "军旗被扛",
     "immobilized": "无棋可走",
-    "no_capture": "连续70步未吃子，判和",
+    "no_capture": "连续40步未吃子，判和",
     "max_plies": "总步数用尽，判和",
     "repetition": "相同局面循环出现，判和",
     "draw_agreement": "双方协议和棋",
@@ -121,6 +121,8 @@ class GuiApp:
         self.selected = None
         self.targets = []
         self.hint_action = None
+        self.last_action: Action | None = None
+        self.last_action_seat: int | None = None
         self.history = []
         self.log_lines = []
         self.result_q = queue.Queue()
@@ -187,15 +189,21 @@ class GuiApp:
                   command=lambda: self.new_game(human_seat=0)).pack(side="left", padx=3)
         tk.Button(row2, text="执后手", font=FONT_S,
                   command=lambda: self.new_game(human_seat=1)).pack(side="left", padx=3)
+        tk.Button(row2, text="复盘点评", font=FONT_S, bg="#E8F8F5",
+                  command=self.open_replay_window).pack(side="left", padx=3)
 
         self.ai_engine = tk.StringVar(value="p4_hybrid" if os.path.exists("models/best.pt") else "expert")
         adv_engine = tk.Frame(p, bg=BG)
-        adv_engine.pack(pady=2)
-        tk.Label(adv_engine, text="AI引擎:", font=FONT_S, bg=BG).pack(side="left")
+        adv_engine.pack(pady=2, fill="x", padx=6)
+        tk.Label(adv_engine, text="AI引擎:", font=FONT_S, bg=BG).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 4))
         tk.Radiobutton(adv_engine, text="P4混合智能", variable=self.ai_engine, value="p4_hybrid",
-                       font=FONT_S, bg=BG).pack(side="left", padx=1)
+                       font=FONT_S, bg=BG).grid(row=0, column=1, sticky="w")
+        tk.Radiobutton(adv_engine, text="原生APK", variable=self.ai_engine, value="apk",
+                       font=FONT_S, bg=BG).grid(row=0, column=2, sticky="w", padx=(4, 0))
         tk.Radiobutton(adv_engine, text="专家搜索", variable=self.ai_engine, value="expert",
-                       font=FONT_S, bg=BG).pack(side="left", padx=1)
+                       font=FONT_S, bg=BG).grid(row=1, column=1, sticky="w")
+        tk.Radiobutton(adv_engine, text="混合智能", variable=self.ai_engine, value="hybrid",
+                       font=FONT_S, bg=BG).grid(row=1, column=2, sticky="w", padx=(4, 0))
 
         adv = tk.Frame(p, bg=BG)
         adv.pack(pady=2)
@@ -269,6 +277,8 @@ class GuiApp:
         self.pending_flip = None
         self.selected = None
         self.hint_action = None
+        self.last_action = None
+        self.last_action_seat = None
         self.pos_seen = Counter([position_key(self.state)])   # 可观察局面计数（循环判和）
         self.gen = getattr(self, "gen", 0) + 1
         self.refresh()
@@ -298,6 +308,8 @@ class GuiApp:
         for _, text in self.log_lines:
             self.logbox.insert("end", text)
         self.selected = self.pending_flip = self.hint_action = None
+        self.last_action = None
+        self.last_action_seat = None
         self._rebuild_seen()
         self.refresh()
 
@@ -305,6 +317,18 @@ class GuiApp:
         self.log_lines.append((tag, text))
         self.logbox.insert("end", text)
         self.logbox.see("end")
+
+    def open_replay_window(self):
+        """调起对局复盘与点评工作台。"""
+        import glob
+        import subprocess
+        import sys
+        recent = sorted(glob.glob("games/game_*.json"), key=os.path.getmtime, reverse=True)
+        init_file = recent[0] if recent else None
+        cmd = [sys.executable, "-m", "junqi", "replay_gui"]
+        if init_file:
+            cmd.extend(["--file", init_file])
+        subprocess.Popen(cmd)
 
     # ------------------------------------------------------------- 事件
 
@@ -378,6 +402,8 @@ class GuiApp:
         self.record["moves"].append(move_rec)
         self.state = st.apply(act)
         self.pos_seen[position_key(self.state)] += 1
+        self.last_action = act
+        self.last_action_seat = st.turn
         self.selected = self.pending_flip = self.hint_action = None
         self.log("move", f"{'你' if st.turn == self.human_seat else 'AI'}: {desc}")
         self.refresh()
@@ -413,7 +439,7 @@ class GuiApp:
             name = time.strftime("games/game_%Y%m%d_%H%M%S") + ".json"
             with open(name, "w", encoding="utf-8") as f:
                 json.dump(self.record, f, ensure_ascii=False, indent=1)
-            self.log("save", f"对局记录已存 {name}")
+            self.log("save", f"对局已存 {name}（可点击【复盘点评】推演与批注）")
         except OSError as e:
             self.log("save", f"记录保存失败: {e}")
     def describe(self, act: Action) -> str:
@@ -457,6 +483,12 @@ class GuiApp:
                     k = 4 if depth <= 2 else 8
                     agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
                     scored = agent.choose_actions(st, topn=3, avoid=avoid, history_counts=self.pos_seen)
+                elif engine_type == "apk":
+                    from .apk_agent import ApkNativeAgent
+                    level_map = {1: "beginner", 2: "intermediate", 3: "advanced"}
+                    lvl = level_map.get(depth, "advanced")
+                    agent = ApkNativeAgent(level=lvl, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
                 elif engine_type == "hybrid":
                     from .ai import HybridAgent
                     mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
@@ -520,6 +552,12 @@ class GuiApp:
                     k = 4 if depth <= 2 else 8
                     agent = HybridDecisionEngine(model_path=mp, k_worlds=k, seed=seed)
                     scored = agent.choose_actions(st, topn=3, avoid=avoid, history_counts=self.pos_seen)
+                elif engine_type == "apk":
+                    from .apk_agent import ApkNativeAgent
+                    level_map = {1: "beginner", 2: "intermediate", 3: "advanced"}
+                    lvl = level_map.get(depth, "advanced")
+                    agent = ApkNativeAgent(level=lvl, seed=seed)
+                    scored = agent.choose_actions(st, topn=3, avoid=avoid)
                 elif engine_type == "hybrid":
                     from .ai import HybridAgent
                     mp = "models/bc_best.pt" if os.path.exists("models/bc_best.pt") else "models/best.pt"
@@ -644,7 +682,7 @@ class GuiApp:
 
         # 根据残局阶段、无吃子步数动态估计和棋概率
         quiet = getattr(st, "quiet", 0)
-        max_q = getattr(st.cfg, "no_capture_draw_plies", 70)
+        max_q = getattr(st.cfg, "no_capture_draw_plies", 40)
         progress = min(1.0, quiet / max_q) if max_q > 0 else 0.0
         p_draw_base = 0.20 + 0.60 * (progress ** 1.5)
 
@@ -776,6 +814,31 @@ class GuiApp:
 
     def draw_markers(self):
         cv = self.canvas
+        # 0. 高亮显示最后一步棋（醒目红色框与轨迹箭头，便于瞬间锁定 AI 走法）
+        if getattr(self, "last_action", None) is not None:
+            act = self.last_action
+            is_ai = (getattr(self, "last_action_seat", None) != self.human_seat)
+            trace_color = "#E60000" if is_ai else "#D90429"
+            if act.kind == "flip":
+                fx, fy = rc_to_xy(*act.frm)
+                cv.create_rectangle(fx - CELL_W / 2 + 2, fy - CELL_H / 2 + 1,
+                                    fx + CELL_W / 2 - 2, fy + CELL_H / 2 - 1,
+                                    outline=trace_color, width=3)
+            elif act.kind == "move":
+                fx, fy = rc_to_xy(*act.frm)
+                tx, ty = rc_to_xy(*act.to)
+                # 起始位置：红色虚线框
+                cv.create_rectangle(fx - CELL_W / 2 + 2, fy - CELL_H / 2 + 1,
+                                    fx + CELL_W / 2 - 2, fy + CELL_H / 2 - 1,
+                                    outline=trace_color, width=2, dash=(4, 3))
+                # 目标位置：加粗红色实线框
+                cv.create_rectangle(tx - CELL_W / 2 + 2, ty - CELL_H / 2 + 1,
+                                    tx + CELL_W / 2 - 2, ty + CELL_H / 2 - 1,
+                                    outline=trace_color, width=3)
+                # 轨迹连线：带箭头的红色方向线
+                cv.create_line(fx, fy, tx, ty, fill=trace_color, width=3,
+                               arrow="last", arrowshape=(10, 12, 5))
+
         if self.selected is not None:
             x, y = rc_to_xy(*self.selected)
             cv.create_rectangle(x - CELL_W / 2 + 2, y - CELL_H / 2 + 1,
@@ -818,7 +881,10 @@ class GuiApp:
         elif st.turn == self.human_seat:
             my = st.my_color()
             who = f"你执{COLOR_CN[my]}" if my else "你（首翻定色）"
-            text = f"轮到你（{who}）：点己方明子走子，或点暗子翻开\n{rule_line}"
+            last_hint = ""
+            if getattr(self, "last_action", None) is not None and getattr(self, "last_action_seat", None) != self.human_seat:
+                last_hint = f"\n[AI刚走]: {self.describe(self.last_action)}"
+            text = f"轮到你（{who}）：点己方明子走子，或点暗子翻开{last_hint}\n{rule_line}"
         else:
             text = f"轮到 AI…\n{rule_line}"
         self.status.config(text=text)

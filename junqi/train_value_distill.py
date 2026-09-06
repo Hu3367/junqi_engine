@@ -133,13 +133,15 @@ def label_with_expert(states: List[GameState], depth: int = 3,
 
 def train_value_distill(base_model: str = "models/bc_best.pt",
                         out_path: str = "models/value_distilled.pt",
-                        n_samples: int = 1200, epochs: int = 5,
+                        data_path: Optional[str] = None,
+                        n_samples: Optional[int] = None,
+                        epochs: int = 8,
                         batch_size: int = 128, lr: float = 5e-4,
                         val_ratio: float = 0.15, seed: int = 2026,
                         depth: int = 3, time_limit_ms: int = 300,
                         workers: int = 0,
                         device: str | None = None) -> dict:
-    """执行价值蒸馏：采样局面 → 专家打标 → 仅训练价值头 → 保存。
+    """执行价值蒸馏：支持加载实战预打标数据（或随机推进采样） → 仅训练价值头 → 保存。
     策略头与主干冻结，保证 BC 策略能力不被破坏。返回指标字典。"""
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -147,25 +149,51 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     rng = random.Random(seed)
     cfg = RuleConfig()
 
-    # 1. 局面采样与专家打标
-    n_open = int(n_samples * 0.25)
-    n_mid = int(n_samples * 0.40)
-    n_end = n_samples - n_open - n_mid
-    print(f"[蒸馏] 采样局面：开局 {n_open} / 中盘 {n_mid} / 尾盘 {n_end} ...")
-    positions = gen_positions(rng, cfg, n_opening=n_open, n_midgame=n_mid,
-                              n_endgame=n_end)
-    print(f"[蒸馏] 有效局面 {len(positions)}，开始专家打标 "
-          f"(depth={depth}, time_limit={time_limit_ms}ms) ...")
-    labels = label_with_expert([st for st, _ in positions], depth=depth,
-                               time_limit_ms=time_limit_ms, seed=seed, workers=workers)
-
+    # 1. 局面采样与专家打标（优先读取高质量预打标实战数据）
     from collections import Counter
-    label_dist = dict(Counter(labels))
-    print(f"[蒸馏] 伪标签分布: Win={label_dist.get(0, 0)} "
-          f"Draw={label_dist.get(1, 0)} Loss={label_dist.get(2, 0)}")
+    if data_path and os.path.exists(data_path):
+        import json
+        from .tactical_sampler import dict_to_state
+        print(f"[蒸馏] 从实战预打标数据源加载：{data_path} ...")
+        with open(data_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        if n_samples is not None and n_samples < len(raw_data):
+            rng.shuffle(raw_data)
+            raw_data = raw_data[:n_samples]
 
-    samples = [(encode_state_np(st, seat=st.turn, world=None), z, phase)
-               for (st, phase), z in zip(positions, labels)]
+        samples = []
+        labels = []
+        for item in raw_data:
+            st = dict_to_state(item["state_dict"], cfg=cfg)
+            feat = encode_state_np(st, seat=st.turn, world=None)
+            cls = int(item["expert_class"])
+            score = float(item.get("expert_score", 0.0))
+            phase = int(item.get("phase", detect_phase(st)))
+            samples.append((feat, cls, score, phase))
+            labels.append(cls)
+
+        label_dist = dict(Counter(labels))
+        print(f"[蒸馏] 成功加载 {len(samples)} 个实战局面，标签分布: "
+              f"Win={label_dist.get(0, 0)} Draw={label_dist.get(1, 0)} Loss={label_dist.get(2, 0)}")
+    else:
+        n_sm = n_samples or 1200
+        n_open = int(n_sm * 0.25)
+        n_mid = int(n_sm * 0.40)
+        n_end = n_sm - n_open - n_mid
+        print(f"[蒸馏] 采样局面：开局 {n_open} / 中盘 {n_mid} / 尾盘 {n_end} ...")
+        positions = gen_positions(rng, cfg, n_opening=n_open, n_midgame=n_mid,
+                                  n_endgame=n_end)
+        print(f"[蒸馏] 有效局面 {len(positions)}，开始专家打标 "
+              f"(depth={depth}, time_limit={time_limit_ms}ms) ...")
+        labels = label_with_expert([st for st, _ in positions], depth=depth,
+                                   time_limit_ms=time_limit_ms, seed=seed, workers=workers)
+        label_dist = dict(Counter(labels))
+        print(f"[蒸馏] 伪标签分布: Win={label_dist.get(0, 0)} "
+              f"Draw={label_dist.get(1, 0)} Loss={label_dist.get(2, 0)}")
+
+        samples = [(encode_state_np(st, seat=st.turn, world=None), z,
+                    (600.0 if z == 0 else (-600.0 if z == 2 else 0.0)), phase)
+                   for (st, phase), z in zip(positions, labels)]
 
     # 2. 确定性切分训练/验证
     idx = list(range(len(samples)))
@@ -176,58 +204,69 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     def _batch(indices):
         xs = torch.from_numpy(np.stack([samples[i][0] for i in indices])).float().to(device)
         ys = torch.tensor([samples[i][1] for i in indices], dtype=torch.long).to(device)
-        return xs, ys
+        vs = torch.tensor([math.tanh(samples[i][2] / SCORE_SCALE) for i in indices], dtype=torch.float32).to(device)
+        return xs, ys, vs
 
     # 3. 冻结主干与策略头，仅训练价值头
     net = JunqiNet.load_from_file(base_model, device=device)
     for name, p in net.named_parameters():
         p.requires_grad = name.startswith("value_head")
-    optimizer = torch.optim.AdamW(net.value_head.parameters(), lr=lr,
-                                  weight_decay=1e-4)
+    optimizer = torch.optim.AdamW([p for p in net.value_head.parameters() if p.requires_grad],
+                                  lr=lr, weight_decay=1e-4)
 
     def _eval(indices):
         net.eval()
         correct, total = 0, 0
+        total_mse = 0.0
         pred_cnt = Counter()
         with torch.no_grad():
             for b in range(0, len(indices), batch_size):
-                xs, ys = _batch(indices[b:b + batch_size])
+                xs, ys, vs = _batch(indices[b:b + batch_size])
                 _, v_logits = net(xs)
                 if v_logits.shape[-1] == 3:
                     pred = v_logits.argmax(dim=-1)
+                    probs = F.softmax(v_logits, dim=-1)
+                    pred_v = probs[:, 0] - probs[:, 2]
                 else:
                     v = torch.tanh(v_logits).squeeze(-1)
                     pred = torch.where(v > CLASS_THRESHOLD, 0,
                                        torch.where(v < -CLASS_THRESHOLD, 2, 1))
+                    pred_v = v
                 correct += int((pred == ys).sum())
                 total += int(ys.numel())
+                total_mse += float(F.mse_loss(pred_v, vs).item()) * ys.size(0)
                 for c in pred.tolist():
                     pred_cnt[c] += 1
-        return correct / max(total, 1), dict(pred_cnt)
+        return correct / max(total, 1), total_mse / max(total, 1), dict(pred_cnt)
 
-    best_acc, best_sd = -1.0, None
+    best_acc, best_mse, best_sd = -1.0, 999.0, None
     for ep in range(1, epochs + 1):
-        net.train()
+        net.eval()
+        net.value_head.train()
         rng.shuffle(train_idx)
         total_loss, n_b = 0.0, 0
         for b in range(0, len(train_idx), batch_size):
-            xs, ys = _batch(train_idx[b:b + batch_size])
+            xs, ys, vs = _batch(train_idx[b:b + batch_size])
             optimizer.zero_grad()
             _, v_logits = net(xs)
             if v_logits.shape[-1] == 3:
-                loss = F.cross_entropy(v_logits, ys)
+                loss_ce = F.cross_entropy(v_logits, ys)
+                probs = F.softmax(v_logits, dim=-1)
+                pred_v = probs[:, 0] - probs[:, 2]
+                loss_mse = F.mse_loss(pred_v, vs)
+                loss = loss_ce + 0.5 * loss_mse
             else:
-                tgt = torch.where(ys == 0, 1.0, torch.where(ys == 2, -1.0, 0.0))
-                loss = F.mse_loss(v_logits.squeeze(-1), tgt)
+                loss = F.mse_loss(v_logits.squeeze(-1), vs)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
             n_b += 1
-        val_acc, val_pred = _eval(val_idx)
+        val_acc, val_mse, val_pred = _eval(val_idx)
         print(f"[蒸馏] Epoch {ep}: loss={total_loss / max(n_b, 1):.4f} "
-              f"val_acc={val_acc * 100:.1f}% val_pred={val_pred}")
-        if val_acc > best_acc:
+              f"val_acc={val_acc * 100:.1f}% val_mse={val_mse:.4f} val_pred={val_pred}")
+        if val_acc > best_acc or (abs(val_acc - best_acc) < 1e-4 and val_mse < best_mse):
             best_acc = val_acc
+            best_mse = val_mse
             best_sd = {k: v.detach().clone()
                        for k, v in net.value_head.state_dict().items()}
 
@@ -244,6 +283,7 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
         "base_model": base_model,
         "distill_samples": len(samples),
         "val_acc": best_acc,
+        "val_mse": best_mse,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     try:
@@ -256,22 +296,32 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
         pass
 
     torch.save(out_dict, out_path)
-    print(f"[蒸馏] 完成：最佳验证准确率 {best_acc * 100:.1f}%，已保存 {out_path}")
+    print(f"[蒸馏] 完成：最佳验证准确率 {best_acc * 100:.1f}% (MSE={best_mse:.4f})，已保存 {out_path}")
+
+    # 同步更新 models/pool/value_distilled.pt（若 pool 目录存在）
+    pool_path = os.path.join("models", "pool", os.path.basename(out_path))
+    if os.path.exists(os.path.dirname(pool_path)):
+        import shutil
+        shutil.copyfile(out_path, pool_path)
+        print(f"[蒸馏] 已同步更新对手池权重: {pool_path}")
 
     return {
         "samples": len(samples),
         "label_dist": label_dist,
         "best_val_acc": best_acc,
+        "best_val_mse": best_mse,
         "out_path": out_path,
     }
 
 
 def main():
+    default_data = "datasets/distill_tactical_labeled.json" if os.path.exists("datasets/distill_tactical_labeled.json") else None
     parser = argparse.ArgumentParser(description="S2 专家价值蒸馏预热（仅训练价值头）")
     parser.add_argument("--base", default="models/bc_best.pt", help="基座模型路径")
     parser.add_argument("--out", default="models/value_distilled.pt", help="输出权重路径")
-    parser.add_argument("--samples", type=int, default=1200, help="蒸馏局面数")
-    parser.add_argument("--epochs", type=int, default=5, help="训练轮数")
+    parser.add_argument("--data", default=default_data, help="预打标数据集 JSON 路径")
+    parser.add_argument("--samples", type=int, default=None, help="蒸馏局面数（默认使用全部数据或1200）")
+    parser.add_argument("--epochs", type=int, default=8, help="训练轮数")
     parser.add_argument("--batch-size", type=int, default=128, help="批大小")
     parser.add_argument("--lr", type=float, default=5e-4, help="学习率")
     parser.add_argument("--val-ratio", type=float, default=0.15, help="验证集占比")
@@ -283,6 +333,7 @@ def main():
     parser.add_argument("--device", default=None, help="计算设备")
     args = parser.parse_args()
     train_value_distill(base_model=args.base, out_path=args.out,
+                        data_path=args.data,
                         n_samples=args.samples, epochs=args.epochs,
                         batch_size=args.batch_size, lr=args.lr,
                         val_ratio=args.val_ratio, seed=args.seed,

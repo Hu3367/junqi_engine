@@ -152,16 +152,21 @@ class TestMovegen(unittest.TestCase):
         self.assertNotIn((1, 1), d2)       # 不能在角点拐进 row1
 
     def test_cross_center_rail_blocked_at_col1_col3(self):
-        # App 实测：(5,1)-(6,1)、(5,3)-(6,3) 完全不通（含铁路滑行）
+        # App 实测：(5,1)-(6,1)、(5,3)-(6,3) 完全不通（山界河流隔断）
         st = mk({(5, 1): ("r", "SHI", True)})
         d = dests(st, (5, 1))
-        self.assertNotIn((6, 1), d)        # 铁路滑行也不许跨
+        self.assertNotIn((6, 1), d)        # 阻断隔断
         self.assertIn((5, 2), d)           # row5 铁路直线正常
-        # col2 公路一步可跨，但铁路滑行不可穿
+        # col2 中桥轨道贯通（公路与铁路均相通）
         st2 = mk({(5, 2): ("r", "SHI", True)})
         d2 = dests(st2, (5, 2))
-        self.assertIn((6, 2), d2)          # 公路一步
-        # col0/col4 铁路直通保持
+        self.assertIn((6, 2), d2)          # 中桥直线贯通
+        # 工兵可通过中桥铁路线转弯过河
+        st_gong = mk({(5, 1): ("r", "GONG", True)})
+        d_gong = dests(st_gong, (5, 1))
+        self.assertIn((6, 2), d_gong)      # 工兵经由中桥到达 row6
+        self.assertIn((6, 0), d_gong)      # 工兵经中桥可延伸至整个前线铁路
+        # col0/col4 左右铁桥直通保持
         st3 = mk({(5, 0): ("r", "SHI", True)})
         self.assertIn((6, 0), dests(st3, (5, 0)))
 
@@ -284,17 +289,18 @@ class TestMovegen(unittest.TestCase):
         self.assertNotIn((6, 2), d2)       # 不能拐进 row6
 
     def test_engineer_cannot_fly_over_pieces(self):
-        # 修正规则：工兵不可越过轨道上的棋子移动
+        # 修正规则：工兵不可越过轨道上的棋子移动（将左右与中桥三方堵住）
         st = mk({(5, 2): ("r", "GONG", True),
-                 (5, 1): ("b", "SI", True), (5, 3): ("b", "SI", True)})
+                 (5, 1): ("b", "SI", True), (5, 3): ("b", "SI", True),
+                 (6, 2): ("b", "SI", True)})
         d = dests(st, (5, 2))
         self.assertNotIn((5, 1), d)        # 敌司令禁自杀不可攻击
         self.assertNotIn((5, 3), d)
+        self.assertNotIn((6, 2), d)        # 中桥敌司令阻挡
         self.assertNotIn((5, 0), d)        # 被 (5,1) 阻挡，不可越过
         self.assertNotIn((5, 4), d)        # 被 (5,3) 阻挡，不可越过
         # 公路一步仍可用
         self.assertIn((4, 2), d)
-        self.assertIn((6, 2), d)
 
     def test_engineer_rail_capture_and_blocked(self):
         # (2,0) 红工兵被 (1,0) 和 (3,0) 敌工兵夹在纵向轨道中，可吃 (1,0) 和 (3,0)，但不可越过它们去往其他铁路线
