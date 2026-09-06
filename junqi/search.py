@@ -42,6 +42,7 @@ class SearchStats:
     star1_cutoffs: int = 0
     max_depth: int = 0
     time_elapsed_ms: float = 0.0
+    root_scores: list[tuple[Action, float]] = field(default_factory=list)
 
 
 class ExpertSearchEngine:
@@ -90,19 +91,36 @@ class ExpertSearchEngine:
                 res = battle(mover_rank, target.rank)
                 victim_val = self.w.piece.get(target.rank, 30.0)
                 attacker_val = self.w.piece.get(mover_rank, 30.0)
+
+                # 2.1 行营单向打击特权 (2026-09-06 实证：前20手吃子整整 50.1% 源自行营扑杀)
+                # 营内打营外绝对安全，营外打营内免疫；若在行营内发起吃子，赋予特权加分
+                camp_outstrike_bonus = 0.0
+                if is_camp(act.frm):
+                    camp_outstrike_bonus = getattr(self.w, "camp_outstrike_bias", 400_000.0)
+
+                # 2.2 小子贴身拆弹定式 (2026-09-06 实证：炸弹 47.5% 杀伤连排团工营)
+                # 当目标是敌方炸弹，且攻击方是小子（连/排/工/营/团），主动撞弹消灭敌核武器，属于战略必争定式
+                bomb_suicide_bonus = 0.0
+                if target.rank == Rank.ZHA and mover_rank in (
+                    Rank.LIAN, Rank.PAI, Rank.GONG, Rank.YING, Rank.TUAN
+                ):
+                    bomb_suicide_bonus = getattr(self.w, "bomb_suicide_exchange", 150_000.0)
+
                 if res == ATTACKER_WINS:
                     # 稳赚吃子: 目标越值钱、攻击者越廉价越优先
-                    return 500_000.0 + victim_val * 100.0 - attacker_val
+                    return 500_000.0 + camp_outstrike_bonus + victim_val * 100.0 - attacker_val
                 elif res == BOTH_DIE:
-                    # 兑子: 炸弹或同级兑换
-                    return 300_000.0 + victim_val * 100.0 - attacker_val
+                    # 兑子: 炸弹或同级兑换 (含小子贴身拆弹战略加分)
+                    return 300_000.0 + camp_outstrike_bonus + bomb_suicide_bonus + victim_val * 100.0 - attacker_val
                 else:
                     # 亏损/送吃
                     return -100_000.0 + victim_val - attacker_val
 
-            # 3. 进行营避险 / 占营
+            # 3. 进行营避险 / 占营进驻核心据点 (实证：前 20 手走子 82.7% 为进营)
             if is_camp(act.to):
-                return 80_000.0 + self.w.piece.get(mover_rank, 20.0)
+                # 进驻空行营是绝对免死与据点化的战略特权，优先级高于普通翻棋
+                camp_prio = 250_000.0 if act.to not in state.board else 150_000.0
+                return camp_prio + self.w.piece.get(mover_rank, 20.0)
 
             # 4. 杀手着法 (Killer Moves)
             if ply_depth < len(self.killers) and act in self.killers[ply_depth]:
@@ -120,10 +138,51 @@ class ExpertSearchEngine:
             return 1000.0 + center_bias * 10.0
 
         elif act.kind == "flip":
-            # 翻棋排序：根据周围邻域攻防态势计算安全指数
+            # 翻棋排序：根据周围邻域攻防态势、行营据点辐射度与领地偏好计算综合指数
             pos = act.frm
+            r, c = pos
             safety_score = 0.0
             opp = other(my) if my else None
+
+            # 1. 依托行营辐射拓荒 (实证：96.2% 邻营翻棋，开局首翻即据点)
+            # 若待翻暗子相邻有己方已占领的行营，享受高优先辐射翻棋
+            camp_adjacent_bonus = 0.0
+            if my is not None:
+                for np in NEIGHBORS[pos]:
+                    if is_camp(np):
+                        cb = state.board.get(np)
+                        if cb is not None and cb.revealed and cb.color == my:
+                            camp_adjacent_bonus = getattr(self.w, "camp_adjacent_flip_bias", 50_000.0)
+                            break
+
+            # 若待翻暗子相邻为空行营，拥有翻出即进营的极高据点潜力 (如 2,2 / 4,2 / 3,1 / 3,3 各邻接 3 个行营!)
+            empty_camps_adjacent = sum(1 for np in NEIGHBORS[pos] if is_camp(np) and np not in state.board)
+            camp_potential_bonus = empty_camps_adjacent * 25_000.0
+
+            # 2. 开局领地与中前场咽喉偏好 (避免盲目翻自家底线或敌方底线禁区)
+            territory_bias = 0.0
+            if my == "r":
+                if 1 <= r <= 5:
+                    territory_bias = 20_000.0
+                elif r == 0:
+                    territory_bias = -15_000.0
+                elif 6 <= r <= 11:
+                    # 敌方半场：开局己方无掩护时严禁盲目跨界替敌翻棋
+                    territory_bias = -100_000.0
+            elif my == "b":
+                if 6 <= r <= 10:
+                    territory_bias = 20_000.0
+                elif r == 11:
+                    territory_bias = -15_000.0
+                elif 0 <= r <= 5:
+                    # 敌方半场：开局己方无掩护时严禁盲目跨界替敌翻棋
+                    territory_bias = -100_000.0
+            else:
+                # 首翻未定色时，偏好中央四角咽喉据点 (2..4 或 7..9 行)
+                if 2 <= r <= 4 or 7 <= r <= 9:
+                    territory_bias = 20_000.0
+                elif r in (0, 11):
+                    territory_bias = -15_000.0
 
             friendly_guards = 0
             enemy_threats = 0
@@ -142,6 +201,10 @@ class ExpertSearchEngine:
                         elif nb.rank not in (Rank.LEI, Rank.QI):
                             enemy_threats += 1
 
+            # 若在敌方半场但有己方部队就位压境，恢复前线翻棋进攻权
+            if territory_bias < -50_000.0 and friendly_guards > 0:
+                territory_bias = 10_000.0 * friendly_guards
+
             if friendly_guards > enemy_threats:
                 safety_score = 60_000.0 + (friendly_guards - enemy_threats) * 5000.0
             elif enemy_threats > friendly_guards:
@@ -149,7 +212,7 @@ class ExpertSearchEngine:
             else:
                 safety_score = 20_000.0
 
-            return safety_score
+            return safety_score + camp_adjacent_bonus + camp_potential_bonus + territory_bias
 
         return 0.0
 
@@ -168,10 +231,10 @@ class ExpertSearchEngine:
             else:
                 flips.append(a)
 
-        # 翻棋候选剪枝 (暗棋经典优化：大量暗子时保留局部安全度最高的前 K 个翻棋格)
+        # 翻棋候选剪枝 (暗棋经典优化：大量暗子时保留局部安全度与据点价值最高的前 K 个翻棋格)
         if len(flips) > 5:
             flips.sort(key=lambda a: self._score_action(a, state, ply_depth, tt_move), reverse=True)
-            max_flips = 3 if moves else 6
+            max_flips = 3 if moves else 8
             flips = flips[:max_flips]
 
         filtered_acts = moves + flips
@@ -251,11 +314,29 @@ class ExpertSearchEngine:
             child = state.apply(flip_act)
             return -self._negamax(child, depth - 1, ply_depth + 1, -beta, -alpha, path_history)
 
-        # 浅层/叶子几率节点 (depth <= 1)：直接由公共信念状态评估函数解析求期望，
-        # 无需在叶子层做指数级二次展开（暗棋 Expectiminimax 经典前沿截断优化）
-        if depth <= 1:
-            child = state.apply(flip_act)
-            return -evaluate_expert(child, child.turn, self.w)
+        # 几率前沿截断 (Chance-Node Depth Truncation):
+        # 仅在根节点 (ply_depth == 0) 对候选动作展开全概率对抗子树；
+        # 在博弈树深层 (depth <= 1 或 ply_depth >= 1)，直接由公共信念状态求精确解析期望，
+        # 彻底杜绝深层连续几率节点引发的 (24)^d 组合指数爆炸，保障毫秒级下棋速度
+        if depth <= 1 or ply_depth >= 1:
+            expected = 0.0
+            for (clr, rk), cnt in rem.items():
+                prob = cnt / total_hidden
+                b = dict(state.board)
+                b[pos] = Piece(clr, rk, revealed=True)
+                sc = dict(state.seat_color)
+                ffd = state.first_flip_done
+                if not ffd:
+                    sc[state.turn] = clr
+                    sc[1 - state.turn] = other(clr)
+                    ffd = True
+                child = GameState(
+                    board=b, dead=state.dead, seat_color=sc, turn=1 - state.turn,
+                    first_flip_done=ffd, ply=state.ply + 1, winner=state.winner,
+                    win_reason=state.win_reason, cfg=state.cfg, quiet=state.quiet + 1
+                )
+                expected += prob * (-evaluate_expert(child, child.turn, self.w))
+            return expected
 
         # 构建概率分布 [((color, rank), prob)]
         outcomes: list[tuple[str, Rank, float]] = []
@@ -266,20 +347,25 @@ class ExpertSearchEngine:
         # 按概率降序排序以提升 Star1 剪枝效率
         outcomes.sort(key=lambda item: item[2], reverse=True)
 
-        # 概率分支截断 (保持前 6 种大概率子力，覆盖主要概率质量)
-        if len(outcomes) > 6:
-            outcomes = outcomes[:6]
-            tot_p = sum(item[2] for item in outcomes)
-            outcomes = [(c, r, p / tot_p) for c, r, p in outcomes]
-
         expected_value = 0.0
         remaining_prob = 1.0
 
-        # Star1 边界：理论上下界
-        v_max = WIN_SCORE - state.ply
-        v_min = -(WIN_SCORE - state.ply)
+        # Star1 战术边界：常规局面最大物质与结构估值上下界约 ±600 分
+        v_max = 600.0
+        v_min = -600.0
 
         for clr, rk, prob in outcomes:
+            # Star1 几率剪枝检查
+            # 1. Fail-Low 截断: 即使后续全取最好也无法达到 alpha
+            if expected_value + remaining_prob * v_max <= alpha:
+                self.stats.star1_cutoffs += 1
+                return alpha
+
+            # 2. Fail-High 截断: 即使后续全取最差也必定超过 beta
+            if expected_value + remaining_prob * v_min >= beta:
+                self.stats.star1_cutoffs += 1
+                return beta
+
             # 实例化一个翻出 (clr, rk) 的具体状态
             b = dict(state.board)
             b[pos] = Piece(clr, rk, revealed=True)
@@ -303,19 +389,8 @@ class ExpertSearchEngine:
                 quiet=state.quiet + 1
             )
 
-            # Star1 剪枝检查
-            # 1. Fail-Low 截断: 即使后续全取最好也无法达到 alpha
-            if expected_value + remaining_prob * v_max <= alpha:
-                self.stats.star1_cutoffs += 1
-                return alpha
-
-            # 2. Fail-High 截断: 即使后续全取最差也必定超过 beta
-            if expected_value + remaining_prob * v_min >= beta:
-                self.stats.star1_cutoffs += 1
-                return beta
-
-            # 递归搜索子节点
-            v = -self._negamax(child, depth - 1, ply_depth + 1, -beta, -alpha, path_history)
+            # 递归搜索子节点：几率子节点使用全窗口搜索，杜绝父节点期望剪枝窗引起子节点提前截断失真
+            v = -self._negamax(child, depth - 1, ply_depth + 1, -WIN_SCORE, WIN_SCORE, path_history)
             expected_value += prob * v
             remaining_prob -= prob
 
@@ -466,6 +541,7 @@ class ExpertSearchEngine:
             current_d_best_score = -math.inf
             alpha = -math.inf
             beta = math.inf
+            d_scores: list[tuple[Action, float]] = []
 
             for a in ordered_acts:
                 if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
@@ -483,6 +559,8 @@ class ExpertSearchEngine:
                     if position_key(state.apply(a)) in avoid:
                         score -= 150.0
 
+                d_scores.append((a, score))
+
                 if score > current_d_best_score:
                     current_d_best_score = score
                     current_d_best_act = a
@@ -494,6 +572,7 @@ class ExpertSearchEngine:
                 best_action = current_d_best_act
                 best_score = current_d_best_score
                 self.stats.max_depth = d
+                self.stats.root_scores = sorted(d_scores, key=lambda t: t[1], reverse=True)
                 self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
 
         self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0

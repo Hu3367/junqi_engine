@@ -5,7 +5,7 @@ import unittest
 
 from junqi.ai import Agent, ExpertAgent
 from junqi.config import EvalWeights, RuleConfig, SearchConfig
-from junqi.rules import COMPOSITION, Rank
+from junqi.rules import COMPOSITION, Rank, is_camp
 from junqi.search import ExpertSearchEngine
 from junqi.state import Action, GameState, Piece
 
@@ -94,6 +94,41 @@ class TestSearchExpert(unittest.TestCase):
         # 验证降序排列
         self.assertGreaterEqual(results[0][1], results[1][1])
         self.assertGreaterEqual(results[1][1], results[2][1])
+
+    def test_opening_stronghold_into_camp(self):
+        """开局首翻据点定式：明子紧邻空行营时，搜索决策必须 100% 进营据点化。"""
+        import random
+        from junqi.state import deal
+        st = deal(random.Random(42))
+        st = st.apply(Action("flip", (2, 2))) # 红方首翻出连长
+        # 蓝方在 (8, 1) 翻出明子师长
+        st.board[(8, 1)] = Piece("b", Rank.SHI, revealed=True)
+        st.turn = 0
+        st = st.apply(Action("move", (2, 2), (3, 2))) # 红方进营
+
+        # 此时轮到蓝方(turn=1)，蓝方 (8, 1) 师长紧邻 (8, 2), (7, 1), (9, 1) 三个空行营
+        engine = ExpertSearchEngine(weights=self.w, seed=42)
+        best_act, score, _ = engine.search(st, max_depth=2)
+        self.assertIsNotNone(best_act)
+        self.assertEqual(best_act.kind, "move")
+        self.assertEqual(best_act.frm, (8, 1))
+        self.assertTrue(is_camp(best_act.to), f"期望进营，实际动作为: {best_act}")
+
+    def test_camp_outstrike_tactical_kill(self):
+        """行营单向扑杀定式：营内大子面对邻格敌方小子，搜索决策必须扑杀吃子，严禁缩营不杀。"""
+        import random
+        from junqi.state import deal
+        st = deal(random.Random(42))
+        st.seat_color = {0: "r", 1: "b"}
+        st.first_flip_done = True
+        st.board[(8, 2)] = Piece("b", Rank.SHI, revealed=True) # 蓝师长驻营
+        st.board[(8, 1)] = Piece("r", Rank.PAI, revealed=True) # 红排长在邻格
+        st.turn = 1 # 轮到蓝方
+
+        engine = ExpertSearchEngine(weights=self.w, seed=42)
+        best_act, score, _ = engine.search(st, max_depth=2)
+        self.assertEqual(best_act, Action("move", (8, 2), (8, 1)),
+                         f"行营大子必须扑杀邻格敌小子，实际走法: {best_act}")
 
 
 if __name__ == "__main__":

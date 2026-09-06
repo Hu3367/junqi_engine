@@ -39,32 +39,24 @@ DEFAULT_PIECE_VALUES: dict[Rank, float] = {
 }
 
 
-def _get_alive_counts(state: GameState) -> tuple[dict[tuple[str, Rank], int], dict[tuple[str, Rank], int]]:
-    """统计双方当前存活总数（明子 + 暗子池期望份额）。
+def _get_alive_counts(state: GameState, my: Optional[str] = None) -> tuple[dict[tuple[str, Rank], int], dict[tuple[str, Rank], int]]:
+    """统计双方当前存活总数（明子 + 暗子池期望份额 = 初始编制 - 阵亡子）。
 
     返回: (my_alive, opp_alive) 映射 (color, rank) -> count
     """
-    my = state.my_color()
+    if my is None:
+        my = state.my_color()
     opp = other(my) if my else None
 
-    # 从 remaining_types 获取暗子池
-    rem = state.remaining_types()
-    my_counts: dict[tuple[str, Rank], int] = {}
-    opp_counts: dict[tuple[str, Rank], int] = {}
+    my_counts: dict[tuple[str, Rank], int] = {(my, rk): COMPOSITION[rk] for rk in COMPOSITION} if my else {}
+    opp_counts: dict[tuple[str, Rank], int] = {(opp, rk): COMPOSITION[rk] for rk in COMPOSITION} if opp else {}
 
-    for (clr, rk), cnt in rem.items():
-        if clr == my:
-            my_counts[(clr, rk)] = my_counts.get((clr, rk), 0) + cnt
-        elif clr == opp:
-            opp_counts[(clr, rk)] = opp_counts.get((clr, rk), 0) + cnt
-
-    # 加上棋盘明子
-    for pc in state.board.values():
-        if pc.revealed:
-            if pc.color == my:
-                my_counts[(pc.color, pc.rank)] = my_counts.get((pc.color, pc.rank), 0) + 1
-            elif pc.color == opp:
-                opp_counts[(pc.color, pc.rank)] = opp_counts.get((pc.color, pc.rank), 0) + 1
+    # 扣除阵亡子
+    for pc in state.dead:
+        if my and pc.color == my:
+            my_counts[(pc.color, pc.rank)] -= 1
+        elif opp and pc.color == opp:
+            opp_counts[(pc.color, pc.rank)] -= 1
 
     return my_counts, opp_counts
 
@@ -84,7 +76,17 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     opp = other(my)
 
     # 1. 存活子力统计（用于动态制霸与物质分）
-    my_counts, opp_counts = _get_alive_counts(state)
+    my_counts, opp_counts = _get_alive_counts(state, my=my)
+
+    revealed_mine: list[tuple[tuple[int, int], Piece]] = []
+    revealed_opp: list[tuple[tuple[int, int], Piece]] = []
+
+    for pos, pc in state.board.items():
+        if pc.revealed:
+            if pc.color == my:
+                revealed_mine.append((pos, pc))
+            else:
+                revealed_opp.append((pos, pc))
 
     # 2. 动态制霸系数与物质估值
     # 2.1 司令/军长制霸 (Hegemony)
@@ -117,6 +119,32 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     if not my_has_si and not my_has_jun and opp_has_jun:
         opp_piece_values[Rank.JUN] += 15.0
 
+    # 2.2 二线梯队火力网接管与补偿 (2026-09-06 实证：司令先死逆转胜 50.2%，胜负均等)
+    # 当司令阵亡，但拥有盘面已就位参战的军长、师长或炸弹时，二线火力网健全度可对冲单司令制霸劣势
+    my_rev_jun = any(pc.rank == Rank.JUN for _, pc in revealed_mine)
+    my_rev_shi = sum(1 for _, pc in revealed_mine if pc.rank == Rank.SHI)
+    my_rev_zha = any(pc.rank == Rank.ZHA for _, pc in revealed_mine)
+    my_echelon = 0.0
+    if not my_has_si and opp_has_si:
+        echelon_units = (
+            (1.0 if my_rev_jun else 0.0) +
+            (0.5 * min(2, my_rev_shi)) +
+            (0.8 if my_rev_zha else 0.0)
+        )
+        my_echelon = min(1.0, echelon_units / 2.0) * getattr(w, "echelon_si_compensation", 18.0)
+
+    opp_rev_jun = any(pc.rank == Rank.JUN for _, pc in revealed_opp)
+    opp_rev_shi = sum(1 for _, pc in revealed_opp if pc.rank == Rank.SHI)
+    opp_rev_zha = any(pc.rank == Rank.ZHA for _, pc in revealed_opp)
+    opp_echelon = 0.0
+    if not opp_has_si and my_has_si:
+        opp_echelon_units = (
+            (1.0 if opp_rev_jun else 0.0) +
+            (0.5 * min(2, opp_rev_shi)) +
+            (0.8 if opp_rev_zha else 0.0)
+        )
+        opp_echelon = min(1.0, opp_echelon_units / 2.0) * getattr(w, "echelon_si_compensation", 18.0)
+
     # 敌方工兵全灭时：我方地雷与军旗安全系数飙升（敌方无法挖雷吃旗）
     if not opp_has_gong:
         my_piece_values[Rank.LEI] += 15.0
@@ -131,57 +159,48 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     if my_has_si or my_has_jun:
         opp_piece_values[Rank.ZHA] += 10.0
 
-    # 计算棋盘明子 + 暗子池物质总分
-    my_material = 0.0
-    opp_material = 0.0
-
-    for pos, pc in state.board.items():
-        if pc.revealed:
-            if pc.color == my:
-                my_material += my_piece_values[pc.rank]
-            else:
-                opp_material += opp_piece_values[pc.rank]
-
-    # 暗子池精确期望分摊
-    rem = state.remaining_types()
-    for (clr, rk), n in rem.items():
-        if clr == my:
-            my_material += n * my_piece_values[rk]
-        elif clr == opp:
-            opp_material += n * opp_piece_values[rk]
-
-    score = my_material - opp_material
+    # 计算存活物质总分 (棋盘明子 + 暗子池期望份额)
+    my_material = sum(my_piece_values[rk] * cnt for (clr, rk), cnt in my_counts.items())
+    opp_material = sum(opp_piece_values[rk] * cnt for (clr, rk), cnt in opp_counts.items())
+    score = my_material - opp_material + (my_echelon - opp_echelon)
 
     # 3. 明子位置与阵型结构特征
-    revealed_mine: list[tuple[tuple[int, int], Piece]] = []
-    revealed_opp: list[tuple[tuple[int, int], Piece]] = []
 
-    for pos, pc in state.board.items():
-        if pc.revealed:
-            if pc.color == my:
-                revealed_mine.append((pos, pc))
-            else:
-                revealed_opp.append((pos, pc))
 
     # 3.1 行营控制与营内围杀
+    my_camps = 0
+    opp_camps = 0
     for pos, pc in revealed_mine:
         if is_camp(pos):
+            my_camps += 1
             score += w.camp_occ
-            # 行营围杀压力：营内子邻接敌子
+            # 行营围杀压力：营内子对能击杀或兑掉的邻接敌明子施加围杀压力 (杜绝小子在营里对大子产生假围杀加分)
             siege = sum(1 for np in NEIGHBORS[pos]
-                        if (e := state.board.get(np)) is not None and e.color == opp)
+                        if (e := state.board.get(np)) is not None and e.revealed and e.color == opp
+                        and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score += w.camp_siege * siege
         if is_hq(pos) and pc.rank != Rank.QI:
             score += w.hq_locked
 
     for pos, pc in revealed_opp:
         if is_camp(pos):
+            opp_camps += 1
             score -= w.camp_occ
             siege = sum(1 for np in NEIGHBORS[pos]
-                        if (e := state.board.get(np)) is not None and e.color == my)
+                        if (e := state.board.get(np)) is not None and e.revealed and e.color == my
+                        and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score -= w.camp_siege * siege
         if is_hq(pos) and pc.rank != Rank.QI:
             score -= w.hq_locked
+
+    # 3.1.1 占营比例非线性矩阵增益 (2026-09-06 实证：5:5 38.2% -> 6:4 52.1% -> 7:3 68.4% -> 8:2 83.3%)
+    # 结构性矩阵优势要求净胜至少 2 营（对应 6:4 优势），避免单营出现阶跃失真
+    net_camps = my_camps - opp_camps
+    if abs(net_camps) >= 2:
+        sign = 1.0 if net_camps > 0 else -1.0
+        k = min(abs(net_camps), 6)
+        camp_factor = {2: 1.0, 3: 1.5, 4: 2.2, 5: 2.6, 6: 3.0}.get(k, 3.0)
+        score += sign * camp_factor * getattr(w, "camp_matrix_weight", 12.0)
 
     # 3.2 行营势力范围 (camp_zone)
     zone_net = 0
@@ -257,7 +276,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
 
     # 5.2 相邻吃子威胁
     for pos, e in revealed_opp:
-        if e.rank == Rank.QI or is_camp(pos):
+        if e.rank == Rank.QI:
             continue
         best_gain = 0.0
         for np in NEIGHBORS[pos]:
@@ -272,10 +291,10 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                 best_gain = max(best_gain, v)
             elif res == BOTH_DIE:
                 best_gain = max(best_gain, v * 0.5)
-        score -= w.threat * best_gain
+        score -= (w.attack_camp if is_camp(pos) else w.threat) * best_gain
 
     for pos, m in revealed_mine:
-        if m.rank == Rank.QI or is_camp(pos):
+        if m.rank == Rank.QI:
             continue
         best_gain = 0.0
         for np in NEIGHBORS[pos]:
@@ -292,8 +311,21 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                 best_gain = max(best_gain, v * 0.5)
         score += (w.attack_camp if is_camp(pos) else w.attack) * best_gain
 
-    # 6. 死区势能 (Fortress Score)
-    score += w.fortress * (fortress_score(state, seat) - fortress_score(state, 1 - seat))
+    # 6. 死区势能 (Fortress Score，仅当有明军旗暴露时计算死区)
+    if w.fortress > 0 and (my_flag or opp_flag):
+        fs_my = fortress_score(state, seat) if my_flag else 0.0
+        fs_opp = fortress_score(state, 1 - seat) if opp_flag else 0.0
+        score += w.fortress * (fs_my - fs_opp)
+
+    # 6.1 残局工兵期权与和棋死锁折现 (2026-09-06 实证：65.4% 和棋局工兵残缺<=2颗)
+    # 当全盘工兵残缺，且双方军旗均处于地雷保护下时，进攻期权消失，估值向和棋(0.0)折现收敛
+    total_gong = my_counts.get((my, Rank.GONG), 0) + opp_counts.get((opp, Rank.GONG), 0)
+    if total_gong <= 2 and state.ply > 60:
+        my_mines = sum(1 for d in state.board.values() if d.revealed and d.color == my and d.rank == Rank.LEI)
+        opp_mines = sum(1 for d in state.board.values() if d.revealed and d.color == opp and d.rank == Rank.LEI)
+        if my_mines > 0 and opp_mines > 0:
+            damping = 0.75 if total_gong <= 1 else 0.85
+            score *= damping
 
     # 7. 暗子时差与节奏 (Hidden Tempo)
     my_active = sum(1 for p, pc in revealed_mine if pc.rank not in (Rank.LEI, Rank.QI))

@@ -17,7 +17,8 @@ from enum import Enum
 import sys
 sys.path.append('.')
 
-from junqi.state import GameState, Piece, Move, MoveType
+from junqi.state import GameState, Piece
+from .move_adapter import Move, MoveType
 from junqi.expert.rule_validator import RuleValidator
 
 @dataclass

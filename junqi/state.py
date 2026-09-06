@@ -66,7 +66,7 @@ def deal(rng: Optional[random.Random] = None,
 
 class GameState:
     __slots__ = ("board", "dead", "seat_color", "turn", "first_flip_done",
-                 "ply", "quiet", "winner", "win_reason", "cfg")
+                 "ply", "quiet", "winner", "win_reason", "cfg", "_rem_cache")
 
     def __init__(self, board, dead=(), seat_color=None, turn=0,
                  first_flip_done=False, ply=0, winner=None, win_reason=None,
@@ -81,13 +81,16 @@ class GameState:
         self.winner = winner                # None / 0 / 1 / -1(和棋)
         self.win_reason = win_reason        # 'flag'|'immobilized'|'no_capture'|'max_plies'|'draw'
         self.cfg = cfg or RuleConfig()
+        self._rem_cache = None
 
     # ------------------------------------------------------------- 基础查询
 
     def copy(self) -> "GameState":
-        return GameState(dict(self.board), self.dead, dict(self.seat_color),
-                         self.turn, self.first_flip_done, self.ply,
-                         self.winner, self.win_reason, self.cfg, self.quiet)
+        res = GameState(dict(self.board), self.dead, dict(self.seat_color),
+                        self.turn, self.first_flip_done, self.ply,
+                        self.winner, self.win_reason, self.cfg, self.quiet)
+        res._rem_cache = self._rem_cache
+        return res
 
     def my_color(self, seat: Optional[int] = None) -> Optional[str]:
         return self.seat_color[self.turn if seat is None else seat]
@@ -103,6 +106,8 @@ class GameState:
     def remaining_types(self):
         """公开信息下暗子池的精确构成 {(color, rank): 数量}：
         双方总构成 − 已翻开明子 − 阵亡子。对真实发牌局与手动录入局同样成立。"""
+        if getattr(self, "_rem_cache", None) is not None:
+            return self._rem_cache
         from collections import Counter
         rem = Counter({(c, r): n for c in COLORS
                        for r, n in COMPOSITION.items()})
@@ -111,7 +116,8 @@ class GameState:
                 rem[(pc.color, pc.rank)] -= 1
         for pc in self.dead:
             rem[(pc.color, pc.rank)] -= 1
-        return Counter({k: v for k, v in rem.items() if v > 0})
+        self._rem_cache = Counter({k: v for k, v in rem.items() if v > 0})
+        return self._rem_cache
 
     def marginal(self, pos=None):
         """暗子身份边缘分布 {(color, rank): 概率}（均匀洗牌下的精确先验）。"""
@@ -251,6 +257,21 @@ class GameState:
 
         nxt = GameState(board, dead, sc, 1 - self.turn, ffd,
                         self.ply + 1, winner, reason, self.cfg, quiet)
+        if getattr(self, "_rem_cache", None) is not None:
+            if act.kind == "flip":
+                from collections import Counter
+                new_rem = Counter(self._rem_cache)
+                flipped_pc = board[act.frm]
+                key = (flipped_pc.color, flipped_pc.rank)
+                if key in new_rem:
+                    if new_rem[key] > 1:
+                        new_rem[key] -= 1
+                    else:
+                        del new_rem[key]
+                nxt._rem_cache = new_rem
+            else:
+                nxt._rem_cache = self._rem_cache
+
         if winner is None:
             # APK 和棋规则：连续 70 步未吃子判和；双方总步数达 1000 判和
             if self.cfg.no_capture_draw_plies \

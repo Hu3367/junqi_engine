@@ -41,12 +41,18 @@ class EvalWeights:
     flag_exposed: float = 40.0  # 己方军旗暴露在敌明子威胁下
     threat: float = 0.30        # 被敌明子威胁的子力折损系数
     attack: float = 0.25        # 威胁敌子的进攻机会系数
-    attack_camp: float = 0.80   # 行营内发起的威胁（不可被反吃，接近无风险）
-    camp_siege: float = 6.0     # 营内子对邻格敌子的围杀压力（行营围杀意识）
+    attack_camp: float = 0.20   # 行营内发起的威胁（平衡威胁与真实吃子收益，杜绝缩营不杀）
+    camp_siege: float = 3.0     # 营内子对邻格弱小敌子的围杀压力（行营围杀意识）
     # A2 增强项（基线 §4.2 第一条线：传统搜索显式判断）
     camp_zone: float = 2.0      # 行营势力：已方/敌方明子贴近空行营的净控制差（占营准备）
     fortress: float = 25.0      # 死区势能：双方 fortress_score 差（劣势方拖和潜力的估值注入）
     hidden_tempo: float = 6.0   # 暗子时差：活动明子数差（暗子激活需先翻后走两回合）
+    # 2026-09-06 实证大数据增强项 (P1/P2: 梯队火力、占营胜率矩阵、小子拆弹与行营特权)
+    echelon_si_compensation: float = 18.0   # 二线梯队火力网补偿（司令战死但拥有军长/双师/双炸时的抗悲观接管补偿）
+    camp_matrix_weight: float = 12.0        # 占营比例非线性矩阵增益（反映 5:5 38% -> 8:2 83% 边际胜率阶跃）
+    bomb_suicide_exchange: float = 150000.0 # 小子贴身拆弹在搜索排序中的战略特权加分 (47.5%炸中坚小子)
+    camp_outstrike_bias: float = 400000.0   # 行营单向扑杀在走法排序中的特权加分 (开局50.1%吃子源自行营)
+    camp_adjacent_flip_bias: float = 50000.0 # 据点邻域辐射翻棋启发加分 (96.2%邻营翻棋)
 
     def __post_init__(self):
         if self.piece is None:
@@ -68,7 +74,12 @@ class EvalWeights:
                 "attack": self.attack, "attack_camp": self.attack_camp,
                 "camp_siege": self.camp_siege,
                 "camp_zone": self.camp_zone, "fortress": self.fortress,
-                "hidden_tempo": self.hidden_tempo}
+                "hidden_tempo": self.hidden_tempo,
+                "echelon_si_compensation": self.echelon_si_compensation,
+                "camp_matrix_weight": self.camp_matrix_weight,
+                "bomb_suicide_exchange": self.bomb_suicide_exchange,
+                "camp_outstrike_bias": self.camp_outstrike_bias,
+                "camp_adjacent_flip_bias": self.camp_adjacent_flip_bias}
 
     @classmethod
     def from_dict(cls, d: dict) -> "EvalWeights":
@@ -82,4 +93,9 @@ class EvalWeights:
         w.camp_zone = d.get("camp_zone", cls.camp_zone)
         w.fortress = d.get("fortress", cls.fortress)
         w.hidden_tempo = d.get("hidden_tempo", cls.hidden_tempo)
+        w.echelon_si_compensation = d.get("echelon_si_compensation", cls.echelon_si_compensation)
+        w.camp_matrix_weight = d.get("camp_matrix_weight", cls.camp_matrix_weight)
+        w.bomb_suicide_exchange = d.get("bomb_suicide_exchange", cls.bomb_suicide_exchange)
+        w.camp_outstrike_bias = d.get("camp_outstrike_bias", cls.camp_outstrike_bias)
+        w.camp_adjacent_flip_bias = d.get("camp_adjacent_flip_bias", cls.camp_adjacent_flip_bias)
         return w

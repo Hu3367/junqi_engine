@@ -105,7 +105,8 @@ def main(argv=None):
     fw.add_argument("--workers", type=int, default=8, help="验证对局并行进程数")
 
     ed = sub.add_parser("export_dataset", help="P1: 从复盘数据导出标准行为克隆数据集")
-    ed.add_argument("--sav-dir", default="../军旗复盘", help=".sav 复盘文件目录")
+    default_sav = "军旗复盘" if os.path.exists("军旗复盘") else "../军旗复盘"
+    ed.add_argument("--sav-dir", default=default_sav, help=".sav 复盘文件目录")
     ed.add_argument("--out-dir", default="datasets/p1_v1", help="输出 npz 目录")
     ed.add_argument("--seed", type=int, default=2026, help="随机种子")
     ed.add_argument("--version", default="1.0.0", help="数据集版本号")

@@ -23,13 +23,24 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .analysis import detect_phase
-from .config import RuleConfig, SearchConfig
-from .encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, action_to_index,
-                    encode_state_np, legal_action_mask)
-from .replay import SPECIAL_EVENT, SavGame, cell_rc, parse_sav, replay_sav
-from .rules import Rank
-from .state import Action, GameState
+import sys
+if __package__ is None or not __package__:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from junqi.analysis import detect_phase
+    from junqi.config import RuleConfig, SearchConfig
+    from junqi.encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, action_to_index,
+                              encode_state_np, legal_action_mask)
+    from junqi.replay import SPECIAL_EVENT, SavGame, cell_rc, parse_sav, replay_sav
+    from junqi.rules import Rank
+    from junqi.state import Action, GameState
+else:
+    from .analysis import detect_phase
+    from .config import RuleConfig, SearchConfig
+    from .encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, action_to_index,
+                          encode_state_np, legal_action_mask)
+    from .replay import SPECIAL_EVENT, SavGame, cell_rc, parse_sav, replay_sav
+    from .rules import Rank
+    from .state import Action, GameState
 
 
 class NpzReplayDataset(Dataset):
@@ -106,9 +117,57 @@ def compute_file_sha256(filepath: str) -> str:
     return sha.hexdigest()
 
 
-def process_single_game(game: SavGame, cfg: RuleConfig) -> list[dict]:
+DES_KEY = bytes.fromhex("2c250ed4141278e7")
+
+
+def load_list_cfg_metadata(cfg_path: str = "军旗复盘/list.cfg") -> dict[str, dict]:
+    """使用硬编码 DES 密钥解密 list.cfg 获取官方终局真值数据库。"""
+    if not os.path.exists(cfg_path):
+        return {}
+    try:
+        from Crypto.Cipher import DES
+    except ImportError:
+        return {}
+
+    with open(cfg_path, "rb") as fh:
+        raw_data = fh.read()
+
+    cipher = DES.new(DES_KEY, DES.MODE_ECB)
+    decrypted = cipher.decrypt(raw_data)
+    import struct
+    length = struct.unpack_from("<I", decrypted, 0)[0]
+    text = decrypted[4:4 + length].decode("gbk", errors="replace")
+
+    records = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(",")
+        fname = parts[0]
+        records[fname] = {
+            "filename": fname,
+            "mode": int(parts[1]),
+            "timestamp": int(parts[2]),
+            "player1": parts[3],
+            "player1_rating": int(parts[4]),
+            "player2": parts[5],
+            "player2_rating": int(parts[6]),
+            "flag1": int(parts[7]),
+            "flag2": int(parts[8]),
+            "moves_count": int(parts[9]),
+            "winner": int(parts[10]),  # 1=P1(seat 0)胜, 2=P2(seat 1)胜, 3=和棋
+            "reason_code": int(parts[11]),
+            "duration": int(parts[12]) if len(parts) > 12 else 0,
+        }
+    return records
+
+
+def process_single_game(game: SavGame, cfg: RuleConfig,
+                         meta_record: Optional[dict] = None) -> list[dict]:
     """重演单局并提取每个 ply 的训练样本。
 
+    meta_record: 可选来自 list.cfg 的官方终局元数据记录，包含真实胜负、原因码与对局模式。
     返回: list[dict] 每个 ply 的公共样本字典
     """
     samples = []
@@ -122,11 +181,30 @@ def process_single_game(game: SavGame, cfg: RuleConfig) -> list[dict]:
     st = GameState(board=board, cfg=cfg)
 
     # 预先判断整局最终结果（用于 Value 标签赋值）
-    # 严格规则：仅当真实正常终局时才提取 Value，特殊中止或未终局绝不赋 Value
-    is_decided_winner = game.winner in (0, 1) and not game.stopped_on_event
-    is_rule_draw = game.winner == -1 and not game.stopped_on_event
+    # 优先使用 2026-09-06 官方 list.cfg 权威真值（解封 456 局认输与 265 局和棋）
+    has_meta = meta_record is not None
+    is_decided_winner = False
+    is_rule_draw = False
+    final_winner = -1
 
-    final_winner = game.winner
+    if has_meta:
+        rc = meta_record.get("reason_code", 0)
+        w_code = meta_record.get("winner", 3)
+        # 1=常规终局, 21=主动认输, 22=长捉, 23=超时, 24=断线 -> 具有确定胜负的正式对局
+        if rc in (1, 21, 22, 23, 24) and w_code in (1, 2):
+            is_decided_winner = True
+            final_winner = 0 if w_code == 1 else 1
+        # 40=协议和棋, 42=循环和棋, 43=限步和棋 -> 正规和棋 (排除中途逃跑 code 20)
+        elif rc in (40, 42, 43) or (w_code == 3 and rc != 20):
+            is_rule_draw = True
+            final_winner = -1
+        # code 20 为早期强退，不赋 Value (has_value=False)，仅保留 Policy 动作
+    else:
+        # 回退到无元数据时的纯引擎判定
+        is_decided_winner = game.winner in (0, 1) and not game.stopped_on_event
+        is_rule_draw = game.winner == -1 and not game.stopped_on_event
+        final_winner = game.winner
+
     from collections import Counter
     from .state import position_key
     seen_counts = Counter([position_key(st)])
@@ -193,12 +271,37 @@ def process_single_game(game: SavGame, cfg: RuleConfig) -> list[dict]:
 def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
                           split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
                           seed: int = 2026, version: str = "1.0.0",
-                          max_games: Optional[int] = None) -> DatasetStats:
-    """从 .sav 文件目录构建标准 P1 数据集（按对局切分，附带版本和哈希）。"""
+                          max_games: Optional[int] = None,
+                          list_cfg_path: Optional[str] = None) -> DatasetStats:
+    """从 .sav 文件目录构建标准 P1 数据集（按对局切分，附带版本和哈希）。
+    支持接入 list.cfg 官方权威终局判定真值数据库。
+    """
     os.makedirs(out_dir, exist_ok=True)
     cfg = RuleConfig()
 
+    # 尝试加载 list.cfg 官方元数据真值表
+    meta_dict = {}
+    if list_cfg_path is not None and os.path.exists(list_cfg_path):
+        meta_dict = load_list_cfg_metadata(list_cfg_path)
+    elif os.path.isfile(sav_dir):
+        parent_dir = os.path.dirname(sav_dir)
+        cand = os.path.join(parent_dir, "list.cfg")
+        if os.path.exists(cand):
+            meta_dict = load_list_cfg_metadata(cand)
+    else:
+        cand = os.path.join(sav_dir, "list.cfg")
+        if os.path.exists(cand):
+            meta_dict = load_list_cfg_metadata(cand)
+        elif os.path.exists("军旗复盘/list.cfg"):
+            meta_dict = load_list_cfg_metadata("军旗复盘/list.cfg")
+
     # 1. 查找全部 .sav 文件
+    if not os.path.exists(sav_dir):
+        if os.path.exists("军旗复盘"):
+            sav_dir = "军旗复盘"
+        elif os.path.exists("../军旗复盘"):
+            sav_dir = "../军旗复盘"
+
     if os.path.isfile(sav_dir):
         sav_files = [sav_dir]
     else:
@@ -266,14 +369,29 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v1",
 
             stats.valid_games += 1
 
-            if g.winner in (0, 1) and not g.stopped_on_event:
-                stats.outcome_distribution["decided_win"] += 1
-            elif g.winner == -1 and not g.stopped_on_event:
-                stats.outcome_distribution["rule_draw"] += 1
-            else:
-                stats.outcome_distribution["special_or_unfinished"] += 1
+            base_fname = os.path.basename(fpath)
+            meta = meta_dict.get(base_fname)
+            if meta is None and base_fname.endswith(".sav"):
+                meta = meta_dict.get(base_fname[:-4])
 
-            game_samples = process_single_game(g, cfg)
+            if meta is not None:
+                rc = meta.get("reason_code", 0)
+                wc = meta.get("winner", 3)
+                if rc in (1, 21, 22, 23, 24) and wc in (1, 2):
+                    stats.outcome_distribution["decided_win"] += 1
+                elif rc in (40, 42, 43) or (wc == 3 and rc != 20):
+                    stats.outcome_distribution["rule_draw"] += 1
+                else:
+                    stats.outcome_distribution["special_or_unfinished"] += 1
+            else:
+                if g.winner in (0, 1) and not g.stopped_on_event:
+                    stats.outcome_distribution["decided_win"] += 1
+                elif g.winner == -1 and not g.stopped_on_event:
+                    stats.outcome_distribution["rule_draw"] += 1
+                else:
+                    stats.outcome_distribution["special_or_unfinished"] += 1
+
+            game_samples = process_single_game(g, cfg, meta_record=meta)
             for s in game_samples:
                 all_states.append(s["state"])
                 all_masks.append(s["mask"])
@@ -373,3 +491,33 @@ def evaluate_dataset_policy(npz_path: str, max_samples: int = 1000) -> dict:
             }
         }
     }
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="P1 复盘行为克隆数据集生成与评估")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_export = sub.add_parser("export", help="从复盘数据导出标准行为克隆数据集 (npz)")
+    p_export.add_argument("--sav-dir", default="../军旗复盘", help=".sav 复盘文件目录")
+    p_export.add_argument("--out-dir", default="datasets/p1_v1", help="输出 npz 目录")
+    p_export.add_argument("--seed", type=int, default=2026, help="随机种子")
+    p_export.add_argument("--version", default="1.0.0", help="数据集版本号")
+
+    p_eval = sub.add_parser("eval", help="评估数据集 Policy 基准指标")
+    p_eval.add_argument("--dataset", default="datasets/p1_v1/val.npz", help="npz 数据集文件路径")
+    p_eval.add_argument("--samples", type=int, default=1000, help="评估样本量")
+
+    args = parser.parse_args()
+    if args.cmd == "export":
+        stats = export_replay_dataset(args.sav_dir, out_dir=args.out_dir, seed=args.seed, version=args.version)
+        print(f"P1 数据集已成功生成至 {args.out_dir}:")
+        print(f"  - 总局数: {stats.total_sav_files} (有效: {stats.valid_games}, 无效: {stats.invalid_games})")
+        print(f"  - 切分: Train {stats.train_games} 局 ({stats.train_plies} plies), Val {stats.val_games} 局 ({stats.val_plies} plies), Test {stats.test_games} 局 ({stats.test_plies} plies)")
+        print(f"  - Policy 样本数: {stats.policy_samples_count}, Value 样本数: {stats.value_samples_count}")
+        print(f"  - 阶段覆盖率: {stats.phase_distribution}")
+    elif args.cmd == "eval":
+        report = evaluate_dataset_policy(args.dataset, max_samples=args.samples)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        parser.print_help()

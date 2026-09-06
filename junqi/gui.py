@@ -420,7 +420,8 @@ class GuiApp:
                 scored = agent.choose_actions(st, topn=1, avoid=avoid)
             elif engine_type == "expert":
                 from .ai import ExpertAgent
-                agent = ExpertAgent(SearchConfig(depth=depth), weights=self.weights, seed=seed)
+                time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
+                agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
                 scored = agent.choose_actions(st, topn=1, avoid=avoid)
             elif engine_type == "nn" and os.path.exists("models/best.pt"):
                 from .ai import NNAgent
@@ -462,7 +463,8 @@ class GuiApp:
                 scored = agent.choose_actions(st, topn=3, avoid=avoid)
             elif engine_type == "expert":
                 from .ai import ExpertAgent
-                agent = ExpertAgent(SearchConfig(depth=depth), weights=self.weights, seed=seed)
+                time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
+                agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
                 scored = agent.choose_actions(st, topn=3, avoid=avoid)
             elif engine_type == "nn" and os.path.exists("models/best.pt"):
                 from .ai import NNAgent

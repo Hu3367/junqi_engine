@@ -309,7 +309,11 @@ class ExpertAgent:
         if topn <= 1 or best_act is None:
             return [(best_act or acts[0], best_score)]
 
-        # 如果需要 topn 个候选走法，使用根节点评分排序
+        # 如果需要 topn 个候选走法，优先返回根节点真实搜索估值
+        if stats.root_scores:
+            return stats.root_scores[:topn]
+
+        # 如果无根节点搜索分，回退到启发排序
         scored = []
         for a in acts:
             score = self.engine._score_action(a, state, 0, best_act)
