@@ -20,7 +20,7 @@ class RuleConfig:
     hq_locks_pieces: bool = False           # 大本营锁死棋子（App 实测：翻棋不锁）
     engineer_rail_turns: bool = True        # 工兵铁路绕行（在铁路网内可任意转弯）
     engineer_can_fly_over_pieces: bool = False  # 工兵越子开关（默认 False：工兵不能越过轨道上的棋子移动）
-    no_capture_draw_plies: int = 40         # 连续 40 步未吃子判和（0=关闭）
+    no_capture_draw_plies: int = 70         # APK：连续 70 步未吃子判和（官方 ruleflip.txt 原文，0=关闭）
     max_plies: int = 1000                   # APK：双方总步数达到 1000 判和
     repetition_draw_count: int = 3          # APK：相同局面多次循环判和（对局层判定，
                                             #  按"可观察局面"出现次数计）
@@ -31,6 +31,7 @@ class SearchConfig:
     depth: int = 2          # 搜索深度（ ply ）
     samples: int = 6        # PIMC 采样的世界数 K
     time_limit_ms: int = 0  # >0 时迭代加深限时
+    qsearch_depth: int = 16 # 静态搜索深度上限 (ply)
 
 
 @dataclass

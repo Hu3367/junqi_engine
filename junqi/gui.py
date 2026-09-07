@@ -123,6 +123,7 @@ class GuiApp:
         self.hint_action = None
         self.last_action: Action | None = None
         self.last_action_seat: int | None = None
+        self.last_action_desc: str = ""
         self.history = []
         self.log_lines = []
         self.result_q = queue.Queue()
@@ -192,15 +193,15 @@ class GuiApp:
         tk.Button(row2, text="复盘点评", font=FONT_S, bg="#E8F8F5",
                   command=self.open_replay_window).pack(side="left", padx=3)
 
-        self.ai_engine = tk.StringVar(value="p4_hybrid" if os.path.exists("models/best.pt") else "expert")
+        self.ai_engine = tk.StringVar(value="apk")
         adv_engine = tk.Frame(p, bg=BG)
         adv_engine.pack(pady=2, fill="x", padx=6)
         tk.Label(adv_engine, text="AI引擎:", font=FONT_S, bg=BG).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 4))
-        tk.Radiobutton(adv_engine, text="P4混合智能", variable=self.ai_engine, value="p4_hybrid",
-                       font=FONT_S, bg=BG).grid(row=0, column=1, sticky="w")
         tk.Radiobutton(adv_engine, text="原生APK", variable=self.ai_engine, value="apk",
-                       font=FONT_S, bg=BG).grid(row=0, column=2, sticky="w", padx=(4, 0))
+                       font=FONT_S, bg=BG).grid(row=0, column=1, sticky="w")
         tk.Radiobutton(adv_engine, text="专家搜索", variable=self.ai_engine, value="expert",
+                       font=FONT_S, bg=BG).grid(row=0, column=2, sticky="w", padx=(4, 0))
+        tk.Radiobutton(adv_engine, text="P4混合智能", variable=self.ai_engine, value="p4_hybrid",
                        font=FONT_S, bg=BG).grid(row=1, column=1, sticky="w")
         tk.Radiobutton(adv_engine, text="混合智能", variable=self.ai_engine, value="hybrid",
                        font=FONT_S, bg=BG).grid(row=1, column=2, sticky="w", padx=(4, 0))
@@ -259,8 +260,10 @@ class GuiApp:
         self.history = []
         self.log_lines = []
         self.logbox.delete(0, "end")
+        eng = self.ai_engine.get()
+        eng_name = {"apk": "原生APK", "expert": "专家搜索", "p4_hybrid": "P4混合智能", "hybrid": "混合智能"}.get(eng, eng)
         self.log("new", f"新局 种子={seed} 你执座位{self.human_seat}"
-                        f"（{'先手' if self.human_seat == 0 else '后手'}）")
+                        f"（{'先手' if self.human_seat == 0 else '后手'}） [{eng_name}]")
         # 对战记录（用于人类战法分析与审计回放，结束自动存 games/）
         self.record = {
             "seed": seed,
@@ -279,6 +282,7 @@ class GuiApp:
         self.hint_action = None
         self.last_action = None
         self.last_action_seat = None
+        self.last_action_desc = ""
         self.pos_seen = Counter([position_key(self.state)])   # 可观察局面计数（循环判和）
         self.gen = getattr(self, "gen", 0) + 1
         self.refresh()
@@ -310,6 +314,7 @@ class GuiApp:
         self.selected = self.pending_flip = self.hint_action = None
         self.last_action = None
         self.last_action_seat = None
+        self.last_action_desc = ""
         self._rebuild_seen()
         self.refresh()
 
@@ -404,6 +409,7 @@ class GuiApp:
         self.pos_seen[position_key(self.state)] += 1
         self.last_action = act
         self.last_action_seat = st.turn
+        self.last_action_desc = desc
         self.selected = self.pending_flip = self.hint_action = None
         self.log("move", f"{'你' if st.turn == self.human_seat else 'AI'}: {desc}")
         self.refresh()
@@ -442,14 +448,21 @@ class GuiApp:
             self.log("save", f"对局已存 {name}（可点击【复盘点评】推演与批注）")
         except OSError as e:
             self.log("save", f"记录保存失败: {e}")
-    def describe(self, act: Action) -> str:
-        st = self.state
+
+    def describe(self, act: Action, state: GameState | None = None) -> str:
+        st = state if state is not None else self.state
         if act.kind == "flip":
-            pc = st.board[act.frm]
-            return f"翻({act.frm[0]},{act.frm[1]}) -> {piece_label(pc)}"
-        mover = st.board[act.frm]
+            pc = st.board.get(act.frm)
+            if pc is not None:
+                return f"翻({act.frm[0]},{act.frm[1]}) -> {piece_label(pc)}"
+            return f"翻({act.frm[0]},{act.frm[1]})"
+        mover = st.board.get(act.frm)
         target = st.board.get(act.to)
         base = f"({act.frm[0]},{act.frm[1]})->({act.to[0]},{act.to[1]})"
+        if mover is None:
+            if target is not None:
+                return f"{base} {piece_label(target)}"
+            return base
         if target is None:
             return f"{base} {RANK_CN[mover.rank]}"
         from .rules import battle
@@ -469,10 +482,11 @@ class GuiApp:
             return
         self.busy = True
         self.gen = getattr(self, "gen", 0)
-        self.status.config(text="AI 思考中…")
+        engine_type = self.ai_engine.get()
+        engine_name = {"apk": "原生APK", "expert": "专家搜索", "p4_hybrid": "P4混合智能", "hybrid": "混合智能"}.get(engine_type, engine_type)
+        self.status.config(text=f"AI ({engine_name}) 思考中…")
         st, seed = self.state.copy(), random.randrange(2 ** 30)
         depth, samples, gen = self.depth.get(), self.samples.get(), self.gen
-        engine_type = self.ai_engine.get()
         avoid = self._avoid_set()
 
         def work():
@@ -497,7 +511,8 @@ class GuiApp:
                 elif engine_type == "expert":
                     from .ai import ExpertAgent
                     time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
-                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
+                    qdepth = 8 if depth <= 1 else (12 if depth == 2 else 16)
+                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget, qsearch_depth=qdepth), weights=self.weights, seed=seed)
                     scored = agent.choose_actions(st, topn=3, avoid=avoid)
                 elif engine_type == "nn" and os.path.exists("models/best.pt"):
                     from .ai import NNAgent
@@ -538,10 +553,11 @@ class GuiApp:
             return
         self.busy = True
         self.gen = getattr(self, "gen", 0)
-        self.status.config(text="计算提示中…")
+        engine_type = self.ai_engine.get()
+        engine_name = {"apk": "原生APK", "expert": "专家搜索", "p4_hybrid": "P4混合智能", "hybrid": "混合智能"}.get(engine_type, engine_type)
+        self.status.config(text=f"计算提示 ({engine_name}) 中…")
         st, seed = self.state.copy(), random.randrange(2 ** 30)
         depth, samples, gen = self.depth.get(), self.samples.get(), self.gen
-        engine_type = self.ai_engine.get()
         avoid = self._avoid_set()
 
         def work():
@@ -566,7 +582,8 @@ class GuiApp:
                 elif engine_type == "expert":
                     from .ai import ExpertAgent
                     time_budget = 400 if depth <= 1 else (1000 if depth == 2 else 2500)
-                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget), weights=self.weights, seed=seed)
+                    qdepth = 8 if depth <= 1 else (12 if depth == 2 else 16)
+                    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_budget, qsearch_depth=qdepth), weights=self.weights, seed=seed)
                     scored = agent.choose_actions(st, topn=3, avoid=avoid)
                 elif engine_type == "nn" and os.path.exists("models/best.pt"):
                     from .ai import NNAgent
@@ -882,8 +899,9 @@ class GuiApp:
             my = st.my_color()
             who = f"你执{COLOR_CN[my]}" if my else "你（首翻定色）"
             last_hint = ""
-            if getattr(self, "last_action", None) is not None and getattr(self, "last_action_seat", None) != self.human_seat:
-                last_hint = f"\n[AI刚走]: {self.describe(self.last_action)}"
+            desc = getattr(self, "last_action_desc", "")
+            if desc and getattr(self, "last_action_seat", None) != self.human_seat:
+                last_hint = f"\n[AI刚走]: {desc}"
             text = f"轮到你（{who}）：点己方明子走子，或点暗子翻开{last_hint}\n{rule_line}"
         else:
             text = f"轮到 AI…\n{rule_line}"

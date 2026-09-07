@@ -292,7 +292,9 @@ class ExpertAgent:
                  seed: int | None = None):
         self.cfg = search or SearchConfig()
         self.w = weights or EvalWeights()
-        self.engine = ExpertSearchEngine(weights=self.w, tt_size_power=tt_size_power, seed=seed)
+        qdepth = getattr(self.cfg, "qsearch_depth", 16)
+        self.engine = ExpertSearchEngine(weights=self.w, tt_size_power=tt_size_power, seed=seed,
+                                         qsearch_depth=qdepth)
         self.rng = random.Random(seed)
 
     @property
@@ -312,7 +314,8 @@ class ExpertAgent:
             state,
             max_depth=max(1, self.cfg.depth),
             time_limit_ms=self.cfg.time_limit_ms,
-            avoid=avoid
+            avoid=avoid,
+            qsearch_depth=getattr(self.cfg, "qsearch_depth", 16),
         )
 
         if topn <= 1 or best_act is None:

@@ -30,7 +30,7 @@ from .zobrist import compute_zobrist
 MAX_KILLERS = 2
 MAX_HISTORY = 100_000
 MAX_SEARCH_DEPTH = 64
-DEFAULT_QSEARCH_DEPTH = 4
+DEFAULT_QSEARCH_DEPTH = 16
 
 
 @dataclass
@@ -50,10 +50,12 @@ class ExpertSearchEngine:
     """专家级军棋翻棋搜索引擎。"""
 
     def __init__(self, weights: Optional[EvalWeights] = None,
-                 tt_size_power: int = 18, seed: Optional[int] = None):
+                 tt_size_power: int = 18, seed: Optional[int] = None,
+                 qsearch_depth: int = DEFAULT_QSEARCH_DEPTH):
         self.w = weights or EvalWeights()
         self.tt = TranspositionTable(size_power=tt_size_power)
         self.rng = random.Random(seed)
+        self.qsearch_depth = qsearch_depth
 
         # 启发式表
         # killer_moves[depth] = list[Action]
@@ -151,6 +153,10 @@ class ExpertSearchEngine:
 
             # 3. 进行营避险 / 占营进驻核心据点 (实证：前 20 手走子 82.7% 为进营)
             if is_camp(act.to):
+                if is_camp(act.frm):
+                    # 3.0 营间互窜 (Camp-to-camp idle shuttle)：
+                    # 在两营之间无吃子往复闲走，既不增加净占营数，又放弃既有据点与拓荒，赋予重度负优先级！
+                    return -200_000.0
                 # 进驻空行营是绝对免死与据点化的战略特权，优先级高于普通翻棋
                 camp_prio = 250_000.0 if act.to not in state.board else 150_000.0
                 # 若进营位置邻接敌方炸弹，具有"卡营逼弹"免死压制特权
@@ -178,7 +184,7 @@ class ExpertSearchEngine:
                             if e is not None and e.revealed and e.color == opp and e.rank not in (Rank.LEI, Rank.QI):
                                 if battle(e.rank, mover_rank) in (ATTACKER_WINS, BOTH_DIE):
                                     return -350_000.0  # 敌大子窥视下出营送死严惩
-                    return -150_000.0
+                    return -200_000.0  # 普通弱子无故弃营也予重罚，优先于营内拓荒或伏击
 
             # 3.2 大子向空行营安全中继推进 (2026-09-06 实战修复：截图19手师长安全挺进 (6,1)->(6,2)->中营)
             if not is_camp(act.frm) and not is_camp(act.to) and mover_rank >= Rank.SHI:
@@ -232,16 +238,19 @@ class ExpertSearchEngine:
             opp = other(my) if my else None
 
             # 1. 依托行营辐射拓荒 (实证：96.2% 邻营翻棋，开局首翻即据点)
-            # 用户核心战略：依托己方已控行营，向无敌方染指的空行营辐射拓荒翻棋
-            # 翻出自子可立即延申进营，翻出敌子被营内子就近扑杀无损失
+            # 用户核心战略：依托己方已控行营，向周围暗子辐射拓荒翻棋
+            # 翻出自子可立即协同，翻出敌子被营内子单向就近扑杀无损失 (开局 50.1% 吃子源自行营扑杀)
             camp_expansion_bonus = 0.0
             has_friendly_camp = False
+            friendly_camp_combat_rank = 0
             has_safe_empty_camp = False
             for np in NEIGHBORS[pos]:
                 if is_camp(np):
                     cb = state.board.get(np)
                     if cb is not None and cb.revealed and cb.color == my:
                         has_friendly_camp = True
+                        if cb.rank not in (Rank.LEI, Rank.QI):
+                            friendly_camp_combat_rank = max(friendly_camp_combat_rank, cb.rank)
                     elif np not in state.board:
                         enemy_around_camp = any(
                             (e := state.board.get(enp)) is not None and e.revealed and e.color == opp
@@ -250,34 +259,25 @@ class ExpertSearchEngine:
                         if not enemy_around_camp:
                             has_safe_empty_camp = True
 
-            if has_friendly_camp and has_safe_empty_camp:
-                camp_expansion_bonus = 70_000.0
-            elif has_friendly_camp:
-                camp_expansion_bonus = 45_000.0
+            if has_friendly_camp:
+                # 依托己方已控据点邻域拓荒：战略特权优先级 (介于空营挺进与普通翻棋之间)
+                rank_boost = 15_000.0 if friendly_camp_combat_rank >= Rank.SHI else 5_000.0
+                camp_expansion_bonus = 100_000.0 + rank_boost
+                if has_safe_empty_camp:
+                    camp_expansion_bonus += 20_000.0
             elif has_safe_empty_camp:
-                camp_expansion_bonus = 30_000.0
+                camp_expansion_bonus = 40_000.0
 
-            # 2. 开局领地与中前场咽喉偏好 (避免盲目翻自家底线或敌方底线禁区)
+            # 2. 开局领地与中前场咽喉偏好 (对称结构：避免盲目翻底线深处暗子)
             territory_bias = 0.0
-            if my == "r":
-                if 1 <= r <= 5:
-                    territory_bias = 20_000.0
-                elif r == 0:
-                    territory_bias = -15_000.0
-                elif 6 <= r <= 11:
-                    territory_bias = -100_000.0
-            elif my == "b":
-                if 6 <= r <= 10:
-                    territory_bias = 20_000.0
-                elif r == 11:
-                    territory_bias = -15_000.0
-                elif 0 <= r <= 5:
-                    territory_bias = -100_000.0
-            else:
-                if 2 <= r <= 4 or 7 <= r <= 9:
-                    territory_bias = 20_000.0
-                elif r in (0, 11):
-                    territory_bias = -15_000.0
+            if 2 <= r <= 4 or 7 <= r <= 9:
+                territory_bias = 25_000.0  # 行营核心辐射带
+            elif r in (5, 6):
+                territory_bias = 20_000.0  # 前线关隘与中路铁路
+            elif r in (1, 10):
+                territory_bias = 5_000.0   # 次底线
+            elif r in (0, 11):
+                territory_bias = -20_000.0 # 底线边角，开荒优先级较低
 
             friendly_guards = 0
             enemy_threats = 0
@@ -340,7 +340,13 @@ class ExpertSearchEngine:
 
     def _qsearch(self, state: GameState, alpha: float, beta: float,
                  depth_left: int = DEFAULT_QSEARCH_DEPTH) -> float:
-        """静态搜索 (Quiescence Search)：专用于在叶子节点解决吃子与战术震荡。"""
+        """静态搜索 (Quiescence Search)：专用于在叶子节点解决吃子与战术震荡。
+
+        对齐原版 APK 0x5a678 + 0x591d8:
+        1. 严格只生成吃子动作与吃旗动作（Captures Only），绝不将进营等非吃子动作塞入；
+        2. Delta Pruning 剪枝加速；
+        3. 延伸至更深交火线（默认 16 ply），彻底消除地平线反杀盲区。
+        """
         self.stats.qnodes += 1
 
         # 终局检查
@@ -360,7 +366,14 @@ class ExpertSearchEngine:
         if depth_left <= 0:
             return stand_pat
 
-        # 仅生成吃子动作和进行营避险动作
+        # Delta Pruning (大 Delta 剪枝)
+        # 若即便吃掉全盘最贵子力（或军旗），加上安全裕量后依然无法超越 alpha，则提前剪枝
+        max_piece_val = max(self.w.piece.values()) if (self.w and self.w.piece) else 100.0
+        big_delta = max_piece_val + 200.0
+        if stand_pat + big_delta < alpha:
+            return alpha
+
+        # 仅生成吃子动作（吃敌方明子或吃旗）
         acts = state.legal_actions()
         tactical_moves: list[Action] = []
         my = state.my_color()
@@ -369,11 +382,8 @@ class ExpertSearchEngine:
             if a.kind != "move":
                 continue
             target = state.board.get(a.to)
-            # 吃明子
+            # 吃明子 (包含吃旗)
             if target is not None and target.revealed and target.color != my:
-                tactical_moves.append(a)
-            # 或者进营
-            elif is_camp(a.to):
                 tactical_moves.append(a)
 
         if not tactical_moves:
@@ -383,6 +393,13 @@ class ExpertSearchEngine:
         tactical_moves.sort(key=lambda a: self._score_action(a, state, 0, None), reverse=True)
 
         for a in tactical_moves:
+            # 局部 Delta 剪枝 (针对具体被吃子力价值)
+            target = state.board.get(a.to)
+            if target is not None and target.rank != Rank.QI:
+                victim_val = self.w.piece.get(target.rank, 30.0)
+                if stand_pat + victim_val + 50.0 < alpha:
+                    continue
+
             child = state.apply(a)
             score = -self._qsearch(child, -beta, -alpha, depth_left - 1)
             if score >= beta:
@@ -540,7 +557,7 @@ class ExpertSearchEngine:
 
         # 4. 叶子节点转入静态搜索 (QSearch)
         if depth <= 0:
-            return self._qsearch(state, alpha, beta)
+            return self._qsearch(state, alpha, beta, self.qsearch_depth)
 
         acts = state.legal_actions()
         if not acts:
@@ -614,7 +631,8 @@ class ExpertSearchEngine:
     # ------------------------------------------------------------- 迭代加深与根决策 (IDS)
 
     def search(self, state: GameState, max_depth: int = 3,
-               time_limit_ms: int = 0, avoid: Optional[set] = None
+               time_limit_ms: int = 0, avoid: Optional[set] = None,
+               qsearch_depth: Optional[int] = None
                ) -> tuple[Optional[Action], float, SearchStats]:
         """迭代加深搜索 (Iterative Deepening Search)。
 
@@ -623,6 +641,7 @@ class ExpertSearchEngine:
             max_depth: 最大搜索深度 (ply)
             time_limit_ms: 限时 (毫秒)，0 为不限时纯按深度
             avoid: 根节点需回避的可观察局面键集合 (防送循环)
+            qsearch_depth: 自定义静态搜索深度上限 (None 则采用 self.qsearch_depth)
 
         返回:
             (best_action, score, stats)
@@ -631,85 +650,118 @@ class ExpertSearchEngine:
         self.stopped = False
         start_time = time.perf_counter()
 
-        if time_limit_ms > 0:
-            self.deadline = start_time + (time_limit_ms / 1000.0)
-        else:
-            self.deadline = float("inf")
+        old_qdepth = self.qsearch_depth
+        if qsearch_depth is not None:
+            self.qsearch_depth = qsearch_depth
 
-        acts = state.legal_actions()
-        if not acts or state.is_terminal():
-            return None, 0.0, self.stats
-        if len(acts) == 1:
-            return acts[0], 0.0, self.stats
+        try:
+            if time_limit_ms > 0:
+                self.deadline = start_time + (time_limit_ms / 1000.0)
+            else:
+                self.deadline = float("inf")
 
-        best_action: Optional[Action] = None
-        best_score: float = -math.inf
+            acts = state.legal_actions()
+            if not acts or state.is_terminal():
+                return None, 0.0, self.stats
+            if len(acts) == 1:
+                return acts[0], 0.0, self.stats
 
-        path_history: set[int] = set()
+            best_action: Optional[Action] = None
+            best_score: float = -math.inf
 
-        for d in range(1, max_depth + 1):
-            if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
-                break
+            path_history: set[int] = set()
 
-            # 根节点搜索
-            zobrist_key = compute_zobrist(state)
-            _, tt_move = self.tt.lookup(zobrist_key, d, -math.inf, math.inf)
-            ordered_acts = self._order_actions(acts, state, 0, tt_move or best_action)
-
-            current_d_best_act = ordered_acts[0]
-            current_d_best_score = -math.inf
-            alpha = -math.inf
-            beta = math.inf
-            d_scores: list[tuple[Action, float]] = []
-
-            for a in ordered_acts:
+            for d in range(1, max_depth + 1):
                 if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
                     break
 
-                if a.kind == "flip":
-                    score = self._evaluate_chance_flip(state, a, d, 0, alpha, beta, path_history)
-                else:
-                    child = state.apply(a)
-                    score = -self._negamax(child, d - 1, 1, -beta, -alpha, path_history)
+                # 根节点搜索
+                zobrist_key = compute_zobrist(state)
+                _, tt_move = self.tt.lookup(zobrist_key, d, -math.inf, math.inf)
+                ordered_acts = self._order_actions(acts, state, 0, tt_move or best_action)
 
-                # 避免命中 avoid 集合
-                if avoid and a.kind == "move":
-                    from .state import position_key
-                    if position_key(state.apply(a)) in avoid:
-                        score -= 150.0
+                current_d_best_act = ordered_acts[0]
+                current_d_best_score = -math.inf
+                alpha = -math.inf
+                beta = math.inf
+                d_scores: list[tuple[Action, float]] = []
 
-                d_scores.append((a, score))
+                for a in ordered_acts:
+                    if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
+                        break
 
-                # 战术确定性优先准则 (用户核心原则：杜绝盲目翻暗棋赌概率)
-                # 翻棋为几率节点期望，若期望与确定性战术走法差距 <= 0.5 分，优先由确定性走法胜出
-                is_better = False
-                if current_d_best_act is None:
-                    is_better = True
-                elif a.kind == "flip" and current_d_best_act.kind == "move":
-                    if score > current_d_best_score + 0.5:
+                    if a.kind == "flip":
+                        score = self._evaluate_chance_flip(state, a, d, 0, alpha, beta, path_history)
+                    else:
+                        child = state.apply(a)
+                        score = -self._negamax(child, d - 1, 1, -beta, -alpha, path_history)
+
+                    # 避免命中 avoid 集合
+                    if avoid and a.kind == "move":
+                        from .state import position_key
+                        if position_key(state.apply(a)) in avoid:
+                            score -= 150.0
+
+                    d_scores.append((a, score))
+
+                    # 战术确定性优先准则 (用户核心原则：杜绝盲目翻暗棋赌概率)
+                    # 仅当移动走法属于【实质性吃子/战术制胜】或【进驻空行营】时，享有 0.5 分确定性优先特权；
+                    # 普通静步闲走（尤其是出营、营间乱窜等）严禁压制翻开邻营暗子开拓据点的行动！
+                    def _is_tactical(act: Action) -> bool:
+                        if act.kind != "move":
+                            return False
+                        tgt = state.board.get(act.to)
+                        if tgt is not None and tgt.revealed:
+                            return True
+                        if not is_camp(act.frm) and is_camp(act.to):
+                            return True
+                        return False
+
+                    is_better = False
+                    if current_d_best_act is None:
                         is_better = True
-                elif a.kind == "move" and current_d_best_act.kind == "flip":
-                    if score >= current_d_best_score - 0.5:
+                    elif a.kind == "flip" and current_d_best_act.kind == "move":
+                        if _is_tactical(current_d_best_act):
+                            if score > current_d_best_score + 0.5:
+                                is_better = True
+                        else:
+                            if score >= current_d_best_score:
+                                is_better = True
+                    elif a.kind == "move" and current_d_best_act.kind == "flip":
+                        if _is_tactical(a):
+                            if score >= current_d_best_score - 0.5:
+                                is_better = True
+                        else:
+                            if score > current_d_best_score:
+                                is_better = True
+                    elif score > current_d_best_score:
                         is_better = True
-                elif score > current_d_best_score:
-                    is_better = True
 
-                if is_better:
-                    current_d_best_score = score
-                    current_d_best_act = a
-                    if score > alpha:
-                        alpha = score
+                    if is_better:
+                        current_d_best_score = score
+                        current_d_best_act = a
+                        if score > alpha:
+                            alpha = score
 
-            if not self.stopped:
-                best_action = current_d_best_act
-                best_score = current_d_best_score
-                self.stats.max_depth = d
-                sorted_roots = sorted(d_scores, key=lambda t: t[1], reverse=True)
-                if best_action is not None:
-                    best_tuple = next((t for t in sorted_roots if t[0] == best_action), (best_action, best_score))
-                    sorted_roots = [best_tuple] + [t for t in sorted_roots if t[0] != best_action]
-                self.stats.root_scores = sorted_roots
-                self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
+                if not self.stopped:
+                    best_action = current_d_best_act
+                    best_score = current_d_best_score
+                    self.stats.max_depth = d
+                    sorted_roots = sorted(d_scores, key=lambda t: t[1], reverse=True)
+                    if best_action is not None:
+                        best_tuple = next((t for t in sorted_roots if t[0] == best_action), (best_action, best_score))
+                        sorted_roots = [best_tuple] + [t for t in sorted_roots if t[0] != best_action]
+                    self.stats.root_scores = sorted_roots
+                    self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
 
-        self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-        return best_action or acts[0], best_score, self.stats
+                    # 动态时间预算早停控制 (对齐原版 APK 0x5ac3a: cmp.w r2, r3, asr #2)
+                    # 若当前深度总耗时已超过时间限制的 25%，下一深度耗时预计成倍增长大概率超时，
+                    # 故在此安全退出，保留当前深度完整稳定的最优决策
+                    elapsed_now = (time.perf_counter() - start_time) * 1000.0
+                    if time_limit_ms > 0 and elapsed_now > (time_limit_ms * 0.25):
+                        break
+
+            self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            return best_action or acts[0], best_score, self.stats
+        finally:
+            self.qsearch_depth = old_qdepth

@@ -205,8 +205,16 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             my_camps += 1
             # 行营绝对保护分：在营内完全免死，额外+5基础防守分
             score += w.camp_occ + 5.0
+            # 中营枢纽控制加成：中营 (3,2) 与 (8,2) 拥有 8 向通达辐射特权，战略价值显著高于角营 (折现 85% 占营分)
+            if pos in ((3, 2), (8, 2)):
+                score += w.camp_occ * 0.85
             if pc.rank == Rank.ZHA:
                 score += 12.0  # 己方炸弹在营：绝对免死堡垒与前沿核威慑
+            # 行营辐射拓荒期权：营内子对周围暗子拥有就近单向扑杀特权 (每暗子折现 6% 占营分)
+            adjacent_hidden = sum(1 for np in NEIGHBORS[pos]
+                                  if (h := state.board.get(np)) is not None and not h.revealed)
+            if pc.rank not in (Rank.LEI, Rank.QI):
+                score += (w.camp_occ * 0.06) * adjacent_hidden
             # 行营围杀压力：营内子对能击杀或兑掉的邻接敌明子施加围杀压力 (杜绝小子在营里对大子产生假围杀加分)
             siege = sum(1 for np in NEIGHBORS[pos]
                         if (e := state.board.get(np)) is not None and e.revealed and e.color == opp
@@ -219,8 +227,14 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         if is_camp(pos):
             opp_camps += 1
             score -= (w.camp_occ + 5.0)
+            if pos in ((3, 2), (8, 2)):
+                score -= w.camp_occ * 0.85
             if pc.rank == Rank.ZHA:
                 score -= 12.0  # 敌方炸弹入营：敌核武固若金汤，严重威胁己方
+            adjacent_hidden = sum(1 for np in NEIGHBORS[pos]
+                                  if (h := state.board.get(np)) is not None and not h.revealed)
+            if pc.rank not in (Rank.LEI, Rank.QI):
+                score -= (w.camp_occ * 0.06) * adjacent_hidden
             siege = sum(1 for np in NEIGHBORS[pos]
                         if (e := state.board.get(np)) is not None and e.revealed and e.color == my
                         and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
@@ -237,9 +251,12 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         camp_factor = {2: 1.0, 3: 1.5, 4: 2.2, 5: 2.6, 6: 3.0}.get(k, 3.0)
         score += sign * camp_factor * getattr(w, "camp_matrix_weight", 12.0)
 
-    # 3.2 空行营控制权与中继推进 (空营势能必须严格小于实占行营！上限严格封顶 3.0 分/营，严禁因弃营暴涨)
+    # 3.2 空行营控制权与中继推进 (空营势能严格折现为实占行营的 15%~25%，且单一明子最多贡献单营控制)
     empty_camps_score = 0.0
-    for cp in CAMPS:
+    used_my_pieces: set[tuple[int, int]] = set()
+    used_opp_pieces: set[tuple[int, int]] = set()
+    camps_sorted = sorted(CAMPS, key=lambda c: 0 if c in ((3, 2), (8, 2)) else 1)
+    for cp in camps_sorted:
         if cp in state.board:
             continue
         my_reach = []
@@ -250,10 +267,10 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                 continue
             e = state.board.get(np_)
             if e is not None and e.revealed and e.rank not in (Rank.LEI, Rank.QI):
-                if e.color == my:
-                    my_reach.append(e)
-                else:
-                    opp_reach.append(e)
+                if e.color == my and np_ not in used_my_pieces:
+                    my_reach.append((np_, e))
+                elif e.color == opp and np_ not in used_opp_pieces:
+                    opp_reach.append((np_, e))
 
         # 若无人 1 步直达，检查 2 步通畅中继推进 (如 6,2 -> 7,2 -> 8,2)
         if not my_reach and not opp_reach:
@@ -264,26 +281,30 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                             continue
                         e2 = state.board.get(n2)
                         if e2 is not None and e2.revealed and e2.rank not in (Rank.LEI, Rank.QI):
-                            if e2.color == my and e2.rank >= Rank.SHI:
-                                my_reach.append(e2)
+                            if e2.color == my and e2.rank >= Rank.SHI and n2 not in used_my_pieces:
+                                my_reach.append((n2, e2))
                                 break
-                            elif e2.color == opp and e2.rank >= Rank.SHI:
-                                opp_reach.append(e2)
+                            elif e2.color == opp and e2.rank >= Rank.SHI and n2 not in used_opp_pieces:
+                                opp_reach.append((n2, e2))
                                 break
 
         if my_reach and not opp_reach:
-            has_major = any(p.rank >= Rank.SHI for p in my_reach)
-            empty_camps_score += 6.0 if has_major else 2.5
+            used_my_pieces.add(my_reach[0][0])
+            has_major = any(p.rank >= Rank.SHI for _, p in my_reach)
+            empty_camps_score += w.camp_occ * 0.25 if has_major else w.camp_occ * 0.15
         elif opp_reach and not my_reach:
-            has_major = any(p.rank >= Rank.SHI for p in opp_reach)
-            empty_camps_score -= 6.0 if has_major else 2.5
+            used_opp_pieces.add(opp_reach[0][0])
+            has_major = any(p.rank >= Rank.SHI for _, p in opp_reach)
+            empty_camps_score -= w.camp_occ * 0.25 if has_major else w.camp_occ * 0.15
         elif my_reach and opp_reach:
-            my_max = max(p.rank for p in my_reach)
-            opp_max = max(p.rank for p in opp_reach)
+            used_my_pieces.add(my_reach[0][0])
+            used_opp_pieces.add(opp_reach[0][0])
+            my_max = max(p.rank for _, p in my_reach)
+            opp_max = max(p.rank for _, p in opp_reach)
             if my_max > opp_max:
-                empty_camps_score += 1.5
+                empty_camps_score += w.camp_occ * 0.10
             elif opp_max > my_max:
-                empty_camps_score -= 1.5
+                empty_camps_score -= w.camp_occ * 0.10
 
     score += empty_camps_score
 

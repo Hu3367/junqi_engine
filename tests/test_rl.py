@@ -213,10 +213,11 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
         self.assertEqual(_terminal_value(nxt), 1.0)
 
     def test_terminal_value_draw(self):
-        """40 步无吃子判和：终局值为 0。"""
+        """无吃子限步判和：终局值为 0。"""
         from junqi.mcts import _terminal_value
+        limit = self.cfg.no_capture_draw_plies
         st = self._mk({(5, 2): ("r", "PAI", True), (9, 0): ("b", "PAI", True)},
-                      quiet=39)
+                      quiet=limit - 1, cfg=self.cfg)
         nxt = st.apply(Action("move", (5, 2), (5, 1)))
         self.assertEqual((nxt.winner, nxt.win_reason), (-1, "no_capture"))
         self.assertEqual(_terminal_value(nxt), 0.0)

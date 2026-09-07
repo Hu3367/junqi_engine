@@ -121,14 +121,15 @@ class TestEndgameDeadlockFixes(unittest.TestCase):
         self.assertEqual(reason, "mines_partition_board_disconnected")
 
     def test_quiet_moves_limit_dead_draw(self):
-        """测试达到无吃子限步（40手）时直接判和。"""
+        """测试达到无吃子限步时直接判和。"""
         board = {
             (5, 2): Piece("r", Rank.SI, revealed=True),
             (6, 2): Piece("b", Rank.JUN, revealed=True),
         }
         dead = self._build_full_dead(board)
+        limit = self.cfg.no_capture_draw_plies
         st = GameState(board=board, dead=dead, seat_color={0: "r", 1: "b"},
-                       turn=0, ply=100, quiet=40, first_flip_done=True, cfg=self.cfg)
+                       turn=0, ply=100, quiet=limit, first_flip_done=True, cfg=self.cfg)
 
         is_draw, reason = is_dead_draw(st)
         self.assertTrue(is_draw)
