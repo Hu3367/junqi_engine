@@ -23,6 +23,7 @@ from typing import Optional, List, Tuple
 
 from .apk_engine import ApkSearchEngine, APK_LEVEL_SPECS, eval_apk_pure
 from .config import EvalWeights, RuleConfig, SearchConfig
+from .core_bridge import is_cpp_available, search_apk_auto
 from .state import Action, GameState
 
 
@@ -69,6 +70,17 @@ class ApkNativeAgent:
             return []
         if len(acts) == 1:
             return [(acts[0], 0.0)]
+
+        if topn <= 1 and not avoid and is_cpp_available():
+            best_act, best_score, s_dict = search_apk_auto(
+                state,
+                level=self.level,
+                depth=self.depth,
+                time_limit_ms=self.time_limit_ms,
+                qsearch_depth=self.qsearch_depth,
+                prefer_cpp=True,
+            )
+            return [(best_act or acts[0], best_score)]
 
         best_act, best_score, stats = self.engine.search(
             state,

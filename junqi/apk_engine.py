@@ -187,8 +187,25 @@ def eval_apk_flip_root(state: GameState, action: Action, my_color: Color) -> flo
     # 基础继承当前全盘态势估值
     score = eval_apk_pure(state, my_color) if my_color else 0.0
 
+    revealed_friendly = [p for p in state.board.values() if p.revealed and p.color == my_color]
+    friendly_outside_camp = [
+        p_pos for p_pos, p in state.board.items()
+        if p.revealed and p.color == my_color and not is_camp(p_pos)
+    ]
+
+    # 检查是否有未进营的己方明子可一步进空营
+    has_camp_entrance_opportunity = False
+    for p_pos in friendly_outside_camp:
+        for nb in NEIGHBORS.get(p_pos, ()):
+            if is_camp(nb) and state.board.get(nb) is None:
+                has_camp_entrance_opportunity = True
+                break
+        if has_camp_entrance_opportunity:
+            break
+
     # 1. 开局中心 4 个行营周围黄金位强偏好 (0x5a3c0)
-    if pos in CENTER_CAMP_FLIP_POSITIONS:
+    # 严格约束：仅在开局全盘无己方明子、处纯开局盲翻探索期时赋予 +150
+    if not revealed_friendly and pos in CENTER_CAMP_FLIP_POSITIONS:
         score += 150.0
 
     # 2. 依托已占行营的单向扑杀与辐射拓荒特权 (行营免死且 8 向通达)
@@ -215,8 +232,12 @@ def eval_apk_flip_root(state: GameState, action: Action, my_color: Color) -> flo
     if has_opp_threat and not has_friendly_camp:
         score -= 40.0
 
-    # 3. 局势落后或焦灼时的开拓价值 (防止缩营消极和棋)
-    score += 20.0
+    # 3. 战术纪律：若场上有未保护的己方明子且近邻有空营可进，严禁弃营盲目远端翻棋！
+    if has_camp_entrance_opportunity and not has_friendly_camp:
+        # 重度抑制远端盲翻，迫使 AI 优先占营建立据点
+        score -= 200.0
+    else:
+        score += 20.0
 
     return score
 
@@ -482,6 +503,13 @@ class ApkSearchEngine:
             if alpha >= beta:
                 # Beta 剪枝 (Cutoff)
                 break
+
+        # 行营驻守机制：翻棋对局中驻营子力无需强行出营送死，若全盘走法均劣于驻守则保持阵地
+        my_c = state.my_color()
+        if any(is_camp(pos) for pos, p in state.board.items() if p.revealed and p.color == my_c):
+            stand_pat = eval_apk_pure(state, my_c)
+            if best_score < stand_pat:
+                best_score = stand_pat
 
         # 8. 存入置换表 (TT)
         if best_score <= orig_alpha:

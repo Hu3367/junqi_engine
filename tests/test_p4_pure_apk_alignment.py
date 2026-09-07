@@ -185,6 +185,60 @@ class TestP4PureApkAlignment(unittest.TestCase):
         self.assertEqual(nxt.winner, -1)
         self.assertEqual(nxt.win_reason, "no_capture")
 
+    def test_06_first_flip_camp_occupation_over_blind_flip(self):
+        """6. 测试首翻出己方明子后优先占营建立据点，禁绝漫无目的盲翻 (对局 234949 复盘对齐)。"""
+        engine = ApkSearchEngine(seed=42)
+
+        # 构造对局 game_20260907_234949.json 第 5 手局面：
+        # 红方在 (8, 1) 有明子排长，近邻 (7, 1) 和 (9, 1) 为未占领空营
+        # 蓝方在 (3, 1) 有军长，在 (8, 2) 中营有排长
+        board = {
+            (3, 1): Piece("b", Rank.JUN, True),
+            (8, 1): Piece("r", Rank.PAI, True),
+            (8, 2): Piece("b", Rank.PAI, True),
+        }
+        # 其余非行营格均为暗子
+        for pos in [(r, c) for r in range(12) for c in range(5)]:
+            if pos not in board and pos not in ((2, 1), (2, 3), (3, 2), (4, 1), (4, 3), (7, 1), (7, 3), (8, 2), (9, 1), (9, 3)):
+                board[pos] = Piece("r", Rank.PAI, False)
+
+        st = GameState(board=board, turn=1, cfg=self.cfg)
+        st.seat_color[0], st.seat_color[1] = "b", "r"
+
+        act, score, stats = engine.search(st, depth=3)
+        self.assertIsNotNone(act)
+        # 严禁在此局面下盲目远端翻棋
+        self.assertEqual(act.kind, "move")
+        self.assertEqual(act.frm, (8, 1))
+        # 必须进驻相邻空营之一建立据点
+        self.assertIn(act.to, [(7, 1), (9, 1)])
+
+    def test_07_radiate_from_camp_after_occupation(self):
+        """7. 测试占营据点确立后，依托行营单向打击特权辐射拓荒。"""
+        engine = ApkSearchEngine(seed=42)
+
+        # 红方排长已安全进驻 (7, 1) 行营
+        board = {
+            (4, 1): Piece("b", Rank.JUN, True),
+            (7, 1): Piece("r", Rank.PAI, True),
+            (8, 2): Piece("b", Rank.PAI, True),
+        }
+        for pos in [(r, c) for r in range(12) for c in range(5)]:
+            if pos not in board and pos not in ((2, 1), (2, 3), (3, 2), (4, 1), (4, 3), (7, 1), (7, 3), (8, 2), (9, 1), (9, 3)):
+                board[pos] = Piece("r", Rank.PAI, False)
+
+        st = GameState(board=board, turn=1, cfg=self.cfg)
+        st.seat_color[0], st.seat_color[1] = "b", "r"
+
+        act, score, stats = engine.search(st, depth=3)
+        self.assertIsNotNone(act)
+        # 在营中无需无谓出营，优先依托行营辐射翻开周边暗子
+        self.assertEqual(act.kind, "flip")
+        # 翻棋目标必须属于 (7, 1) 行营辐射控制范围 (6,0), (6,1), (6,2), (7,0), (7,2), (8,0), (8,1)
+        camp_7_1_neighbors = [(6, 0), (6, 1), (6, 2), (7, 0), (7, 2), (8, 0), (8, 1)]
+        self.assertIn(act.frm, camp_7_1_neighbors)
+
 
 if __name__ == "__main__":
     unittest.main()
+

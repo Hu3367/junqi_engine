@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## [2026-09-08] — P1/P4 阶段：首翻子力占营据点优先与盲目远端翻棋惩罚对齐
+
+阶段归属：**P1 阶段（传统搜索增强与专家评估校准）** 与 **P4 阶段（官方 APK 逆向假想敌基准对弈，依据 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md）**。
+
+### 核心动机与对局实战根因
+在实战对局 `games/game_20260907_234949.json` 中，AI 翻出首个己方明子（红排长）后，其相邻两处空行营均未被占领，但 AI 却视空营不见，持续在全盘远端盲翻暗棋，导致明子裸露 10 手后被敌方扑杀。深入排查发现：
+1. `CENTER_CAMP_FLIP_POSITIONS` 的 +150 黄金位加分无条件贯穿全盘，压制了进营加分（+40）；
+2. 博弈树内部节点（纯明子树）强制驻营子力出营送死，造成“进营估值塌陷”；
+3. 缺乏“己方有未保护明子且近邻有空营时，重度抑制远端盲翻”的战术纪律。
+
+### 核心改进与技术实现
+1. **严格开局翻棋适用期**：`CENTER_CAMP_FLIP_POSITIONS` 的 +150.0 奖励严格限制在全盘无任何己方明子的开局首翻期生效，一旦翻出己方明子立即转入据点建立模式；
+2. **战术纪律与远端盲翻抑制**：当场上有裸露在外的己方明子且近邻存在空行营时，所有未依托已占行营的远端盲翻一律重度扣减 200 分（`score -= 200.0`），确保 AI 优先进营建立防线；
+3. **行营驻守机制 (Stand-Pat)**：在 Alpha-Beta 搜索深层，为驻营子力提供静态估值下界，消除由于不能展开翻棋而被迫走出行营导致的估值下溢；
+4. **C++ 与 Python 双轨 100% 对齐**：同步更新 `junqi/apk_engine.py`、`src_cpp/src/eval_apk.cpp` 与 `src_cpp/src/apk_engine.cpp`，重新编译 MSVC 动态库，实测结果完全一致；
+5. **回归测试**：在 `tests/test_p4_pure_apk_alignment.py` 中新增 `test_06`（对局 234949 复盘对齐）与 `test_07`（占营后依托行营辐射拓荒）。
+
+## [2026-09-07] — P1/P4 阶段：C++ 核心引擎 (src_cpp) 基础设施建立与双轨热拔插网桥交付
+
+阶段归属：**P1 阶段（传统搜索增强）** 与 **P4 阶段（官方 APK 逆向假想敌基准对弈，依据 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md）**。
+
+### 核心改进与技术实现
+1. **建立高性能 C++ 原生引擎目录 (`src_cpp/`)**：
+   - **紧凑内存布局 (`types.h`, `constants.h`, `board.h`)**：采用 60 字节连续内存数组 `cells[60]`，彻底消灭 Python 对象与堆分配开销，数据结构天然贴合 CPU L1 Data Cache；
+   - **高性能走法生成器 (`rules.h`, `rules.cpp`)**：预计算公路与铁路正交邻接表，工兵铁路转弯采用栈队列广度优先算法，消除动态内存分配；
+   - **1:1 原生 APK 极速搜索核 (`eval_apk.h`, `apk_engine.h`, `eval_apk.cpp`, `apk_engine.cpp`)**：将 2560 等比估值核、动态炸弹、行营偏置、PVS 零窗口探测、纯吃子 QSearch 与 Delta 剪枝全量 C++ 原生化；
+   - **64 位 Zobrist 哈希与置换表 (`zobrist.h`, `zobrist.cpp`)**：实现确定性快速哈希更新与置换表高效探测；
+   - **独立基准测试程序 (`tests/bench_main.cpp`)**：包含棋盘验证、吃子结算、搜索决策与百万次走法生成吞吐量测试。
+2. **构建与绑定基础设施 (`CMakeLists.txt`, `setup.py`, `bindings/python_bindings.cpp`)**：
+   - 编写标准 C++17/20 CMake 构建脚本与 `setup.py`，支持独立 CMake 编译和 `pip install -e .` 安装；
+   - 编写 `pybind11` 接口导出 `junqi_core` 模块（包含 `JunqiBoard`, `ApkSearchEngine`, `RuleConfig` 等）。
+3. **双轨热拔插网桥 (`junqi/core_bridge.py`)**：
+   - 实现无缝透明降级机制：优先检测并载入 `junqi_core`，若环境尚未配置 C++ 编译器则自动透明降级到纯 Python 引擎，绝不阻断现有对弈、训练与测试。
+4. **测试与保障**：
+   - 新增 `tests/test_p4_core_bridge.py`，验证 C++ 源码树完整性、网桥状态探测与平滑降级决策。
+
 ## [2026-09-07] — P1/P4 阶段：极简纯净 APK 引擎 (ApkSearchEngine) 独立重构与 5 大差异 100% 对齐
 
 阶段归属：**P1 阶段（传统搜索增强与专家评估校准）** 与 **P4 阶段（官方 APK 逆向假想敌基准对弈，依据 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md）**。
