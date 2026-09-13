@@ -56,8 +56,8 @@ class TestS2TemperaturesAndCurriculum(unittest.TestCase):
     def test_curriculum_game_determinism(self):
         """决胜课程（curriculum_prob=1.0）同种子两次运行样本流必须一致。"""
         def run_once():
-            p, v, pv = play_selfplay_game(_StubNet(), sims=4, device="cpu",
-                                          seed=555, curriculum_prob=1.0)
+            p, v, pv, _rec = play_selfplay_game(_StubNet(), sims=4, device="cpu",
+                                                seed=555, curriculum_prob=1.0)
             return len(p), len(v), len(pv)
 
         self.assertEqual(run_once(), run_once())
@@ -65,7 +65,7 @@ class TestS2TemperaturesAndCurriculum(unittest.TestCase):
     def test_midgame_injection_runs(self):
         """中盘注入（midgame_prob=1.0）必须能完整跑完一局且可复现。"""
         def run_once():
-            p, v, pv = play_selfplay_game(_StubNet(), sims=4, device="cpu",
+            p, v, pv, _rec = play_selfplay_game(_StubNet(), sims=4, device="cpu",
                                           seed=777, curriculum_prob=0.0,
                                           midgame_prob=1.0)
             return len(p), len(v), len(pv)
@@ -80,7 +80,7 @@ class TestS2TemperaturesAndCurriculum(unittest.TestCase):
 class TestS2ValueSamples(unittest.TestCase):
 
     def test_public_and_world_samples_structure(self):
-        p, v, pv = play_selfplay_game(_StubNet(), sims=4, device="cpu",
+        p, v, pv, _rec = play_selfplay_game(_StubNet(), sims=4, device="cpu",
                                       seed=123, curriculum_prob=0.0)
         self.assertGreater(len(pv), 0, "必须产生公共模式 Value 样本")
         for arr, z, phase, is_world in pv:

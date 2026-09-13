@@ -387,7 +387,7 @@ class NNAgent:
             return [(acts[0], 1.0)]
 
         if self.simulations > 0:
-            act, pi_vec, pi_dict, _ = self.mcts.search(state, temperature=1e-3, add_noise=False,
+            act, pi_vec, pi_dict, _, _ = self.mcts.search(state, temperature=1e-3, add_noise=False,
                                                         rng=self.rng, history_counts=history_counts,
                                                         avoid=avoid)
             scored = sorted(((a, pi_dict.get(a, 0.0)) for a in acts),

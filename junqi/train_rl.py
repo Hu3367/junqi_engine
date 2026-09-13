@@ -60,6 +60,59 @@ AUX_LOSS_WEIGHT = 0.1
 OPP_MIX = {"mirror": 0.50, "best": 0.25, "expert": 0.10,
            "greedy": 0.10, "random": 0.05}
 
+# 生成/评测夹具分离（2026-09-13 计划修订）：自对弈"生成侧"调稀平局触发器
+# （70→120 步无吃子、循环判和 3→4 次），迫使对局必须分出胜负或真死锁，
+# 大幅压缩 z=0 垃圾样本占比；"评测侧"（gate/靶场）仍严格使用官方
+# RuleConfig() 默认规则（70/1000/循环 3），策略若学会在生成规则下钻空子，
+# 由门控直接暴露。此为数据生成夹具，不改变任何规则定义与终局奖励语义。
+GENERATION_CFG = RuleConfig(no_capture_draw_plies=120, repetition_draw_count=4)
+
+# 和棋局的连续无吃子尾部（quiet >= 60）样本视为垃圾段丢弃：
+# 该段的 z 恒为 0（生成夹具下必达 120 步判和），策略头无从学习；
+# 决胜局的尾部样本保留（z=±1 有信号）。
+QUIET_TAIL_CUTOFF = 60
+
+
+class ResignTracker:
+    """自博弈认输判定器（2026-09-13 计划修订，P3 数据质量改造）。
+
+    走子方根 Value <= threshold 连续 consecutive 次己方回合（且 ply >= min_ply）
+    时判该方认输——语义对齐官方 code 21（主动认输属明确胜负，Value=±1）。
+    终局奖励定义不变：这不是中间奖励，而是用 Value 头自身输出捷径一个
+    已定的结局；回滚 = resign_enabled=False（或 threshold=-2.0 永不触发）。
+    """
+
+    def __init__(self, threshold: float = -0.95, consecutive: int = 8,
+                 min_ply: int = 40):
+        self.threshold = float(threshold)
+        self.consecutive = int(consecutive)
+        self.min_ply = int(min_ply)
+        self._streak = {0: 0, 1: 0}
+
+    def observe(self, seat: int, value: Optional[float], ply: int) -> bool:
+        """记录 seat 方在其回合的根估值，返回是否应判该方认输。
+
+        value=None（强制单着无估值）不计数也不清零；ply < min_ply 阶段
+        开局评估不确定性大，一律不触发认输。
+        """
+        if ply < self.min_ply:
+            return False
+        if value is None:
+            return self._streak[seat] >= self.consecutive
+        if value <= self.threshold:
+            self._streak[seat] += 1
+        else:
+            self._streak[seat] = 0
+        return self._streak[seat] >= self.consecutive
+
+
+def _drop_draw_tail(items: list, final_winner, quiet_idx: int,
+                    cutoff: int = QUIET_TAIL_CUTOFF) -> list:
+    """和棋局的 quiet >= cutoff 尾部样本段丢弃（决胜局全保留）。"""
+    if final_winner is not None and final_winner != -1:
+        return items
+    return [it for it in items if it[quiet_idx] < cutoff]
+
 
 def opponent_type_for(r: float, net1_available: bool = True) -> str:
     """按 OPP_MIX 配比把均匀随机数映射为对手类型（纯函数，可单测）。
@@ -301,6 +354,7 @@ def _selfplay_worker_chunk(job_args):
     all_p_samples = []
     all_v_samples = []
     opp_counter = Counter()
+    game_records = []
 
     for i in range(n_games):
         seed = base_seed + i
@@ -323,16 +377,18 @@ def _selfplay_worker_chunk(job_args):
             opp_strat = RandomStrategy()
         opp_counter[opp_type] += 1
 
-        p_samples, v_samples, pub_v_samples = play_selfplay_game(
+        p_samples, v_samples, pub_v_samples, game_record = play_selfplay_game(
             net0, net1=target_net1, opp_strategy=opp_strat,
             sims=sims, c_puct=c_puct, device=device_str,
+            cfg=GENERATION_CFG,
             seed=seed, curriculum_prob=cur_prob, midgame_prob=mid_prob
         )
         all_p_samples.extend(p_samples)
         all_v_samples.extend(v_samples)
         all_v_samples.extend(pub_v_samples)
+        game_records.append(game_record)
 
-    return all_p_samples, all_v_samples, opp_counter
+    return all_p_samples, all_v_samples, opp_counter, game_records
 
 
 # ------------------------------------------------------------- 门控评测（P0 重设计，§3.1.4 / §7）
@@ -580,17 +636,31 @@ def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
                        device: str = "cpu", cfg: RuleConfig | None = None,
                        seed: int | None = None,
                        curriculum_prob: float = 0.0,
-                       midgame_prob: float = 0.0) -> Tuple[List, List, List]:
-    """执行一局自对弈（支持混合对手与课程采样），返回 (policy_samples, value_samples, public_value_samples)。
+                       midgame_prob: float = 0.0,
+                       resign_enabled: bool = True,
+                       resign_threshold: float = -0.95,
+                       resign_consecutive: int = 8,
+                       resign_min_ply: int = 40,
+                       quiet_tail_cutoff: int = QUIET_TAIL_CUTOFF) -> Tuple[List, List, List, dict]:
+    """执行一局自对弈（支持混合对手、课程采样与认输加速），返回
+    (policy_samples, value_samples, public_value_samples, game_record)。
     - curriculum_prob > 0 时按概率从残局生成器开始对弈；S2 决胜课程：
       子力失衡 |mb|≥0.3 时禁用堡垒，优先生成可破局局面（制造 Win/Loss 样本）
     - midgame_prob > 0 时按概率从 eval_sets/midgame.jsonl 注入中盘起始局面（文件缺失时退回完整发牌）
     - Value 样本为 4 元组 (arr, z_cls, phase, is_world)：is_world=1 为世界模式叶子，
       is_world=0 为公共模式根局面（S2 修复训练/评测模式失配）；标签仍为纯终局结果，未引入任何中间奖励。
+    - 认输加速（2026-09-13 计划修订）：走子方根 Value <= resign_threshold 连续
+      resign_consecutive 次己方回合（ply >= resign_min_ply）判该方认输，
+      对局按官方 code 21 语义记 ±1 终局标签——终局奖励定义不变，回滚 = resign_enabled=False。
+    - 和棋局的 quiet >= QUIET_TAIL_CUTOFF 尾部样本段在返回前丢弃（生成夹具下该段必达判和，z 恒 0）。
+    - game_record: {"winner", "reason", "plies", "resigned_seat"} 供决胜率统计。
     """
     from .encoder import action_to_index
     cfg = cfg or RuleConfig()
     rng = random.Random(seed)
+    resign = ResignTracker(resign_threshold, resign_consecutive, resign_min_ply) \
+        if resign_enabled else None
+    resigned_seat = None
 
     r_start = rng.random()
     if curriculum_prob > 0 and r_start < curriculum_prob:
@@ -653,22 +723,37 @@ def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
             state_arr = encode_state_np(st, seat=st.turn, world=None, history_counts=seen)
             mask_arr = legal_action_mask(st)
             active_mcts = mcts0 if st.turn == 0 else mcts1
-            act, pi_vec, _, leaf_samples = active_mcts.search(
+            act, pi_vec, _pi_dict, leaf_samples, root_value = active_mcts.search(
                 st, temperature=temp, add_noise=True, rng=rng,
                 history_counts=seen, avoid=avoid
             )
-            root_records.append((state_arr, mask_arr, pi_vec, st.turn, current_phase))
+            root_records.append((state_arr, mask_arr, pi_vec, st.turn, current_phase, st.quiet))
             # S2：公共模式根局面同步作为 Value 样本（与靶场/GUI/混合引擎评测分布对齐）
-            root_value_records.append((state_arr, st.turn, current_phase))
+            root_value_records.append((state_arr, st.turn, current_phase, st.quiet))
             for leaf_arr, leaf_turn in leaf_samples:
-                leaf_records.append((leaf_arr, leaf_turn, current_phase))
+                leaf_records.append((leaf_arr, leaf_turn, current_phase, st.quiet))
+
+            # 认输加速：走子方根估值持续深负时按官方 code 21 语义判该方认输
+            # （终局奖励定义不变；对手策略回合不参与判定）
+            if resign is not None and resign.observe(st.turn, root_value, st.ply):
+                st.winner, st.win_reason = 1 - st.turn, "resign"
+                resigned_seat = st.turn
+                break
 
         st = st.apply(act)
 
     final_winner = st.winner
+    game_record = {"winner": final_winner, "reason": st.win_reason,
+                   "plies": st.ply, "resigned_seat": resigned_seat}
+
+    # 和棋局的连续无吃子尾部样本丢弃（决胜局全保留；quiet 为各采样点快照）
+    def _tail(items, quiet_idx):
+        return _drop_draw_tail(items, final_winner, quiet_idx, quiet_tail_cutoff)
+
     policy_samples = [
         (state_arr, mask_arr, pi_vec, phase)
-        for state_arr, mask_arr, pi_vec, seat, phase in root_records
+        for state_arr, mask_arr, pi_vec, _seat, phase, _q in
+        _tail(root_records, 5)
     ]
 
     # Value 样本标签（0=Win, 1=Draw, 2=Loss，纯终局结果；第 4 位为模式标志）
@@ -678,11 +763,11 @@ def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
         return 0 if final_winner == leaf_turn else 2
 
     value_samples = [(arr, _label(leaf_turn), phase, 1)
-                     for arr, leaf_turn, phase in leaf_records]
+                     for arr, leaf_turn, phase, _q in _tail(leaf_records, 3)]
     public_value_samples = [(arr, _label(seat), phase, 0)
-                            for arr, seat, phase in root_value_records]
+                            for arr, seat, phase, _q in _tail(root_value_records, 3)]
 
-    return policy_samples, value_samples, public_value_samples
+    return policy_samples, value_samples, public_value_samples, game_record
 
 
 # ------------------------------------------------------------- 训练步骤
@@ -898,17 +983,32 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
             results = [_selfplay_worker_chunk(j) for j in jobs]
 
         opp_mix_total = Counter()
-        for p_samples, v_samples, opp_counts in results:
+        reason_total = Counter()
+        decisive_games = 0
+        total_plies = 0
+        n_finished = 0
+        for p_samples, v_samples, opp_counts, game_records in results:
             opp_mix_total.update(opp_counts)
             for s in p_samples:
                 buffer.add_policy(s)
             for s in v_samples:
                 buffer.add_value(s)
+            for rec in game_records:
+                reason_total[rec.get("reason") or "unknown"] += 1
+                if rec.get("winner") is not None and rec["winner"] != -1:
+                    decisive_games += 1
+                total_plies += rec.get("plies", 0)
+                n_finished += 1
 
         opp_total_games = max(1, sum(opp_mix_total.values()))
         opponent_mix = {k: round(v / opp_total_games, 3)
                         for k, v in sorted(opp_mix_total.items())}
+        decisive_rate = decisive_games / max(n_finished, 1)
+        reason_mix = {k: round(v / max(n_finished, 1), 3)
+                      for k, v in reason_total.most_common()}
         print(f"自对弈完成 | 总 Policy 样本: {buffer.total_policy_samples()}, 总 Value 样本: {buffer.total_value_samples()} | 实际对手占比: {opponent_mix}", flush=True)
+        print(f"对局质量 | 决胜率: {decisive_rate:.1%} ({decisive_games}/{n_finished}) | "
+              f"平均局长: {total_plies / max(n_finished, 1):.0f} 手 | 终局原因分布: {reason_mix}", flush=True)
 
         # 网络参数优化（GPU 训练）
         print(f"优化神经网络参数 (Policy + Value + Aux on {device.upper()})...", flush=True)

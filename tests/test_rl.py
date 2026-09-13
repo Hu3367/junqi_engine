@@ -146,7 +146,7 @@ class TestRLComponentsV2(unittest.TestCase):
     def test_mcts_search_v2(self):
         """测试 MCTS 搜索步骤（返回 4 元组且包含叶子样本）。"""
         mcts = MCTS(self.net, simulations=20, device="cpu")
-        act, pi_vec, pi_dict, leaf_samples = mcts.search(self.state, temperature=1.0, rng=self.rng)
+        act, pi_vec, pi_dict, leaf_samples, _rv = mcts.search(self.state, temperature=1.0, rng=self.rng)
         self.assertIn(act, self.state.legal_actions())
         self.assertAlmostEqual(float(pi_vec.sum()), 1.0, places=4)
         self.assertTrue(len(pi_dict) > 0)
@@ -233,7 +233,7 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
                        (2, 2): ("r", "PAI", True), (9, 4): ("b", "PAI", True)},
                       dead=dead)
         mcts = MCTS(self.net, simulations=200, device="cpu")
-        act, _, pi_dict, _ = mcts.search(st, temperature=1e-3, add_noise=False,
+        act, _, pi_dict, _, _rv = mcts.search(st, temperature=1e-3, add_noise=False,
                                          rng=random.Random(7))
         self.assertEqual(act, Action("move", (0, 0), (0, 1)),
                          f"吃旗未被选中，实际选择: {act}")
@@ -244,7 +244,7 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
         st = self._mk({(5, 2): ("r", "LIAN", True), (5, 3): ("b", "PAI", True),
                        (11, 1): ("b", "LEI", True), (11, 3): ("b", "QI", True)})
         mcts = MCTS(self.net, simulations=200, device="cpu")
-        act, _, _, _ = mcts.search(st, temperature=1e-3, add_noise=False,
+        act, _, _, _, _rv = mcts.search(st, temperature=1e-3, add_noise=False,
                                    rng=random.Random(11))
         self.assertEqual(act, Action("move", (5, 2), (5, 3)),
                          f"困毙着法未被选中，实际选择: {act}")
@@ -255,7 +255,7 @@ class TestMCTSCorrectnessP0(unittest.TestCase):
         st = self._mk({(5, 2): ("r", "PAI", True), (9, 0): ("b", "PAI", True)},
                       quiet=38)
         mcts = MCTS(self.net, simulations=80, device="cpu")
-        act, pi_vec, _, _ = mcts.search(st, temperature=1.0, add_noise=False,
+        act, pi_vec, _, _, _rv = mcts.search(st, temperature=1.0, add_noise=False,
                                         rng=random.Random(13))
         self.assertIn(act, st.legal_actions())
         self.assertAlmostEqual(float(pi_vec.sum()), 1.0, places=4)
@@ -363,7 +363,7 @@ class TestTrainPipelineP0(unittest.TestCase):
         pis = []
         for _ in range(2):
             mcts = MCTS(net, simulations=20, device="cpu")
-            _, pi, _, _ = mcts.search(st, temperature=1.0, add_noise=True,
+            _, pi, _, _, _rv = mcts.search(st, temperature=1.0, add_noise=True,
                                       rng=random.Random(5))
             pis.append(pi)
         self.assertTrue(np.array_equal(pis[0], pis[1]),
@@ -375,7 +375,7 @@ class TestTrainPipelineP0(unittest.TestCase):
         from junqi.train_rl import play_selfplay_game
 
         def run_once():
-            p, v, pv = play_selfplay_game(_StubNet(), sims=4, device="cpu",
+            p, v, pv, _rec = play_selfplay_game(_StubNet(), sims=4, device="cpu",
                                           seed=1234, curriculum_prob=0.3)
             h = hashlib.md5()
             for arr, _, pi, _ in p:

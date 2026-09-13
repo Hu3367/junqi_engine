@@ -40,7 +40,7 @@
 - `tests/test_camp_topology_fuzz.py` 按新契约重写：废除"弃营吃子绝对分值 < -150"断言（量纲崩溃产物）；修正旧用例战术前提错误（"连长反杀工兵"在 `battle()` 下为 defender_wins，不构成反杀；伏兵不得放 row0/row11 冻结位）；新增**普遍成立的地平线修复不变式**：同一出营吃子动作在有真实反杀伏兵时的定价必须显著低于无伏兵对照（10 行营 × 3 组合全遍历）；
 - 背景说明：原"绝不吃诱饵"不变式不普遍成立——诱饵紧邻行营时任何非吃子走法同样丢营（诱饵下手进营），吃诱饵被反杀常为合理最小损失；原测试靠 -150 硬扣制造了通过假象。
 
-### 七、搜索热路径性能优化（P0/P1/P2 共用基础设施）
+### 六、搜索热路径性能优化（P0/P1/P2 共用基础设施）
 - **现状查证**：C++ 内核 `junqi_core`（实测 2.7ms/步）目前仅接入 `ApkNativeAgent`（APK 复刻假想敌）；自对弈教师 `expert2` 走纯 Python `ExpertSearchEngine`（~130ms/步），两者未共用；
 - **cProfile 剖析**（seed=102 全局，140 手）：91% 耗时在 `evaluate_expert`（49.6 万次调用），调用量放大器是翻棋几率节点的解析期望——内层每个翻棋候选触发 ~24 种翻子结果的全量估值；
 - **已落地（语义逐位等价，快照比对 EQUIVALENT：280 状态估值/死和/fortress + 30 局深度 2 搜索逐位一致）**：
@@ -56,7 +56,15 @@
   4. 翻棋期望的跨搜索记忆化（以 (position_key, quiet, ply 阈值) 为键的跨手缓存，需严防键不完整导致估值污染，属精确优化但正确性风险需专项测试）；
 - 基线快照工具留存于 `scratch/perf_baseline.py`（capture/verify 两模式），供后续任何搜索优化做等价性比对。
 
-### 六、冲突与风险记录（AGENTS.md §9 合规）
+### 七、P3 数据质量改造（执行计划 0→1→2 落地，基线计划已同步修订）
+- **背景**：专家对局实测约 75% 为无吃子判和，自对弈 z=0 样本无学习信号；"快速产出高价值数据"取代"继续加打分限制"成为核心任务（加性打分路线已在第七节关闭）；
+- **0. 生成/评测夹具分离**：`train_rl.GENERATION_CFG`（no_capture_draw_plies=120、repetition_draw_count=4）仅用于自对弈生成，**评测门控/靶场保持官方 70/1000/循环 3 规则**；和棋局 quiet ≥ 60 的尾部样本段不入回放池（`_drop_draw_tail`，决胜局全保留）；课程采样（残局生成 + 中盘注入）沿用既有挂钩；
+- **1. 自博弈认输机制**：`MCTS.search` 新增第 5 返回值 root_value（根走子方视角期望，子节点访问量加权）；`ResignTracker` 判定走子方根 Value ≤ −0.95 连续 8 次己方回合（ply ≥ 40）认输，按官方 **code 21 语义**记 ±1 终局标签——终局奖励定义不变，非中间奖励；回滚 = resign_enabled=False。基线计划 P3 节与 §6 Value 规则已同步修订（原因/影响/验证/回滚齐备）；
+- **训练主循环新增对局质量观测**：每轮打印决胜率、平均局长、终局原因分布（`对局质量 | 决胜率: ...`），作为 P4.4 健康度证据链的一部分；
+- **2. 蒸馏规模化**：`distill_search --states 20000 --workers 8`（教师打标与策略头蒸馏，见第三节管线）；
+- 验收测试：`tests/test_resign_fixture.py`（ResignTracker 计满/清零/min_ply/分座位/None 处理、GENERATION_CFG 与官方规则隔离、尾部过滤、stub 网络认输集成、mcts 根 Value 返回）；`mcts.search` 返回值升级为 5 元组，全部调用方（ai.py/train_rl/各测试）已同步。
+
+### 八、冲突与风险记录（AGENTS.md §9 合规）
 
 1. **口径冲突已修复（2026-09-13 第二轮）**：`dataset.py` 此前将 code 24（断线）无条件归入"明确胜负"，与基线计划 §6 冲突。已抽取纯函数 `terminal_label_from_meta` 作为唯一标签判定口径：明确胜负仅含 code 1/21/22/23；**code 24 断线与 code 20 强退同为中止事件，一律不赋 Value（仅保留 Policy）**；40/42/43 及官方记 w=3 为正规和棋。新增 `tests/test_dataset.py::test_terminal_label_from_meta_codes` 与 `test_meta_code24_disconnect_gets_no_value` 验收；修正后数据集重导出为 `datasets/p1_v3`（影响约 2.3% 超时/断线局中的断线部分，此类局保留约 9.5 万条 Policy 样本但退出 Value 训练）；
 2. **测试契约冲突已修复**：`test_camp_topology_fuzz.py`（详见第五节）；`test_replay_review_fixes.py` 四条棋理断言同步更新为搜索定价语义（胜势吃子恒为正、司令反杀线折价、弃营挖雷深度 3 反驳线、炸弹自爆净负、自杀攻击由硬掩码拦截）；

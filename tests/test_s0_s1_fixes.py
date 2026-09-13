@@ -210,8 +210,9 @@ class TestS1OpponentSamples(unittest.TestCase):
             return orig_search(self, *a, **k)
 
         with mock.patch.object(trl.MCTS, "search", wrapped):
-            p, v, pv = play_selfplay_game(_StubNet(), opp_strategy=opp, sims=4,
-                                          device="cpu", seed=77, curriculum_prob=0.0)
+            p, v, pv, _rec = play_selfplay_game(_StubNet(), opp_strategy=opp, sims=4,
+                                          device="cpu", seed=77, curriculum_prob=0.0,
+                                          quiet_tail_cutoff=10**9)
         self.assertGreater(opp.calls, 0, "对手策略未被调用（测试前提不成立）")
         self.assertGreater(search_calls["n"], 0)
         self.assertEqual(len(p), search_calls["n"],
@@ -220,7 +221,7 @@ class TestS1OpponentSamples(unittest.TestCase):
     def test_opponent_game_determinism(self):
         """含外部对手的自对弈同种子必须完全可复现。"""
         def run_once():
-            p, v, pv = play_selfplay_game(_StubNet(), opp_strategy=RandomStrategy(),
+            p, v, pv, _rec = play_selfplay_game(_StubNet(), opp_strategy=RandomStrategy(),
                                           sims=4, device="cpu", seed=991,
                                           curriculum_prob=0.0)
             return len(p), len(v), len(pv), self._hash(p, v)

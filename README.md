@@ -283,6 +283,7 @@ python -m junqi distill_value --base models/bc_best.pt --out models/value_distil
 - **双头网络架构 (`JunqiNet`)**：6-Block 残差卷积（ResNet）主干，Policy Head（输出 3650 维动作 logits）+ Value Head（输出 Win / Draw / Loss 三分类概率）。
 - **MCTS 搜索 (`MCTS`)**：使用 $c_{\text{puct}} = 0.6$ 与 $\epsilon = 0.20, \alpha = 0.15$ Dirichlet 探索噪声；历史重复计数已接入 NN/MCTS 根、叶与树内终局判断，并新增循环规避专项测试。
 - **训练闭环与门控（V2.3）**：candidate 与 best 已分离，检查点可恢复真实 Replay Buffer；Worker 已有多类对手分支，但实际对手占比日志、自动熔断和 Value 晋升否决条件仍待补齐。
+- **数据质量改造（2026-09-13）**：自对弈生成侧使用独立夹具（无吃子判和 70→120 步、循环判和 3→4 次），评测门控保持官方规则；认输机制（走子方根 Value ≤ −0.95 连续 8 回合、ply ≥ 40）按官方 code 21 语义提前终局并记 ±1 标签——和棋海变决胜局；和棋局 quiet ≥ 60 的尾部垃圾样本不入池；每轮打印决胜率与终局原因分布。详见 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) P3 节修订。
 
 > **训练状态（2026-09-01）**：P4.4 长期挂机准入仍未通过。Epoch 6 已将重复和棋降至 0/32，但候选仍 `promoted=false`，Value MAE `0.5690`、准确率 `20.0%`、Win 预测为 0。启动训练和自动晋升采用两套独立门槛，详见 [P4 执行计划](docs/P4_EXECUTION_PLAN.md#p44-长期挂机准入复审与开启条件2026-09-01)。
 

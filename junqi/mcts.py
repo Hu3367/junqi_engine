@@ -76,9 +76,14 @@ class MCTS:
     def search(self, root_state: GameState, temperature: float = 1.0,
                add_noise: bool = False, rng: Optional[random.Random] = None,
                history_counts: Optional[dict] = None,
-               avoid: Optional[Set] = None) -> Tuple[Action, np.ndarray, Dict[Action, float], List[Tuple[np.ndarray, int]]]:
+               avoid: Optional[Set] = None) -> Tuple[Action, np.ndarray, Dict[Action, float], List[Tuple[np.ndarray, int]], Optional[float]]:
         """执行 MCTS 搜索。
-        返回: (选定动作, 访问概率分布 pi_vec [3650], 动作访问分布 dict, 叶子状态样本列表 [(world_state_arr, seat)])
+        返回: (选定动作, 访问概率分布 pi_vec [3650], 动作访问分布 dict,
+               叶子状态样本列表 [(world_state_arr, seat)], 根走子方视角期望值 root_value)
+
+        root_value = 子节点 value_sum 的访问量加权均值（子节点 Q 已是根走子方
+        视角，见反向传播约定），供自博弈认输判定使用；强制单着等无法产生
+        树统计的情形返回 None。
         """
         rng = rng or random.Random()
         root = MCTSNode(prior=1.0)
@@ -90,7 +95,7 @@ class MCTS:
             pi_dict = {acts[0]: 1.0}
             pi_vec = np.zeros(3650, dtype=np.float32)
             pi_vec[action_to_index(acts[0])] = 1.0
-            return acts[0], pi_vec, pi_dict, []
+            return acts[0], pi_vec, pi_dict, [], None
 
         has_hidden = bool(root_state.hidden_positions())
 
@@ -244,4 +249,11 @@ class MCTS:
             pi_vec[action_to_index(a)] = float(p)
 
         chosen_act = rng.choices(acts_list, weights=probs.tolist(), k=1)[0]
-        return chosen_act, pi_vec, pi_dict, leaf_samples
+
+        # 根走子方视角期望值：子节点 Q（已是根走子方视角）按访问量加权平均
+        total_visits = sum(c.visit_count for c in root.children.values())
+        root_value = None
+        if total_visits > 0:
+            root_value = sum(c.value_sum for c in root.children.values()) / total_visits
+
+        return chosen_act, pi_vec, pi_dict, leaf_samples, root_value
