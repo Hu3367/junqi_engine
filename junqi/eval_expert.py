@@ -43,9 +43,18 @@ def _get_alive_counts(state: GameState, my: Optional[str] = None) -> tuple[dict[
     """统计双方当前存活总数（明子 + 暗子池期望份额 = 初始编制 - 阵亡子）。
 
     返回: (my_alive, opp_alive) 映射 (color, rank) -> count
+    实例缓存：结果仅取决于构造后不可变的 board/dead，按颜色键缓存，
+    估值热路径（单局 ~50 万次调用）命中后免重算。
     """
     if my is None:
         my = state.my_color()
+    cache = getattr(state, "_alive_counts_cache", None)
+    if cache is None:
+        cache = {}
+        state._alive_counts_cache = cache
+    hit = cache.get(my)
+    if hit is not None:
+        return hit
     opp = other(my) if my else None
 
     my_counts: dict[tuple[str, Rank], int] = {(my, rk): COMPOSITION[rk] for rk in COMPOSITION} if my else {}
@@ -58,6 +67,7 @@ def _get_alive_counts(state: GameState, my: Optional[str] = None) -> tuple[dict[
         elif opp and pc.color == opp:
             opp_counts[(pc.color, pc.rank)] -= 1
 
+    cache[my] = (my_counts, opp_counts)
     return my_counts, opp_counts
 
 
@@ -86,13 +96,34 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
 
     revealed_mine: list[tuple[tuple[int, int], Piece]] = []
     revealed_opp: list[tuple[tuple[int, int], Piece]] = []
+    # 单趟划分同时聚合梯队制霸所需计数（替代 6 个重复遍历的 any/sum 生成器）
+    my_rev_jun = False
+    my_rev_zha = False
+    my_rev_shi = 0
+    opp_rev_jun = False
+    opp_rev_zha = False
+    opp_rev_shi = 0
+
+    board_get = state.board.get  # 热循环局部绑定（单局 ~1.5 亿次字典访问）
 
     for pos, pc in state.board.items():
         if pc.revealed:
             if pc.color == my:
                 revealed_mine.append((pos, pc))
+                if pc.rank == Rank.JUN:
+                    my_rev_jun = True
+                elif pc.rank == Rank.SHI:
+                    my_rev_shi += 1
+                elif pc.rank == Rank.ZHA:
+                    my_rev_zha = True
             else:
                 revealed_opp.append((pos, pc))
+                if pc.rank == Rank.JUN:
+                    opp_rev_jun = True
+                elif pc.rank == Rank.SHI:
+                    opp_rev_shi += 1
+                elif pc.rank == Rank.ZHA:
+                    opp_rev_zha = True
 
     # 2. 动态制霸系数与物质估值
     # 2.1 司令/军长制霸 (Hegemony)
@@ -127,9 +158,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
 
     # 2.2 二线梯队火力网接管与补偿 (2026-09-06 实证：司令先死逆转胜 50.2%，胜负均等)
     # 当司令阵亡，但拥有盘面已就位参战的军长、师长或炸弹时，二线火力网健全度可对冲单司令制霸劣势
-    my_rev_jun = any(pc.rank == Rank.JUN for _, pc in revealed_mine)
-    my_rev_shi = sum(1 for _, pc in revealed_mine if pc.rank == Rank.SHI)
-    my_rev_zha = any(pc.rank == Rank.ZHA for _, pc in revealed_mine)
+    # （my_rev_* / opp_rev_* 已在明子划分单趟中聚合）
     my_echelon = 0.0
     if not my_has_si and opp_has_si:
         echelon_units = (
@@ -139,9 +168,6 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         )
         my_echelon = min(1.0, echelon_units / 2.0) * getattr(w, "echelon_si_compensation", 18.0)
 
-    opp_rev_jun = any(pc.rank == Rank.JUN for _, pc in revealed_opp)
-    opp_rev_shi = sum(1 for _, pc in revealed_opp if pc.rank == Rank.SHI)
-    opp_rev_zha = any(pc.rank == Rank.ZHA for _, pc in revealed_opp)
     opp_echelon = 0.0
     if not opp_has_si and my_has_si:
         opp_echelon_units = (
@@ -212,12 +238,12 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                 score += 12.0  # 己方炸弹在营：绝对免死堡垒与前沿核威慑
             # 行营辐射拓荒期权：营内子对周围暗子拥有就近单向扑杀特权 (每暗子折现 6% 占营分)
             adjacent_hidden = sum(1 for np in NEIGHBORS[pos]
-                                  if (h := state.board.get(np)) is not None and not h.revealed)
+                                  if (h := board_get(np)) is not None and not h.revealed)
             if pc.rank not in (Rank.LEI, Rank.QI):
                 score += (w.camp_occ * 0.06) * adjacent_hidden
             # 行营围杀压力：营内子对能击杀或兑掉的邻接敌明子施加围杀压力 (杜绝小子在营里对大子产生假围杀加分)
             siege = sum(1 for np in NEIGHBORS[pos]
-                        if (e := state.board.get(np)) is not None and e.revealed and e.color == opp
+                        if (e := board_get(np)) is not None and e.revealed and e.color == opp
                         and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score += w.camp_siege * siege
         if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
@@ -232,11 +258,11 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             if pc.rank == Rank.ZHA:
                 score -= 12.0  # 敌方炸弹入营：敌核武固若金汤，严重威胁己方
             adjacent_hidden = sum(1 for np in NEIGHBORS[pos]
-                                  if (h := state.board.get(np)) is not None and not h.revealed)
+                                  if (h := board_get(np)) is not None and not h.revealed)
             if pc.rank not in (Rank.LEI, Rank.QI):
                 score -= (w.camp_occ * 0.06) * adjacent_hidden
             siege = sum(1 for np in NEIGHBORS[pos]
-                        if (e := state.board.get(np)) is not None and e.revealed and e.color == my
+                        if (e := board_get(np)) is not None and e.revealed and e.color == my
                         and battle(pc.rank, e.rank) in (ATTACKER_WINS, BOTH_DIE))
             score -= w.camp_siege * siege
         if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
@@ -265,7 +291,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         for np_ in NEIGHBORS[cp]:
             if is_camp(np_):
                 continue
-            e = state.board.get(np_)
+            e = board_get(np_)
             if e is not None and e.revealed and e.rank not in (Rank.LEI, Rank.QI):
                 if e.color == my and np_ not in used_my_pieces:
                     my_reach.append((np_, e))
@@ -279,7 +305,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
                     for n2 in NEIGHBORS[np_]:
                         if is_camp(n2):
                             continue
-                        e2 = state.board.get(n2)
+                        e2 = board_get(n2)
                         if e2 is not None and e2.revealed and e2.rank not in (Rank.LEI, Rank.QI):
                             if e2.color == my and e2.rank >= Rank.SHI and n2 not in used_my_pieces:
                                 my_reach.append((n2, e2))
@@ -316,7 +342,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             continue
         moves = 0
         for np in NEIGHBORS[pos]:
-            t = state.board.get(np)
+            t = board_get(np)
             if t is None or (t.revealed and t.color == opp and not is_camp(np)):
                 moves += 1
         if moves == 0 and not is_camp(pos):
@@ -331,7 +357,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
             continue
         moves = 0
         for np in NEIGHBORS[pos]:
-            t = state.board.get(np)
+            t = board_get(np)
             if t is None or (t.revealed and t.color == my and not is_camp(np)):
                 moves += 1
         if moves == 0 and not is_camp(pos):
@@ -384,7 +410,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     # 5.2 相邻吃子威胁与后手火力护航 (Battery Support)
     def has_battery_support(defender_pos, defender_color, defender_rank, attacker_rank):
         for np in NEIGHBORS[defender_pos]:
-            guard = state.board.get(np)
+            guard = board_get(np)
             if guard is not None and guard.revealed and guard.color == defender_color:
                 if guard.rank == Rank.ZHA or guard.rank >= attacker_rank:
                     return True
@@ -397,7 +423,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         for np in NEIGHBORS[pos]:
             if is_camp(np):  # 营内绝对免死
                 continue
-            m = state.board.get(np)
+            m = board_get(np)
             if m is None or not m.revealed or m.color != my or m.rank == Rank.QI:
                 continue
             res = battle(e.rank, m.rank)
@@ -423,7 +449,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
         for np in NEIGHBORS[pos]:
             if is_camp(np):
                 continue
-            e = state.board.get(np)
+            e = board_get(np)
             if e is None or not e.revealed or e.color != opp or e.rank == Rank.QI:
                 continue
             res = battle(m.rank, e.rank)

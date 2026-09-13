@@ -326,6 +326,11 @@ class ExpertSearchEngine:
                 flips.append(a)
 
         # 翻棋候选剪枝 (暗棋经典优化：大量暗子时保留局部安全度与据点价值最高的前 K 个翻棋格)
+        # 性能备注：内层翻棋候选的几率解析期望是单局 ~50 万次 evaluate_expert 的
+        # 来源。2026-09-13 曾试验内层收紧（2/3 得 58s/局、3/5 得 70s/局），
+        # 但 2/3 会使深度 3 下用户复盘验证的战术场景（test_camp_tactics_fix
+        # 第 19 手）决策翻转，3/5 仅多 4% 且引入行为差异面，均予回退。
+        # 教师决策质量优先于延迟；大幅降耗需走 C++ 移植（见 CHANGELOG 第七节）。
         if len(flips) > 5:
             flips.sort(key=lambda a: self._score_action(a, state, ply_depth, tt_move), reverse=True)
             max_flips = 3 if moves else 8
@@ -632,7 +637,8 @@ class ExpertSearchEngine:
 
     def search(self, state: GameState, max_depth: int = 3,
                time_limit_ms: int = 0, avoid: Optional[set] = None,
-               qsearch_depth: Optional[int] = None
+               qsearch_depth: Optional[int] = None,
+               as_evaluator: bool = False
                ) -> tuple[Optional[Action], float, SearchStats]:
         """迭代加深搜索 (Iterative Deepening Search)。
 
@@ -642,6 +648,9 @@ class ExpertSearchEngine:
             time_limit_ms: 限时 (毫秒)，0 为不限时纯按深度
             avoid: 根节点需回避的可观察局面键集合 (防送循环)
             qsearch_depth: 自定义静态搜索深度上限 (None 则采用 self.qsearch_depth)
+            as_evaluator: 估值器模式。作为子节点估值 oracle 调用时必须为 True：
+                跳过"唯一合法走法直接返回 0 分"的决策捷径，返回该强制走法
+                的真实搜索分（否则定化子局的必胜/必败线会被误估为 0）。
 
         返回:
             (best_action, score, stats)
@@ -663,7 +672,7 @@ class ExpertSearchEngine:
             acts = state.legal_actions()
             if not acts or state.is_terminal():
                 return None, 0.0, self.stats
-            if len(acts) == 1:
+            if len(acts) == 1 and not as_evaluator:
                 return acts[0], 0.0, self.stats
 
             best_action: Optional[Action] = None

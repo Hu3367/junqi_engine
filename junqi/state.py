@@ -66,7 +66,8 @@ def deal(rng: Optional[random.Random] = None,
 
 class GameState:
     __slots__ = ("board", "dead", "seat_color", "turn", "first_flip_done",
-                 "ply", "quiet", "winner", "win_reason", "cfg", "_rem_cache")
+                 "ply", "quiet", "winner", "win_reason", "cfg", "_rem_cache",
+                 "_fortress_cache", "_dead_draw_cache", "_alive_counts_cache")
 
     def __init__(self, board, dead=(), seat_color=None, turn=0,
                  first_flip_done=False, ply=0, winner=None, win_reason=None,

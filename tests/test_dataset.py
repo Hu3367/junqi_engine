@@ -106,6 +106,58 @@ class TestDatasetP1(unittest.TestCase):
             self.assertIn("random_baseline", report)
             self.assertGreater(report["random_baseline"]["top1_acc"], 0.0)
 
+    def test_terminal_label_from_meta_codes(self):
+        """P1 标签规则验收（基线计划 §6 权威口径）：官方终局码 -> 三类 Value。"""
+        from junqi.dataset import terminal_label_from_meta as f
+
+        # 明确胜负：常规终局 1 / 主动认输 21 / 长捉判负 22 / 超时判负 23
+        for rc in (1, 21, 22, 23):
+            kind, seat = f(rc, 1)
+            self.assertEqual((kind, seat), ("decided", 0), f"code {rc}")
+            kind, seat = f(rc, 2)
+            self.assertEqual((kind, seat), ("decided", 1), f"code {rc}")
+
+        # 正规和棋：协议和棋 40 / 循环和棋 42 / 限步判和 43
+        for rc in (40, 42, 43):
+            kind, seat = f(rc, 3)
+            self.assertEqual((kind, seat), ("draw", -1), f"code {rc}")
+
+        # 2026-09-13 修正（AGENTS.md §6 冲突排查）：code 24 断线与 code 20
+        # 强退同为中止事件，一律不赋 Value（此前 24 被无条件视为明确胜负）
+        for rc in (20, 24):
+            kind, seat = f(rc, 1)
+            self.assertEqual((kind, seat), ("none", -1), f"code {rc} 带胜者码也不得赋 Value")
+            kind, seat = f(rc, 3)
+            self.assertEqual((kind, seat), ("none", -1), f"code {rc} 不得误判为和棋")
+
+        # 未知码安全回退
+        self.assertEqual(f(0, 3), ("draw", -1))
+        self.assertEqual(f(99, 3), ("draw", -1))
+        self.assertEqual(f(99, 9), ("none", -1))
+
+    def test_meta_code24_disconnect_gets_no_value(self):
+        """端到端：带 list.cfg 元数据 code 24（断线）的胜局，Policy 可用但
+        has_value 必须为 False（此前被无条件赋 ±1，属标签口径冲突）。"""
+        table = [0] * 60
+        table[5 * 5 + 2] = 7    # 红连长
+        table[4 * 5 + 2] = 19   # 蓝连长
+        moves = (
+            (5 * 5 + 2, 5 * 5 + 2, 1),
+            (4 * 5 + 2, 4 * 5 + 2, 1),
+        )
+        g = SavGame(path="test_dc.sav", table=tuple(table), moves=moves,
+                    winner=0, win_reason="disconnected", stopped_on_event=True)
+        meta = {"reason_code": 24, "winner": 1, "moves_count": 2}
+        samples = process_single_game(g, self.cfg, meta_record=meta)
+        self.assertEqual(len(samples), 2)
+        for s in samples:
+            self.assertFalse(s["has_value"], "断线局（code 24）不得赋终局 Value")
+        # 对照：code 21 主动认输仍属明确胜负
+        meta21 = {"reason_code": 21, "winner": 1, "moves_count": 2}
+        samples21 = process_single_game(g, self.cfg, meta_record=meta21)
+        self.assertTrue(samples21[0]["has_value"])
+        self.assertEqual(samples21[0]["value"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

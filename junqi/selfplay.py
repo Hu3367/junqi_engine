@@ -120,13 +120,35 @@ class HybridStrategy(Strategy):
         return scored[0][0]
 
 
+class P4HybridStrategy(Strategy):
+    """包装 HybridDecisionEngine：P4.2 多世界采样 + NN 先验 + QSearch 战术定价。"""
+
+    def __init__(self, model_path: str | None = None, k_worlds: int = 4,
+                 device: str = "cpu", seed: int | None = None):
+        from .hybrid_engine import HybridDecisionEngine
+        mp = model_path or ("models/best.pt" if os.path.exists("models/best.pt") else None)
+        self.agent = HybridDecisionEngine(model_path=mp, k_worlds=k_worlds,
+                                          device=device, seed=seed)
+        self.name = "p4hybrid"
+
+    def choose(self, state: GameState, rng: random.Random,
+               avoid: set | None = None, history_counts: dict | None = None) -> Action:
+        scored = self.agent.choose_actions(state, topn=1, avoid=avoid,
+                                           history_counts=history_counts)
+        if not scored:
+            return rng.choice(state.legal_actions())
+        return scored[0][0]
+
+
 def make_strategy(spec: str, seed=None,
                   weights: EvalWeights | None = None,
                   model_path: str | None = None,
                   device: str = "cpu") -> Strategy:
-    """'random' | 'greedy' | 'search2' | 'expert2' | 'hybrid2' | 'nn' | 'nn_mcts' -> 策略实例。"""
+    """'random' | 'greedy' | 'search2' | 'expert2' | 'hybrid2' | 'p4hybrid' | 'nn' | 'nn_mcts' -> 策略实例。"""
     if spec == "random":
         return RandomStrategy()
+    if spec.startswith("p4hybrid"):
+        return P4HybridStrategy(model_path=model_path, device=device, seed=seed)
     if spec == "greedy":
         return AgentStrategy(depth=0, samples=6, temperature=25.0, seed=seed,
                              weights=weights)

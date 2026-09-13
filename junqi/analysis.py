@@ -86,8 +86,10 @@ def material_diff(state: GameState, seat: int) -> float:
 
 # ------------------------------------------------------------- 死区/堡垒分析
 
-def fortress_score(state: GameState, seat: int) -> float:
-    """评估 seat 方以军旗为核心的死区完备度，返回 [0.0, 1.0]。
+def _fortress_score_impl(state: GameState, seat: int) -> float:
+    """fortress_score 原始实现（作为实例缓存的计算源）。
+
+    评估 seat 方以军旗为核心的死区完备度，返回 [0.0, 1.0]。
 
     算法（BFS 可达性）：
     1. 若 seat 方军旗未翻开（场上无 revealed 己方 QI）-> 返回 0.0
@@ -174,10 +176,48 @@ def fortress_score(state: GameState, seat: int) -> float:
     return round(0.3 * (blocked_count / len(flag_adj)), 3)
 
 
+def fortress_score(state: GameState, seat: int) -> float:
+    """fortress_score 实例缓存包装：同一局面实例的 BFS 只算一次。
+
+    evaluate_expert 每次调用需要 fortress(seat) - fortress(1-seat)，
+    is_dead_draw 双向死区检查也各调用一次；热路径单局触发 ~63 万次，
+    实例缓存后每个局面至多实算 2 次（双方各一）。
+    缓存以座位颜色元组为守卫：首翻定色等 seat_color 变化自动失效。
+    （board/dead 在构造后不可变，apply/翻棋几率节点均构造新实例。）"""
+    seats = (state.seat_color.get(0), state.seat_color.get(1))
+    cache = getattr(state, "_fortress_cache", None)
+    if cache is not None and cache[0] == seats:
+        val = cache[1].get(seat)
+        if val is not None:
+            return val
+        val = _fortress_score_impl(state, seat)
+        cache[1][seat] = val
+        return val
+    val = _fortress_score_impl(state, seat)
+    state._fortress_cache = (seats, {seat: val})
+    return val
+
+
 # ------------------------------------------------------------- 理论必和死锁检测器
 
 def is_dead_draw(state: GameState) -> tuple[bool, str]:
-    """判断当前局面是否属于结构性/理论必和 (Dead Draw)。
+    """is_dead_draw 实例缓存包装：同一局面实例只实算一次。
+
+    evaluate_expert 每次估值前置调用本函数（热路径单局 ~50 万次），
+    结果仅取决于构造后不可变的 board/dead/quiet/cfg/seat_color，
+    以 (座位色元组, quiet) 为守卫做实例缓存。
+    """
+    seats = (state.seat_color.get(0), state.seat_color.get(1))
+    cache = getattr(state, "_dead_draw_cache", None)
+    if cache is not None and cache[0] == seats and cache[1] == state.quiet:
+        return cache[2]
+    res = _is_dead_draw_impl(state)
+    state._dead_draw_cache = (seats, state.quiet, res)
+    return res
+
+
+def _is_dead_draw_impl(state: GameState) -> tuple[bool, str]:
+    """is_dead_draw 原始实现（作为实例缓存的计算源）。
 
     核心拓扑涵盖四大原型：
     1. 双无工兵死锁 (Zero Engineer Bilateral Lockout)

@@ -314,6 +314,128 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     }
 
 
+# ---------------------------------------------------------------- 真实终局标签训练 (P1)
+
+def train_value_from_p1_dataset(p1_dir: str = "datasets/p1_v2",
+                                base_model: str = "models/bc_best.pt",
+                                out_path: str = "models/value_distilled_v2.pt",
+                                epochs: int = 8, batch_size: int = 512,
+                                lr: float = 5e-4, weight_decay: float = 1e-4,
+                                seed: int = 2026,
+                                device: str | None = None) -> dict:
+    """P1：用官方 list.cfg 解密真实终局标签重训 Value 头。
+
+    数据源为 export_replay_dataset 导出的 p1_v2 npz（按对局切分、带哈希）：
+      - val_classes: 0=Win / 1=Draw / 2=Loss（按每手行动方视角，官方终局码真值）；
+      - has_values:  False 为无价值标签样本（早期强退 code 20 等），仅保留 Policy；
+    标签规则严格符合 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §6：
+      code 1/21/22/23 -> ±1；code 40/42/43 -> 0；code 20 -> 不赋值。
+
+    仅训练价值头（主干与策略头冻结，BC 策略能力不受影响）。
+    输出为独立候选权重，绝不覆盖 best.pt（AGENTS.md 硬约束）。
+    返回 Value 健康度指标 dict（三分类准确率 / RMSE / 预测分布）。
+    """
+    import json
+    import time
+    from collections import Counter
+
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.manual_seed(seed)
+
+    def _load_split(name: str):
+        d = np.load(os.path.join(p1_dir, name))
+        return (d["states"], d["val_classes"], d["values"], d["has_values"])
+
+    print(f"[P1-Value] 加载 {p1_dir} (train/val npz，官方终局码标签) ...")
+    x_tr, y_tr, v_tr, h_tr = _load_split("train.npz")
+    x_va, y_va, v_va, h_va = _load_split("val.npz")
+
+    # has_values=True 的样本才进入 Value 训练（AGENTS.md：未终局/早期逃跑不赋 Value）
+    m_tr, m_va = h_tr.astype(bool), h_va.astype(bool)
+    x_tr, y_tr, v_tr = x_tr[m_tr], y_tr[m_tr], v_tr[m_tr]
+    x_va, y_va, v_va = x_va[m_va], y_va[m_va], v_va[m_va]
+    dist = Counter(int(c) for c in y_tr)
+    print(f"[P1-Value] 训练样本 {len(y_tr)} (Win={dist.get(0, 0)} Draw={dist.get(1, 0)} "
+          f"Loss={dist.get(2, 0)})，验证样本 {len(y_va)}")
+
+    net = JunqiNet.load_from_file(base_model, device=device)
+    for name, p in net.named_parameters():
+        p.requires_grad = name.startswith("value_head")
+    optimizer = torch.optim.AdamW([p for p in net.value_head.parameters()
+                                   if p.requires_grad], lr=lr, weight_decay=weight_decay)
+
+    def _run(split_x, split_y, split_v, train_mode: bool):
+        net.train(mode=train_mode)
+        net.value_head.train(mode=train_mode)
+        agg = {"loss": 0.0, "correct": 0, "n": 0, "mse": 0.0}
+        pred_cnt = Counter()
+        order = np.random.RandomState(seed if not train_mode else seed + epoch).permutation(len(split_y)) \
+            if train_mode else range(len(split_y))
+        with torch.set_grad_enabled(train_mode):
+            for b in range(0, len(split_y), batch_size):
+                idx = order[b:b + batch_size]
+                xs = torch.from_numpy(split_x[idx]).float().to(device)
+                ys = torch.from_numpy(np.asarray(split_y[idx])).long().to(device)
+                vs = torch.from_numpy(np.asarray(split_v[idx])).float().to(device)
+                _, v_logits = net(xs)
+                probs = F.softmax(v_logits, dim=-1)
+                pred_v = probs[:, 0] - probs[:, 2]
+                loss = (F.cross_entropy(v_logits, ys)
+                        + 0.5 * F.mse_loss(pred_v, vs))
+                if train_mode:
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                agg["loss"] += float(loss.item()) * ys.size(0)
+                agg["correct"] += int((probs.argmax(dim=-1) == ys).sum())
+                agg["mse"] += float(F.mse_loss(pred_v, vs).item()) * ys.size(0)
+                agg["n"] += int(ys.size(0))
+                if not train_mode:
+                    for c in probs.argmax(dim=-1).tolist():
+                        pred_cnt[int(c)] += 1
+        n = max(agg["n"], 1)
+        return (agg["loss"] / n, agg["correct"] / n, agg["mse"] / n, dict(pred_cnt))
+
+    best_acc, best_mae, best_sd = -1.0, 9.9, None
+    for epoch in range(1, epochs + 1):
+        tr_loss, tr_acc, _, _ = _run(x_tr, y_tr, v_tr, train_mode=True)
+        va_loss, va_acc, va_mse, va_pred = _run(x_va, y_va, v_va, train_mode=False)
+        rmse = va_mse ** 0.5
+        print(f"[P1-Value] Epoch {epoch}: train_loss={tr_loss:.4f} train_acc={tr_acc:.3f} "
+              f"val_loss={va_loss:.4f} val_acc={va_acc:.3f} val_MAE={mae:.4f} "
+              f"val_pred(0/1/2)={va_pred}")
+        # 晋级依据 = 验证集三分类准确率（并列时看更低 MAE），不是训练 loss
+        if va_acc > best_acc or (abs(va_acc - best_acc) < 1e-6 and rmse < best_mae):
+            best_acc, best_mae = va_acc, rmse
+            best_sd = {k: t.detach().clone() for k, t in net.value_head.state_dict().items()}
+
+    if best_sd is not None:
+        net.value_head.load_state_dict(best_sd)
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    torch.save({
+        "model_state": net.state_dict(),
+        "in_channels": net.in_channels,
+        "num_blocks": len(net.blocks),
+        "channels": net.in_conv[0].out_channels,
+        "base_model": base_model,
+        "p1_dir": p1_dir,
+        "value_train_samples": int(len(y_tr)),
+        "val_acc": best_acc,
+        "val_rmse": best_mae,
+        "label_rule": "list.cfg terminal codes: 1/21/22/23=+-1, 40/42/43=0, 20=no-value",
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }, out_path)
+    print(f"[P1-Value] 完成：最佳验证三分类准确率 {best_acc:.3f} (MAE={best_mae:.4f})，"
+          f"候选已保存 {out_path}（未触碰 best.pt）")
+    return {"val_acc": best_acc, "val_rmse": best_mae,
+            "train_samples": int(len(y_tr)), "out_path": out_path}
+
+
 def main():
     default_data = "datasets/distill_tactical_labeled.json" if os.path.exists("datasets/distill_tactical_labeled.json") else None
     parser = argparse.ArgumentParser(description="S2 专家价值蒸馏预热（仅训练价值头）")

@@ -1,0 +1,5750 @@
+{
+  "races_per_dir": 400,
+  "replicate_races_per_dir": 200,
+  "strategies": {
+    "D_BASE": {},
+    "AG_campzone": {
+      "capture_scope": "camp_zone"
+    },
+    "AG_anywhere": {
+      "capture_scope": "anywhere"
+    },
+    "AG_any_out": {
+      "capture_scope": "anywhere",
+      "outstrike": true
+    },
+    "AG_all_legal": {
+      "capture_scope": "anywhere",
+      "capture_judgment": "all_legal"
+    },
+    "BL_deny": {
+      "camp_pref": "denial"
+    },
+    "BL_enemy": {
+      "camp_pref": "enemy_zone"
+    },
+    "BL_self": {
+      "camp_pref": "self_zone"
+    },
+    "SC_bomb": {
+      "sacrifice": "bomb",
+      "capture_scope": "anywhere"
+    },
+    "SC_walk": {
+      "sacrifice": "walk"
+    },
+    "SC_walk_cap": {
+      "sacrifice": "walk",
+      "capture_scope": "anywhere"
+    },
+    "EX_high": {
+      "exposure": "high"
+    },
+    "EX_low": {
+      "exposure": "low"
+    },
+    "EX_random": {
+      "exposure": "random"
+    },
+    "CB_deny_zone": {
+      "camp_pref": "denial",
+      "capture_scope": "camp_zone"
+    },
+    "CB_deny_bomb": {
+      "camp_pref": "denial",
+      "sacrifice": "bomb",
+      "capture_scope": "anywhere"
+    },
+    "CB_full": {
+      "camp_pref": "denial",
+      "capture_scope": "camp_zone",
+      "sacrifice": "bomb"
+    },
+    "CT_base": {
+      "flip_pref": "spread"
+    },
+    "CT_campzone": {
+      "flip_pref": "spread",
+      "capture_scope": "camp_zone"
+    },
+    "CT_anywhere": {
+      "flip_pref": "spread",
+      "capture_scope": "anywhere"
+    },
+    "CT_any_out": {
+      "flip_pref": "spread",
+      "capture_scope": "anywhere",
+      "outstrike": true
+    },
+    "CT_all_legal": {
+      "flip_pref": "spread",
+      "capture_scope": "anywhere",
+      "capture_judgment": "all_legal"
+    },
+    "CT_bomb": {
+      "flip_pref": "spread",
+      "capture_scope": "anywhere",
+      "sacrifice": "bomb"
+    },
+    "CT_walk": {
+      "flip_pref": "spread",
+      "sacrifice": "walk"
+    },
+    "CT_walk_cap": {
+      "flip_pref": "spread",
+      "sacrifice": "walk",
+      "capture_scope": "anywhere"
+    },
+    "CT_exhigh": {
+      "flip_pref": "spread",
+      "exposure": "high"
+    },
+    "CT_exlow": {
+      "flip_pref": "spread",
+      "exposure": "low"
+    },
+    "CT_exrandom": {
+      "flip_pref": "spread",
+      "exposure": "random"
+    },
+    "CT_exhigh_gre": {
+      "flip_pref": "spread",
+      "exposure": "high",
+      "capture_scope": "anywhere",
+      "capture_judgment": "all_legal"
+    },
+    "CT_deny": {
+      "flip_pref": "spread",
+      "camp_pref": "denial"
+    },
+    "CT_deny_cap": {
+      "flip_pref": "spread",
+      "camp_pref": "denial",
+      "capture_scope": "camp_zone"
+    }
+  },
+  "key_effects_replication": [
+    {
+      "label": "首翻黄金位 vs 首翻底线死位",
+      "A": "BASE",
+      "B": "X_firstedge",
+      "pooled_delta": 0.505,
+      "se": 0.05259635348751978,
+      "z": 9.601426078327425,
+      "seg_sd": 0.14106735979665883,
+      "sd_over_se": 1.014357644942542,
+      "verdict": "显著"
+    },
+    {
+      "label": "几何8位 vs 代码6位黄金位",
+      "A": "X_golden8",
+      "B": "BASE",
+      "pooled_delta": -0.06928571428571428,
+      "se": 0.0519691646751158,
+      "z": -1.3332081575459707,
+      "seg_sd": 0.11043205193800439,
+      "sd_over_se": 0.803502238675121,
+      "verdict": "不显著"
+    },
+    {
+      "label": "后手卡位进营 vs 中营优先",
+      "A": "R_denial",
+      "B": "BASE",
+      "pooled_delta": 0.0071428571428571435,
+      "se": 0.05446540163671633,
+      "z": 0.13114485394783146,
+      "seg_sd": 0.018224786888818678,
+      "sd_over_se": 0.12650923371541362,
+      "verdict": "不显著"
+    },
+    {
+      "label": "后手另辟营簇 vs 中营优先",
+      "A": "R_split",
+      "B": "BASE",
+      "pooled_delta": -0.017142857142857147,
+      "se": 0.05234132537467308,
+      "z": -0.3275205016331557,
+      "seg_sd": 0.077182529481372,
+      "sd_over_se": 0.5576953724979726,
+      "verdict": "不显著"
+    },
+    {
+      "label": "后手跟随同簇 vs 中营优先",
+      "A": "R_follow",
+      "B": "BASE",
+      "pooled_delta": 0.0050000000000000044,
+      "se": 0.052701372449621794,
+      "z": 0.0948741895627025,
+      "seg_sd": 0.08962886439832501,
+      "sd_over_se": 0.6429279100093651,
+      "verdict": "不显著"
+    },
+    {
+      "label": "行营扑杀(驻营子出击) vs 不吃子",
+      "A": "AG_any_out",
+      "B": "D_BASE",
+      "pooled_delta": 0.2871428571428571,
+      "se": 0.055421255159935144,
+      "z": 5.181096247535674,
+      "seg_sd": 0.04405083643333223,
+      "sd_over_se": 0.30045295101991937,
+      "verdict": "显著"
+    },
+    {
+      "label": "到处吃子(不出营) vs 不吃子",
+      "A": "AG_anywhere",
+      "B": "D_BASE",
+      "pooled_delta": 0.0035714285714285718,
+      "se": 0.054405348511920075,
+      "z": 0.06564480642277443,
+      "seg_sd": 0.003779644730092272,
+      "sd_over_se": 0.02626867146697309,
+      "verdict": "不显著"
+    },
+    {
+      "label": "接触-到处吃子 vs 不吃子",
+      "A": "CT_anywhere",
+      "B": "CT_base",
+      "pooled_delta": 0.18285714285714288,
+      "se": 0.052762468313216675,
+      "z": 3.465666954237967,
+      "seg_sd": 0.07994045402971009,
+      "sd_over_se": 0.5728740432079997,
+      "verdict": "显著"
+    },
+    {
+      "label": "接触-行营扑杀 vs 不吃子",
+      "A": "CT_any_out",
+      "B": "CT_base",
+      "pooled_delta": -0.09928571428571428,
+      "se": 0.053277010516958045,
+      "z": -1.8635751766535715,
+      "seg_sd": 0.07263943897937329,
+      "sd_over_se": 0.5155980798425985,
+      "verdict": "不显著"
+    },
+    {
+      "label": "接触-炸弹同尽 vs 不吃子",
+      "A": "CT_bomb",
+      "B": "CT_base",
+      "pooled_delta": 0.19285714285714287,
+      "se": 0.05250372942953694,
+      "z": 3.6732084549530595,
+      "seg_sd": 0.06395683067879607,
+      "sd_over_se": 0.4605662283247802,
+      "verdict": "显著"
+    },
+    {
+      "label": "接触-走入敌杀区送死 vs 不送",
+      "A": "CT_walk",
+      "B": "CT_base",
+      "pooled_delta": 0.03571428571428571,
+      "se": 0.053412713929447415,
+      "z": 0.6686476512214027,
+      "seg_sd": 0.04773438413315321,
+      "sd_over_se": 0.3379985580423001,
+      "verdict": "不显著"
+    },
+    {
+      "label": "接触-暴露高价值子诱骗 vs 不暴露",
+      "A": "CT_exhigh",
+      "B": "CT_base",
+      "pooled_delta": 0.019285714285714288,
+      "se": 0.05321100860494145,
+      "z": 0.3624384275234978,
+      "seg_sd": 0.04177604690774482,
+      "sd_over_se": 0.297114147520293,
+      "verdict": "不显著"
+    },
+    {
+      "label": "接触-暴露低价值子 vs 不暴露",
+      "A": "CT_exlow",
+      "B": "CT_base",
+      "pooled_delta": 0.010714285714285716,
+      "se": 0.05338760680897507,
+      "z": 0.20068863083940525,
+      "seg_sd": 0.0265249208966102,
+      "sd_over_se": 0.18798919695670274,
+      "verdict": "不显著"
+    },
+    {
+      "label": "接触-贪全部合法交换 vs 不吃子",
+      "A": "CT_all_legal",
+      "B": "CT_base",
+      "pooled_delta": 0.23535714285714285,
+      "se": 0.05222694970985874,
+      "z": 4.506430954988648,
+      "seg_sd": 0.052249971519700615,
+      "sd_over_se": 0.37832588163055497,
+      "verdict": "显著"
+    },
+    {
+      "label": "接触-卡位 vs 中营优先",
+      "A": "CT_deny",
+      "B": "CT_base",
+      "pooled_delta": 0.052857142857142866,
+      "se": 0.0533351634512863,
+      "z": 0.9910374214081104,
+      "seg_sd": 0.06441125308367726,
+      "sd_over_se": 0.4567597672582989,
+      "verdict": "不显著"
+    }
+  ],
+  "results": {
+    "_rules_probe": {
+      "suicide_low_vs_high": false,
+      "bomb_trade": true,
+      "equal_trade": true,
+      "camp_outstrike": true,
+      "camp_attackable": false
+    },
+    "Δ0 D_BASE 自对": {
+      "spec": "D_BASE vs D_BASE",
+      "policy": null,
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.37125,
+          4.6275
+        ],
+        "delta": [
+          0.74375,
+          2.6966972684558295,
+          0.09534264626661783,
+          7.800811380042512
+        ],
+        "ci95": [
+          0.556878413317429,
+          0.930621586682571
+        ],
+        "win": [
+          0.46375,
+          0.26375,
+          0.2725
+        ],
+        "plies_to_fill": [
+          22.705882352941178,
+          23.1775
+        ],
+        "plies_se": 0.05365961944360579,
+        "first_camp_ply": [
+          3.3425,
+          6.51
+        ],
+        "captures": [
+          0.0075,
+          0.01875
+        ],
+        "captures_total": 0.02625,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0075,
+          0.01375
+        ],
+        "bomb_trades": [
+          0.0,
+          0.00375
+        ],
+        "lost_value": [
+          4.14,
+          5.2525
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 2,
+            "GONG": 3,
+            "ZHA": 2,
+            "TUAN": 2,
+            "LIAN": 2,
+            "YING": 2,
+            "LV": 1,
+            "SHI": 2
+          },
+          {
+            "ZHA": 2,
+            "LV": 1,
+            "TUAN": 1,
+            "GONG": 2,
+            "PAI": 1,
+            "SHI": 2,
+            "LIAN": 1,
+            "YING": 1,
+            "JUN": 1
+          }
+        ],
+        "spread2_rate": 0.9675,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.18386551067879045,
+          0.16017173051519154
+        ],
+        "capture_opp_per_race": [
+          2.17375,
+          1.81875
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ1-B 营邻域吃子 vs 不吃子": {
+      "spec": "AG_campzone vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8416698628644173,
+          0.1004682014962438,
+          0.02488349510360716
+        ],
+        "ci95": [
+          -0.19441767493263784,
+          0.19941767493263785
+        ],
+        "win": [
+          0.3675,
+          0.36625,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1668494953927161,
+          0.1671785870996051
+        ],
+        "capture_opp_per_race": [
+          1.90125,
+          1.905
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34625,
+          4.65375
+        ],
+        "delta": [
+          0.6925,
+          2.755891402391831,
+          0.0974354749422484,
+          7.107267660063813
+        ],
+        "ci95": [
+          0.5015264691131931,
+          0.8834735308868069
+        ],
+        "win": [
+          0.46125,
+          0.2725,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1867612293144208,
+          0.14642617073717232
+        ],
+        "capture_opp_per_race": [
+          2.1725,
+          1.63375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ1-A 到处吃子 vs 不吃子": {
+      "spec": "AG_anywhere vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8416698628644173,
+          0.1004682014962438,
+          0.02488349510360716
+        ],
+        "ci95": [
+          -0.19441767493263784,
+          0.19941767493263785
+        ],
+        "win": [
+          0.3675,
+          0.36625,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1668494953927161,
+          0.1671785870996051
+        ],
+        "capture_opp_per_race": [
+          1.90125,
+          1.905
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34625,
+          4.65375
+        ],
+        "delta": [
+          0.6925,
+          2.755891402391831,
+          0.0974354749422484,
+          7.107267660063813
+        ],
+        "ci95": [
+          0.5015264691131931,
+          0.8834735308868069
+        ],
+        "win": [
+          0.46125,
+          0.2725,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1867612293144208,
+          0.14642617073717232
+        ],
+        "capture_opp_per_race": [
+          2.1725,
+          1.63375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ1-A+ 到处吃子且驻营子出击 vs 不吃子": {
+      "spec": "AG_any_out vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.14125,
+          4.85875
+        ],
+        "delta": [
+          0.2825,
+          2.955691778985995,
+          0.10449948500091638,
+          2.7033626050647297
+        ],
+        "ci95": [
+          0.07768100939820388,
+          0.48731899060179606
+        ],
+        "win": [
+          0.4025,
+          0.32875,
+          0.26875
+        ],
+        "plies_to_fill": [
+          23.8975,
+          23.8975
+        ],
+        "plies_se": 0.08432900695649029,
+        "first_camp_ply": [
+          4.9075,
+          5.06
+        ],
+        "captures": [
+          0.4125,
+          0.0
+        ],
+        "captures_total": 0.4125,
+        "camp_origin_caps": [
+          0.40875,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.4125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          37.2375
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 78,
+            "LIAN": 45,
+            "TUAN": 17,
+            "LEI": 83,
+            "YING": 22,
+            "PAI": 62,
+            "LV": 16,
+            "SHI": 7
+          }
+        ],
+        "spread2_rate": 0.97625,
+        "captures_before_spread2": 0.08578745198463508,
+        "sign_flips": 0.81,
+        "capture_opp_rate": [
+          0.13256032591664055,
+          0.16741749607124148
+        ],
+        "capture_opp_per_race": [
+          1.58625,
+          1.9975
+        ],
+        "shuttle": 0.0,
+        "exit": 0.40875
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.32375,
+          4.67625
+        ],
+        "delta": [
+          0.6475,
+          2.897626450875103,
+          0.10244656563796467,
+          6.320368047165158
+        ],
+        "ci95": [
+          0.4467047313495892,
+          0.8482952686504107
+        ],
+        "win": [
+          0.44875,
+          0.2825,
+          0.26875
+        ],
+        "plies_to_fill": [
+          23.8975,
+          23.8975
+        ],
+        "plies_se": 0.08432900695649029,
+        "first_camp_ply": [
+          3.3675,
+          6.6
+        ],
+        "captures": [
+          0.22375,
+          0.18875
+        ],
+        "captures_total": 0.4125,
+        "camp_origin_caps": [
+          0.22,
+          0.18875
+        ],
+        "camp_zone_caps": [
+          0.22375,
+          0.18875
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          17.8,
+          19.4375
+        ],
+        "lost_ranks": [
+          {
+            "TUAN": 11,
+            "LEI": 37,
+            "GONG": 32,
+            "LIAN": 18,
+            "LV": 7,
+            "YING": 11,
+            "PAI": 31,
+            "SHI": 4
+          },
+          {
+            "GONG": 46,
+            "LIAN": 27,
+            "YING": 11,
+            "LEI": 46,
+            "PAI": 31,
+            "LV": 9,
+            "SHI": 3,
+            "TUAN": 6
+          }
+        ],
+        "spread2_rate": 0.97625,
+        "captures_before_spread2": 0.08578745198463508,
+        "sign_flips": 0.81,
+        "capture_opp_rate": [
+          0.16581161502154732,
+          0.13348271446862997
+        ],
+        "capture_opp_per_race": [
+          2.02,
+          1.56375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.40875
+      }
+    },
+    "Δ1-A2 到处吃子(含炸弹同尽) vs 不吃子": {
+      "spec": "AG_all_legal vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8416698628644173,
+          0.1004682014962438,
+          0.02488349510360716
+        ],
+        "ci95": [
+          -0.19441767493263784,
+          0.19941767493263785
+        ],
+        "win": [
+          0.3675,
+          0.36625,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1668494953927161,
+          0.1671785870996051
+        ],
+        "capture_opp_per_race": [
+          1.90125,
+          1.905
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34625,
+          4.65375
+        ],
+        "delta": [
+          0.6925,
+          2.755891402391831,
+          0.0974354749422484,
+          7.107267660063813
+        ],
+        "ci95": [
+          0.5015264691131931,
+          0.8834735308868069
+        ],
+        "win": [
+          0.46125,
+          0.2725,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1867612293144208,
+          0.14642617073717232
+        ],
+        "capture_opp_per_race": [
+          2.1725,
+          1.63375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ1-AB 到处吃子 vs 营邻域吃子": {
+      "spec": "AG_anywhere vs AG_campzone",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0,
+          5.0
+        ],
+        "delta": [
+          0.0,
+          2.842551692609379,
+          0.10049937888586952,
+          0.0
+        ],
+        "ci95": [
+          -0.19697878261630425,
+          0.19697878261630425
+        ],
+        "win": [
+          0.3675,
+          0.3675,
+          0.265
+        ],
+        "plies_to_fill": [
+          22.795,
+          22.795
+        ],
+        "plies_se": 0.05495446971973927,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.00125
+        ],
+        "captures_total": 0.0025,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.1
+        ],
+        "lost_ranks": [
+          {
+            "GONG": 1
+          },
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.7675,
+        "capture_opp_rate": [
+          0.1671419170870805,
+          0.1671419170870805
+        ],
+        "capture_opp_per_race": [
+          1.905,
+          1.905
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.3475,
+          4.6525
+        ],
+        "delta": [
+          0.695,
+          2.7561695499797034,
+          0.09744530894452616,
+          7.132205824250101
+        ],
+        "ci95": [
+          0.5040071944687287,
+          0.8859928055312712
+        ],
+        "win": [
+          0.4625,
+          0.2725,
+          0.265
+        ],
+        "plies_to_fill": [
+          22.795,
+          22.795
+        ],
+        "plies_se": 0.05495446971973927,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0025,
+          0.0
+        ],
+        "captures_total": 0.0025,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0025,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.2
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 2
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.7675,
+        "capture_opp_rate": [
+          0.18672110012892135,
+          0.14672939068100357
+        ],
+        "capture_opp_per_race": [
+          2.1725,
+          1.6375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ2-C 卡位进营 vs 中营优先": {
+      "spec": "BL_deny vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.01125,
+          4.98875
+        ],
+        "delta": [
+          0.0225,
+          2.8573938518395874,
+          0.10102412845782606,
+          0.22271907061680754
+        ],
+        "ci95": [
+          -0.1755072917773391,
+          0.22050729177733908
+        ],
+        "win": [
+          0.37125,
+          0.36125,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.7925,
+          22.7925
+        ],
+        "plies_se": 0.05405281510732163,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.775,
+        "capture_opp_rate": [
+          0.16969962727472046,
+          0.1631913959613696
+        ],
+        "capture_opp_per_race": [
+          1.935,
+          1.85875
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34875,
+          4.65125
+        ],
+        "delta": [
+          0.6975,
+          2.7709369109031154,
+          0.09796741399698485,
+          7.119714316654996
+        ],
+        "ci95": [
+          0.5054838685659098,
+          0.8895161314340903
+        ],
+        "win": [
+          0.46125,
+          0.27125,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.7925,
+          22.7925
+        ],
+        "plies_se": 0.05405281510732163,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.775,
+        "capture_opp_rate": [
+          0.18704340352385046,
+          0.14496975128837106
+        ],
+        "capture_opp_per_race": [
+          2.17625,
+          1.6175
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ2-A 抢敌辐射区营簇 vs 中营优先": {
+      "spec": "BL_enemy vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.02125,
+          4.97875
+        ],
+        "delta": [
+          0.0425,
+          2.8307614281017432,
+          0.10008253008660292,
+          0.42464953636987507
+        ],
+        "ci95": [
+          -0.1536617589697417,
+          0.23866175896974173
+        ],
+        "win": [
+          0.37875,
+          0.35875,
+          0.2625
+        ],
+        "plies_to_fill": [
+          22.7525,
+          22.7525
+        ],
+        "plies_se": 0.055133740569514054,
+        "first_camp_ply": [
+          4.9075,
+          4.9125
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.96875,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.8025,
+        "capture_opp_rate": [
+          0.16511142825776703,
+          0.1601231716705158
+        ],
+        "capture_opp_per_race": [
+          1.88,
+          1.82
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.32625,
+          4.67375
+        ],
+        "delta": [
+          0.6525,
+          2.7547649014167455,
+          0.09739564711832359,
+          6.69947804964316
+        ],
+        "ci95": [
+          0.46160453164808574,
+          0.8433954683519143
+        ],
+        "win": [
+          0.45,
+          0.2875,
+          0.2625
+        ],
+        "plies_to_fill": [
+          22.7525,
+          22.7525
+        ],
+        "plies_se": 0.055133740569514054,
+        "first_camp_ply": [
+          3.365,
+          6.455
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.96875,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.8025,
+        "capture_opp_rate": [
+          0.1841567107953934,
+          0.1401638424419257
+        ],
+        "capture_opp_per_race": [
+          2.13875,
+          1.56125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ2-B 只经营自身营簇 vs 中营优先": {
+      "spec": "BL_self vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.01625,
+          4.98375
+        ],
+        "delta": [
+          0.0325,
+          2.8238114559799636,
+          0.09983681146578452,
+          0.32553122964206654
+        ],
+        "ci95": [
+          -0.16318015047293766,
+          0.22818015047293766
+        ],
+        "win": [
+          0.3825,
+          0.3625,
+          0.255
+        ],
+        "plies_to_fill": [
+          22.755,
+          22.755
+        ],
+        "plies_se": 0.054347592642476204,
+        "first_camp_ply": [
+          4.9075,
+          4.9125
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.96625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.80125,
+        "capture_opp_rate": [
+          0.16533099132725876,
+          0.17075316107751512
+        ],
+        "capture_opp_per_race": [
+          1.8825,
+          1.94125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.31875,
+          4.68125
+        ],
+        "delta": [
+          0.6375,
+          2.751009599632756,
+          0.09726287715048056,
+          6.55440203577044
+        ],
+        "ci95": [
+          0.4468647607850581,
+          0.8281352392149418
+        ],
+        "win": [
+          0.45375,
+          0.29125,
+          0.255
+        ],
+        "plies_to_fill": [
+          22.755,
+          22.755
+        ],
+        "plies_se": 0.054347592642476204,
+        "first_camp_ply": [
+          3.365,
+          6.455
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.96625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.80125,
+        "capture_opp_rate": [
+          0.18751345532831,
+          0.1477451200358986
+        ],
+        "capture_opp_per_race": [
+          2.1775,
+          1.64625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ2-CA 卡位 vs 抢敌辐射区": {
+      "spec": "BL_deny vs BL_enemy",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          4.9975,
+          5.0025
+        ],
+        "delta": [
+          -0.005,
+          2.8513396276294563,
+          0.1008100793081357,
+          -0.04959821512209131
+        ],
+        "ci95": [
+          -0.20258775544394597,
+          0.19258775544394596
+        ],
+        "win": [
+          0.36625,
+          0.37,
+          0.26375
+        ],
+        "plies_to_fill": [
+          22.76625,
+          22.76625
+        ],
+        "plies_se": 0.05559003045720317,
+        "first_camp_ply": [
+          4.9125,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.80375,
+        "capture_opp_rate": [
+          0.1625659050966608,
+          0.1614886376111538
+        ],
+        "capture_opp_per_race": [
+          1.85,
+          1.83875
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.33,
+          4.67
+        ],
+        "delta": [
+          0.66,
+          2.7738092079129006,
+          0.0980689650316449,
+          6.729957839231108
+        ],
+        "ci95": [
+          0.46778482853797604,
+          0.8522151714620241
+        ],
+        "win": [
+          0.45125,
+          0.285,
+          0.26375
+        ],
+        "plies_to_fill": [
+          22.76625,
+          22.76625
+        ],
+        "plies_se": 0.05559003045720317,
+        "first_camp_ply": [
+          3.365,
+          6.455
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.80375,
+        "capture_opp_rate": [
+          0.18472296933835394,
+          0.13837183224938326
+        ],
+        "capture_opp_per_race": [
+          2.14625,
+          1.5425
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ3-A1 炸弹同尽换高价值子 vs 绝不牺牲": {
+      "spec": "SC_bomb vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8416698628644173,
+          0.1004682014962438,
+          0.02488349510360716
+        ],
+        "ci95": [
+          -0.19441767493263784,
+          0.19941767493263785
+        ],
+        "win": [
+          0.3675,
+          0.36625,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1668494953927161,
+          0.1671785870996051
+        ],
+        "capture_opp_per_race": [
+          1.90125,
+          1.905
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34625,
+          4.65375
+        ],
+        "delta": [
+          0.6925,
+          2.755891402391831,
+          0.0974354749422484,
+          7.107267660063813
+        ],
+        "ci95": [
+          0.5015264691131931,
+          0.8834735308868069
+        ],
+        "win": [
+          0.46125,
+          0.2725,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.79,
+          22.79
+        ],
+        "plies_se": 0.054473242676653974,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.1867612293144208,
+          0.14642617073717232
+        ],
+        "capture_opp_per_race": [
+          2.1725,
+          1.63375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ3-A2 送低价值子入敌杀区 vs 绝不牺牲": {
+      "spec": "SC_walk vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0025,
+          4.9975
+        ],
+        "delta": [
+          0.005,
+          2.8301921285233314,
+          0.10006240230698182,
+          0.04996881830460637
+        ],
+        "ci95": [
+          -0.19112230852168435,
+          0.20112230852168436
+        ],
+        "win": [
+          0.36625,
+          0.3675,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.81875,
+          22.81875
+        ],
+        "plies_se": 0.05529982491083444,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.16697710090938972,
+          0.1691498685363716
+        ],
+        "capture_opp_per_race": [
+          1.905,
+          1.93
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.3425,
+          4.6575
+        ],
+        "delta": [
+          0.685,
+          2.7459425067384173,
+          0.0970837283631561,
+          7.055765281671671
+        ],
+        "ci95": [
+          0.4947158924082141,
+          0.875284107591786
+        ],
+        "win": [
+          0.46125,
+          0.2725,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.81875,
+          22.81875
+        ],
+        "plies_se": 0.05529982491083444,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.18836535365460985,
+          0.14690087267845156
+        ],
+        "capture_opp_per_race": [
+          2.19375,
+          1.64125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ3-A2+ 送死 + 到处吃子 vs 绝不牺牲": {
+      "spec": "SC_walk_cap vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00375,
+          4.99625
+        ],
+        "delta": [
+          0.0075,
+          2.8310709021616454,
+          0.10009347164692081,
+          0.07492996173073314
+        ],
+        "ci95": [
+          -0.18868320442796477,
+          0.20368320442796478
+        ],
+        "win": [
+          0.3675,
+          0.3675,
+          0.265
+        ],
+        "plies_to_fill": [
+          22.82375,
+          22.82375
+        ],
+        "plies_se": 0.055770694677904874,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.16694051922444955,
+          0.16944140197152247
+        ],
+        "capture_opp_per_race": [
+          1.905,
+          1.93375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34375,
+          4.65625
+        ],
+        "delta": [
+          0.6875,
+          2.7462284980869,
+          0.09709383968424973,
+          7.0807787830387365
+        ],
+        "ci95": [
+          0.4971960742188706,
+          0.8778039257811294
+        ],
+        "win": [
+          0.4625,
+          0.2725,
+          0.265
+        ],
+        "plies_to_fill": [
+          22.82375,
+          22.82375
+        ],
+        "plies_se": 0.055770694677904874,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.76875,
+        "capture_opp_rate": [
+          0.18832492756733554,
+          0.14720357941834453
+        ],
+        "capture_opp_per_race": [
+          2.19375,
+          1.645
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ4-A 暴露高价值子 vs 不暴露（对手判断正确）": {
+      "spec": "EX_high vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8328475128903596,
+          0.10015628432161094,
+          0.024960989886288837
+        ],
+        "ci95": [
+          -0.19380631727035744,
+          0.19880631727035744
+        ],
+        "win": [
+          0.365,
+          0.36625,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.8525,
+          22.8525
+        ],
+        "plies_se": 0.05713479823156132,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.16672136527732195,
+          0.169565693031397
+        ],
+        "capture_opp_per_race": [
+          1.905,
+          1.9375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34375,
+          4.65625
+        ],
+        "delta": [
+          0.6875,
+          2.7480508509394777,
+          0.09715826958723835,
+          7.076083208570262
+        ],
+        "ci95": [
+          0.4970697916090129,
+          0.8779302083909871
+        ],
+        "win": [
+          0.46,
+          0.27125,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.8525,
+          22.8525
+        ],
+        "plies_se": 0.05713479823156132,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.18851141356767764,
+          0.1469109596693107
+        ],
+        "capture_opp_per_race": [
+          2.19875,
+          1.64375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ4-A' 暴露低价值子 vs 不暴露（对手判断正确）": {
+      "spec": "EX_low vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.00125,
+          4.99875
+        ],
+        "delta": [
+          0.0025,
+          2.8328475128903596,
+          0.10015628432161094,
+          0.024960989886288837
+        ],
+        "ci95": [
+          -0.19380631727035744,
+          0.19880631727035744
+        ],
+        "win": [
+          0.365,
+          0.36625,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.8525,
+          22.8525
+        ],
+        "plies_se": 0.05713479823156132,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.16672136527732195,
+          0.169565693031397
+        ],
+        "capture_opp_per_race": [
+          1.905,
+          1.9375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.34375,
+          4.65625
+        ],
+        "delta": [
+          0.6875,
+          2.7480508509394777,
+          0.09715826958723835,
+          7.076083208570262
+        ],
+        "ci95": [
+          0.4970697916090129,
+          0.8779302083909871
+        ],
+        "win": [
+          0.46,
+          0.27125,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.8525,
+          22.8525
+        ],
+        "plies_se": 0.05713479823156132,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.18851141356767764,
+          0.1469109596693107
+        ],
+        "capture_opp_per_race": [
+          2.19875,
+          1.64375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ4-C 随机暴露 vs 不暴露（对手判断正确）": {
+      "spec": "EX_random vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0,
+          5.0
+        ],
+        "delta": [
+          0.0,
+          2.8337320880657835,
+          0.10018755877686153,
+          0.0
+        ],
+        "ci95": [
+          -0.1963676152026486,
+          0.1963676152026486
+        ],
+        "win": [
+          0.365,
+          0.36625,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.84875,
+          22.84875
+        ],
+        "plies_se": 0.05694422800648047,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.1665390086442718,
+          0.16958424507658643
+        ],
+        "capture_opp_per_race": [
+          1.9025,
+          1.9375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.345,
+          4.655
+        ],
+        "delta": [
+          0.69,
+          2.748334345944167,
+          0.09716829264925077,
+          7.101081856925273
+        ],
+        "ci95": [
+          0.4995501464074684,
+          0.8804498535925315
+        ],
+        "win": [
+          0.46,
+          0.27125,
+          0.26875
+        ],
+        "plies_to_fill": [
+          22.84875,
+          22.84875
+        ],
+        "plies_se": 0.05694422800648047,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77125,
+        "capture_opp_rate": [
+          0.18842443729903538,
+          0.14683204827355012
+        ],
+        "capture_opp_per_race": [
+          2.1975,
+          1.6425
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ4-A2 暴露高价值子 vs 不暴露（对手贪交换）": {
+      "spec": "EX_high vs AG_all_legal",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0,
+          5.0
+        ],
+        "delta": [
+          0.0,
+          2.8337320880657835,
+          0.10018755877686153,
+          0.0
+        ],
+        "ci95": [
+          -0.1963676152026486,
+          0.1963676152026486
+        ],
+        "win": [
+          0.365,
+          0.3675,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.8575,
+          22.8575
+        ],
+        "plies_se": 0.05758699953674039,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.00125
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.0
+        ],
+        "lost_ranks": [
+          {
+            "GONG": 1
+          },
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.16701301542163405,
+          0.16952860111560758
+        ],
+        "capture_opp_per_race": [
+          1.90875,
+          1.9375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.345,
+          4.655
+        ],
+        "delta": [
+          0.69,
+          2.7483343459441674,
+          0.09716829264925078,
+          7.101081856925272
+        ],
+        "ci95": [
+          0.4995501464074684,
+          0.8804498535925315
+        ],
+        "win": [
+          0.46125,
+          0.27125,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.8575,
+          22.8575
+        ],
+        "plies_se": 0.05758699953674039,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.18847101682202935,
+          0.14721322461744665
+        ],
+        "capture_opp_per_race": [
+          2.19875,
+          1.6475
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ4-A2' 暴露低价值子 vs 不暴露（对手贪交换）": {
+      "spec": "EX_low vs AG_all_legal",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0,
+          5.0
+        ],
+        "delta": [
+          0.0,
+          2.8337320880657835,
+          0.10018755877686153,
+          0.0
+        ],
+        "ci95": [
+          -0.1963676152026486,
+          0.1963676152026486
+        ],
+        "win": [
+          0.365,
+          0.3675,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.8575,
+          22.8575
+        ],
+        "plies_se": 0.05758699953674039,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.0,
+          0.00125
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.0
+        ],
+        "lost_ranks": [
+          {
+            "GONG": 1
+          },
+          {}
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.16701301542163405,
+          0.16952860111560758
+        ],
+        "capture_opp_per_race": [
+          1.90875,
+          1.9375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.345,
+          4.655
+        ],
+        "delta": [
+          0.69,
+          2.7483343459441674,
+          0.09716829264925078,
+          7.101081856925272
+        ],
+        "ci95": [
+          0.4995501464074684,
+          0.8804498535925315
+        ],
+        "win": [
+          0.46125,
+          0.27125,
+          0.2675
+        ],
+        "plies_to_fill": [
+          22.8575,
+          22.8575
+        ],
+        "plies_se": 0.05758699953674039,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77,
+        "capture_opp_rate": [
+          0.18847101682202935,
+          0.14721322461744665
+        ],
+        "capture_opp_per_race": [
+          2.19875,
+          1.6475
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ5-1 卡位 + 营邻域吃子 vs 基准": {
+      "spec": "CB_deny_zone vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0125,
+          4.9875
+        ],
+        "delta": [
+          0.025,
+          2.858248936627053,
+          0.10105436027041137,
+          0.24739160124414722
+        ],
+        "ci95": [
+          -0.1730665461300063,
+          0.2230665461300063
+        ],
+        "win": [
+          0.3725,
+          0.36125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.1696624287593161,
+          0.16348474873820495
+        ],
+        "capture_opp_per_race": [
+          1.935,
+          1.8625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.35,
+          4.65
+        ],
+        "delta": [
+          0.7,
+          2.7712090320605864,
+          0.09797703493277247,
+          7.144531373911336
+        ],
+        "ci95": [
+          0.5079650115317659,
+          0.892034988468234
+        ],
+        "win": [
+          0.4625,
+          0.27125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.18700322234156821,
+          0.14527329749103943
+        ],
+        "capture_opp_per_race": [
+          2.17625,
+          1.62125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ5-2 卡位 + 炸弹同尽 + 到处吃子 vs 基准": {
+      "spec": "CB_deny_bomb vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0125,
+          4.9875
+        ],
+        "delta": [
+          0.025,
+          2.858248936627053,
+          0.10105436027041137,
+          0.24739160124414722
+        ],
+        "ci95": [
+          -0.1730665461300063,
+          0.2230665461300063
+        ],
+        "win": [
+          0.3725,
+          0.36125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.1696624287593161,
+          0.16348474873820495
+        ],
+        "capture_opp_per_race": [
+          1.935,
+          1.8625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.35,
+          4.65
+        ],
+        "delta": [
+          0.7,
+          2.7712090320605864,
+          0.09797703493277247,
+          7.144531373911336
+        ],
+        "ci95": [
+          0.5079650115317659,
+          0.892034988468234
+        ],
+        "win": [
+          0.4625,
+          0.27125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.18700322234156821,
+          0.14527329749103943
+        ],
+        "capture_opp_per_race": [
+          2.17625,
+          1.62125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ5-3 卡位 + 营邻域吃子 + 炸弹同尽 vs 基准": {
+      "spec": "CB_full vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0125,
+          4.9875
+        ],
+        "delta": [
+          0.025,
+          2.858248936627053,
+          0.10105436027041137,
+          0.24739160124414722
+        ],
+        "ci95": [
+          -0.1730665461300063,
+          0.2230665461300063
+        ],
+        "win": [
+          0.3725,
+          0.36125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          4.9075,
+          4.9075
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.1696624287593161,
+          0.16348474873820495
+        ],
+        "capture_opp_per_race": [
+          1.935,
+          1.8625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.35,
+          4.65
+        ],
+        "delta": [
+          0.7,
+          2.7712090320605864,
+          0.09797703493277247,
+          7.144531373911336
+        ],
+        "ci95": [
+          0.5079650115317659,
+          0.892034988468234
+        ],
+        "win": [
+          0.4625,
+          0.27125,
+          0.26625
+        ],
+        "plies_to_fill": [
+          22.7975,
+          22.7975
+        ],
+        "plies_se": 0.05453746516279417,
+        "first_camp_ply": [
+          3.365,
+          6.45
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.1
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "GONG": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.77375,
+        "capture_opp_rate": [
+          0.18700322234156821,
+          0.14527329749103943
+        ],
+        "capture_opp_per_race": [
+          2.17625,
+          1.62125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-0 强制接触基准（不吃子） 自对": {
+      "spec": "CT_base vs CT_base",
+      "policy": null,
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.38125,
+          4.6175
+        ],
+        "delta": [
+          0.76375,
+          2.739948920620513,
+          0.09687182309377632,
+          7.884129518865929
+        ],
+        "ci95": [
+          0.5738812267361985,
+          0.9536187732638016
+        ],
+        "win": [
+          0.47,
+          0.25625,
+          0.27375
+        ],
+        "plies_to_fill": [
+          44.1639549436796,
+          44.60875
+        ],
+        "plies_se": 0.16306288825475682,
+        "first_camp_ply": [
+          3.6025,
+          7.37171464330413
+        ],
+        "captures": [
+          0.00625,
+          0.01625
+        ],
+        "captures_total": 0.0225,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00625,
+          0.01
+        ],
+        "bomb_trades": [
+          0.0,
+          0.00375
+        ],
+        "lost_value": [
+          2.195,
+          2.8525
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 3,
+            "LIAN": 3,
+            "GONG": 2,
+            "TUAN": 1,
+            "SHI": 1,
+            "YING": 2,
+            "ZHA": 1
+          },
+          {
+            "ZHA": 2,
+            "GONG": 2,
+            "LV": 1,
+            "SHI": 1,
+            "PAI": 1,
+            "LIAN": 1,
+            "YING": 1,
+            "TUAN": 1
+          }
+        ],
+        "spread2_rate": 0.965,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.8175,
+        "capture_opp_rate": [
+          0.7527286830295308,
+          0.7564349699512416
+        ],
+        "capture_opp_per_race": [
+          16.9825,
+          16.6775
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-1 营邻域吃子 vs 接触基准(不吃子)": {
+      "spec": "CT_campzone vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.11375,
+          4.885
+        ],
+        "delta": [
+          0.22875,
+          2.7818333313399886,
+          0.09835266063606349,
+          2.325814050383941
+        ],
+        "ci95": [
+          0.03597878515331557,
+          0.4215212148466845
+        ],
+        "win": [
+          0.38875,
+          0.3275,
+          0.28375
+        ],
+        "plies_to_fill": [
+          46.36670838548185,
+          46.36875
+        ],
+        "plies_se": 0.18657702492886707,
+        "first_camp_ply": [
+          5.605,
+          5.69
+        ],
+        "captures": [
+          2.96125,
+          0.00125
+        ],
+        "captures_total": 2.9625,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.8225,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0375,
+          331.5375
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1
+          },
+          {
+            "LIAN": 448,
+            "PAI": 470,
+            "SHI": 86,
+            "GONG": 592,
+            "LEI": 164,
+            "LV": 148,
+            "TUAN": 184,
+            "YING": 259,
+            "JUN": 17,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.6619537275064268,
+        "sign_flips": 0.8275,
+        "capture_opp_rate": [
+          0.715156089933682,
+          0.7527496226008195
+        ],
+        "capture_opp_per_race": [
+          16.58,
+          17.4525
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.32,
+          4.67875
+        ],
+        "delta": [
+          0.64125,
+          2.7164816450990816,
+          0.09604212961091745,
+          6.67675740425384
+        ],
+        "ci95": [
+          0.4530074259626018,
+          0.8294925740373982
+        ],
+        "win": [
+          0.435,
+          0.28125,
+          0.28375
+        ],
+        "plies_to_fill": [
+          46.36670838548185,
+          46.36875
+        ],
+        "plies_se": 0.18657702492886707,
+        "first_camp_ply": [
+          3.4825,
+          7.8125
+        ],
+        "captures": [
+          1.52125,
+          1.44125
+        ],
+        "captures_total": 2.9625,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          1.4575,
+          1.36625
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          162.4,
+          169.175
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 223,
+            "SHI": 50,
+            "LIAN": 220,
+            "GONG": 284,
+            "LV": 70,
+            "LEI": 90,
+            "TUAN": 82,
+            "YING": 127,
+            "JUN": 6,
+            "QI": 1
+          },
+          {
+            "LIAN": 228,
+            "PAI": 248,
+            "LEI": 74,
+            "GONG": 308,
+            "LV": 78,
+            "TUAN": 102,
+            "SHI": 36,
+            "YING": 132,
+            "JUN": 11
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.6619537275064268,
+        "sign_flips": 0.8275,
+        "capture_opp_rate": [
+          0.7393971725793544,
+          0.7283923705722071
+        ],
+        "capture_opp_per_race": [
+          17.325,
+          16.7075
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-2 到处吃子 vs 接触基准(不吃子)": {
+      "spec": "CT_anywhere vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.1125,
+          4.88625
+        ],
+        "delta": [
+          0.22625,
+          2.7793374810450637,
+          0.0982644190026451,
+          2.302461076922561
+        ],
+        "ci95": [
+          0.03365173875481561,
+          0.4188482612451844
+        ],
+        "win": [
+          0.3975,
+          0.3325,
+          0.27
+        ],
+        "plies_to_fill": [
+          46.66207759699625,
+          46.66375
+        ],
+        "plies_se": 0.19262877497670544,
+        "first_camp_ply": [
+          5.5825,
+          5.67
+        ],
+        "captures": [
+          3.2675,
+          0.00125
+        ],
+        "captures_total": 3.26875,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.7525,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0375,
+          374.4
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1
+          },
+          {
+            "LIAN": 501,
+            "PAI": 510,
+            "SHI": 100,
+            "GONG": 644,
+            "LEI": 171,
+            "LV": 167,
+            "TUAN": 205,
+            "YING": 294,
+            "JUN": 21,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.96625,
+        "captures_before_spread2": 0.6934023285899095,
+        "sign_flips": 0.83875,
+        "capture_opp_rate": [
+          0.71257902067931,
+          0.7541923386016609
+        ],
+        "capture_opp_per_race": [
+          16.62625,
+          17.59625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.32375,
+          4.675
+        ],
+        "delta": [
+          0.64875,
+          2.7119304279068914,
+          0.09588121978395493,
+          6.76618425862542
+        ],
+        "ci95": [
+          0.4608228092234484,
+          0.8366771907765517
+        ],
+        "win": [
+          0.44125,
+          0.28875,
+          0.27
+        ],
+        "plies_to_fill": [
+          46.66207759699625,
+          46.66375
+        ],
+        "plies_se": 0.19262877497670544,
+        "first_camp_ply": [
+          3.4825,
+          7.77
+        ],
+        "captures": [
+          1.65625,
+          1.6125
+        ],
+        "captures_total": 3.26875,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          1.405,
+          1.34875
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          186.7625,
+          187.675
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 243,
+            "SHI": 54,
+            "LIAN": 245,
+            "GONG": 314,
+            "LV": 84,
+            "LEI": 93,
+            "TUAN": 99,
+            "YING": 148,
+            "JUN": 9,
+            "QI": 1
+          },
+          {
+            "LIAN": 256,
+            "PAI": 268,
+            "LEI": 78,
+            "GONG": 330,
+            "LV": 83,
+            "TUAN": 106,
+            "SHI": 46,
+            "YING": 146,
+            "JUN": 12
+          }
+        ],
+        "spread2_rate": 0.96625,
+        "captures_before_spread2": 0.6934023285899095,
+        "sign_flips": 0.83875,
+        "capture_opp_rate": [
+          0.7393724159864307,
+          0.7272678039534254
+        ],
+        "capture_opp_per_race": [
+          17.43625,
+          16.78625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-3 到处吃子+驻营出击 vs 接触基准": {
+      "spec": "CT_any_out vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          4.94375,
+          5.05375
+        ],
+        "delta": [
+          -0.11,
+          2.9527611650999948,
+          0.10439587215332485,
+          -1.05368150800488
+        ],
+        "ci95": [
+          -0.3146159094205167,
+          0.09461590942051672
+        ],
+        "win": [
+          0.35375,
+          0.39375,
+          0.2525
+        ],
+        "plies_to_fill": [
+          50.69962453066333,
+          50.71
+        ],
+        "plies_se": 0.2800557644799882,
+        "first_camp_ply": [
+          5.5825,
+          5.9025
+        ],
+        "captures": [
+          4.73375,
+          0.00125
+        ],
+        "captures_total": 4.735,
+        "camp_origin_caps": [
+          1.94,
+          0.0
+        ],
+        "camp_zone_caps": [
+          4.275,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0375,
+          548.325
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1
+          },
+          {
+            "LIAN": 699,
+            "GONG": 886,
+            "PAI": 741,
+            "SHI": 160,
+            "LEI": 342,
+            "LV": 236,
+            "YING": 390,
+            "TUAN": 304,
+            "JUN": 28,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.8164313222079589,
+        "sign_flips": 1.05875,
+        "capture_opp_rate": [
+          0.6337896395509159,
+          0.7560217176702863
+        ],
+        "capture_opp_per_race": [
+          16.08875,
+          19.14625
+        ],
+        "shuttle": 0.0,
+        "exit": 1.94
+      },
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.35625,
+          4.64125
+        ],
+        "delta": [
+          0.715,
+          2.866888349938618,
+          0.10135980965731543,
+          7.05407796657594
+        ],
+        "ci95": [
+          0.5163347730716618,
+          0.9136652269283382
+        ],
+        "win": [
+          0.4625,
+          0.285,
+          0.2525
+        ],
+        "plies_to_fill": [
+          50.69962453066333,
+          50.71
+        ],
+        "plies_se": 0.2800557644799882,
+        "first_camp_ply": [
+          3.49,
+          7.995
+        ],
+        "captures": [
+          2.4525,
+          2.2825
+        ],
+        "captures_total": 4.735,
+        "camp_origin_caps": [
+          1.03375,
+          0.90625
+        ],
+        "camp_zone_caps": [
+          2.22625,
+          2.05
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          259.0875,
+          289.275
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 353,
+            "SHI": 74,
+            "GONG": 422,
+            "LIAN": 331,
+            "LV": 119,
+            "YING": 193,
+            "LEI": 176,
+            "TUAN": 148,
+            "JUN": 10
+          },
+          {
+            "LIAN": 368,
+            "GONG": 464,
+            "LEI": 166,
+            "PAI": 389,
+            "SHI": 86,
+            "LV": 117,
+            "TUAN": 156,
+            "YING": 197,
+            "JUN": 18,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.97375,
+        "captures_before_spread2": 0.8164313222079589,
+        "sign_flips": 1.05875,
+        "capture_opp_rate": [
+          0.7035247022066002,
+          0.6859689304919339
+        ],
+        "capture_opp_per_race": [
+          18.01375,
+          17.22125
+        ],
+        "shuttle": 0.0,
+        "exit": 1.94
+      }
+    },
+    "Δ6-4 到处吃子(含全部合法交换) vs 接触基准": {
+      "spec": "CT_all_legal vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.12875,
+          4.87125
+        ],
+        "delta": [
+          0.2575,
+          2.7763877901784264,
+          0.09816013168193494,
+          2.6232646145419696
+        ],
+        "ci95": [
+          0.06510614190340752,
+          0.4498938580965925
+        ],
+        "win": [
+          0.39875,
+          0.31625,
+          0.285
+        ],
+        "plies_to_fill": [
+          47.82875,
+          47.82875
+        ],
+        "plies_se": 0.21956671246663143,
+        "first_camp_ply": [
+          5.57,
+          5.6975
+        ],
+        "captures": [
+          4.93,
+          0.00125
+        ],
+        "captures_total": 4.93125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          4.25625,
+          0.0
+        ],
+        "bomb_trades": [
+          1.10125,
+          0.0
+        ],
+        "lost_value": [
+          654.0025,
+          1020.6425
+        ],
+        "lost_ranks": [
+          {
+            "ZHA": 422,
+            "SHI": 107,
+            "PAI": 185,
+            "GONG": 153,
+            "YING": 103,
+            "TUAN": 112,
+            "LIAN": 175,
+            "JUN": 45,
+            "LV": 112,
+            "SI": 51
+          },
+          {
+            "SHI": 193,
+            "LIAN": 627,
+            "PAI": 635,
+            "LEI": 251,
+            "GONG": 732,
+            "ZHA": 499,
+            "LV": 255,
+            "SI": 45,
+            "YING": 352,
+            "TUAN": 285,
+            "JUN": 70
+          }
+        ],
+        "spread2_rate": 0.965,
+        "captures_before_spread2": 1.0569948186528497,
+        "sign_flips": 0.83875,
+        "capture_opp_rate": [
+          0.5977420029270333,
+          0.7155402226752391
+        ],
+        "capture_opp_per_race": [
+          14.295,
+          17.11125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.31375,
+          4.68625
+        ],
+        "delta": [
+          0.6275,
+          2.7167019226758753,
+          0.09604991759933215,
+          6.533061304826805
+        ],
+        "ci95": [
+          0.4392421615053089,
+          0.815757838494691
+        ],
+        "win": [
+          0.4325,
+          0.2825,
+          0.285
+        ],
+        "plies_to_fill": [
+          47.82875,
+          47.82875
+        ],
+        "plies_se": 0.21956671246663143,
+        "first_camp_ply": [
+          3.485,
+          7.7825
+        ],
+        "captures": [
+          2.4425,
+          2.48875
+        ],
+        "captures_total": 4.93125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.12375,
+          2.1325
+        ],
+        "bomb_trades": [
+          0.57,
+          0.53125
+        ],
+        "lost_value": [
+          840.715,
+          833.93
+        ],
+        "lost_ranks": [
+          {
+            "ZHA": 472,
+            "PAI": 399,
+            "SHI": 156,
+            "LIAN": 403,
+            "GONG": 434,
+            "YING": 231,
+            "LV": 182,
+            "LEI": 139,
+            "SI": 47,
+            "TUAN": 206,
+            "JUN": 54
+          },
+          {
+            "SHI": 144,
+            "LIAN": 399,
+            "PAI": 421,
+            "LEI": 112,
+            "GONG": 451,
+            "ZHA": 449,
+            "YING": 224,
+            "LV": 185,
+            "TUAN": 191,
+            "JUN": 61,
+            "SI": 49
+          }
+        ],
+        "spread2_rate": 0.965,
+        "captures_before_spread2": 1.0569948186528497,
+        "sign_flips": 0.83875,
+        "capture_opp_rate": [
+          0.6665286475855287,
+          0.6465526343575124
+        ],
+        "capture_opp_per_race": [
+          16.0975,
+          15.30875
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-5 炸弹同尽换高价值子 vs 接触基准": {
+      "spec": "CT_bomb vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.1175,
+          4.88125
+        ],
+        "delta": [
+          0.23625,
+          2.7821055113610305,
+          0.0983622836529926,
+          2.4018352484927514
+        ],
+        "ci95": [
+          0.04345992404013449,
+          0.4290400759598655
+        ],
+        "win": [
+          0.38875,
+          0.32375,
+          0.2875
+        ],
+        "plies_to_fill": [
+          46.71464330413016,
+          46.71625
+        ],
+        "plies_se": 0.19487981174110036,
+        "first_camp_ply": [
+          5.585,
+          5.7
+        ],
+        "captures": [
+          3.5675,
+          0.00125
+        ],
+        "captures_total": 3.56875,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          3.005,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.31625,
+          0.0
+        ],
+        "lost_value": [
+          134.76,
+          601.6825
+        ],
+        "lost_ranks": [
+          {
+            "ZHA": 253,
+            "PAI": 1
+          },
+          {
+            "SHI": 144,
+            "GONG": 639,
+            "PAI": 517,
+            "LIAN": 503,
+            "LEI": 179,
+            "JUN": 56,
+            "LV": 210,
+            "SI": 26,
+            "TUAN": 234,
+            "YING": 289,
+            "ZHA": 56,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.9575,
+        "captures_before_spread2": 0.7336814621409922,
+        "sign_flips": 0.8375,
+        "capture_opp_rate": [
+          0.6992131042235427,
+          0.7487160282473786
+        ],
+        "capture_opp_per_race": [
+          16.3275,
+          17.49375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.34125,
+          4.6575
+        ],
+        "delta": [
+          0.68375,
+          2.7070086455826283,
+          0.0957072085011044,
+          7.144184964835851
+        ],
+        "ci95": [
+          0.49616387133783535,
+          0.8713361286621646
+        ],
+        "win": [
+          0.4425,
+          0.27,
+          0.2875
+        ],
+        "plies_to_fill": [
+          46.71464330413016,
+          46.71625
+        ],
+        "plies_se": 0.19487981174110036,
+        "first_camp_ply": [
+          3.48,
+          7.805
+        ],
+        "captures": [
+          1.80375,
+          1.765
+        ],
+        "captures_total": 3.56875,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          1.5275,
+          1.47875
+        ],
+        "bomb_trades": [
+          0.1675,
+          0.14875
+        ],
+        "lost_value": [
+          364.785,
+          371.6575
+        ],
+        "lost_ranks": [
+          {
+            "ZHA": 163,
+            "PAI": 249,
+            "SHI": 70,
+            "LIAN": 246,
+            "GONG": 313,
+            "LV": 106,
+            "LEI": 97,
+            "SI": 14,
+            "TUAN": 116,
+            "YING": 149,
+            "JUN": 22,
+            "QI": 1
+          },
+          {
+            "SHI": 74,
+            "GONG": 326,
+            "LEI": 82,
+            "LIAN": 257,
+            "PAI": 269,
+            "JUN": 34,
+            "ZHA": 146,
+            "LV": 104,
+            "TUAN": 118,
+            "YING": 140,
+            "SI": 12
+          }
+        ],
+        "spread2_rate": 0.9575,
+        "captures_before_spread2": 0.7336814621409922,
+        "sign_flips": 0.8375,
+        "capture_opp_rate": [
+          0.7303578991952563,
+          0.7174465783067352
+        ],
+        "capture_opp_per_race": [
+          17.24375,
+          16.5775
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-6 送低价值子入敌杀区 vs 接触基准": {
+      "spec": "CT_walk vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.0275,
+          4.9725
+        ],
+        "delta": [
+          0.055,
+          2.7561695499796945,
+          0.09744530894452585,
+          0.5644191659478516
+        ],
+        "ci95": [
+          -0.1359928055312707,
+          0.24599280553127068
+        ],
+        "win": [
+          0.37625,
+          0.35375,
+          0.27
+        ],
+        "plies_to_fill": [
+          46.0475,
+          46.0475
+        ],
+        "plies_se": 0.18065117837370964,
+        "first_camp_ply": [
+          5.5825,
+          5.5725
+        ],
+        "captures": [
+          0.0,
+          0.00125
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.1
+        ],
+        "lost_ranks": [
+          {
+            "YING": 1
+          },
+          {
+            "YING": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.82375,
+        "capture_opp_rate": [
+          0.7512753717572994,
+          0.7652617857918749
+        ],
+        "capture_opp_per_race": [
+          17.30375,
+          17.6125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.3025,
+          4.6975
+        ],
+        "delta": [
+          0.605,
+          2.6894267549680517,
+          0.09508559479712203,
+          6.362688284075514
+        ],
+        "ci95": [
+          0.41863223419764084,
+          0.7913677658023591
+        ],
+        "win": [
+          0.44375,
+          0.28625,
+          0.27
+        ],
+        "plies_to_fill": [
+          46.0475,
+          46.0475
+        ],
+        "plies_se": 0.18065117837370964,
+        "first_camp_ply": [
+          3.475,
+          7.68
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.1
+        ],
+        "lost_ranks": [
+          {
+            "YING": 1
+          },
+          {
+            "YING": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.82375,
+        "capture_opp_rate": [
+          0.765040825096691,
+          0.7513445285918121
+        ],
+        "capture_opp_per_race": [
+          17.8025,
+          17.11375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-7 送死 + 到处吃子 vs 接触基准": {
+      "spec": "CT_walk_cap vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.13875,
+          4.86125
+        ],
+        "delta": [
+          0.2775,
+          2.845718959330728,
+          0.10061135867469415,
+          2.758137884781364
+        ],
+        "ci95": [
+          0.08030173699759952,
+          0.47469826300240053
+        ],
+        "win": [
+          0.40125,
+          0.32875,
+          0.27
+        ],
+        "plies_to_fill": [
+          48.82375,
+          48.82375
+        ],
+        "plies_se": 0.20439533810650995,
+        "first_camp_ply": [
+          5.6575,
+          5.73
+        ],
+        "captures": [
+          3.305,
+          0.0
+        ],
+        "captures_total": 3.305,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.79125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          378.175
+        ],
+        "lost_ranks": [
+          {},
+          {
+            "PAI": 520,
+            "LEI": 178,
+            "SHI": 100,
+            "LIAN": 500,
+            "GONG": 654,
+            "LV": 175,
+            "YING": 287,
+            "TUAN": 210,
+            "JUN": 20
+          }
+        ],
+        "spread2_rate": 0.96375,
+        "captures_before_spread2": 0.7159533073929961,
+        "sign_flips": 0.8075,
+        "capture_opp_rate": [
+          0.7085424562122299,
+          0.7709517227256438
+        ],
+        "capture_opp_per_race": [
+          17.29375,
+          18.82375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.35875,
+          4.64125
+        ],
+        "delta": [
+          0.7175,
+          2.767628671006249,
+          0.09785045005374156,
+          7.332618292567216
+        ],
+        "ci95": [
+          0.5257131178946666,
+          0.9092868821053335
+        ],
+        "win": [
+          0.4575,
+          0.2725,
+          0.27
+        ],
+        "plies_to_fill": [
+          48.82375,
+          48.82375
+        ],
+        "plies_se": 0.20439533810650995,
+        "first_camp_ply": [
+          3.4775,
+          7.91
+        ],
+        "captures": [
+          1.65125,
+          1.65375
+        ],
+        "captures_total": 3.305,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          1.41,
+          1.38125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          190.65,
+          187.525
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 252,
+            "SHI": 50,
+            "LIAN": 248,
+            "GONG": 315,
+            "LV": 96,
+            "LEI": 96,
+            "YING": 153,
+            "TUAN": 104,
+            "JUN": 9
+          },
+          {
+            "PAI": 268,
+            "LEI": 82,
+            "GONG": 339,
+            "SHI": 50,
+            "LIAN": 252,
+            "LV": 79,
+            "TUAN": 106,
+            "YING": 134,
+            "JUN": 11
+          }
+        ],
+        "spread2_rate": 0.96375,
+        "captures_before_spread2": 0.7159533073929961,
+        "sign_flips": 0.8075,
+        "capture_opp_rate": [
+          0.7494805128984846,
+          0.7298220198675497
+        ],
+        "capture_opp_per_race": [
+          18.485,
+          17.6325
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-8 暴露高价值子(诱骗) vs 接触基准": {
+      "spec": "CT_exhigh vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.03875,
+          4.96125
+        ],
+        "delta": [
+          0.0775,
+          2.7836450203823375,
+          0.09841671351642581,
+          0.7874678723859764
+        ],
+        "ci95": [
+          -0.11539675849219459,
+          0.2703967584921946
+        ],
+        "win": [
+          0.38375,
+          0.3625,
+          0.25375
+        ],
+        "plies_to_fill": [
+          46.8025,
+          46.8025
+        ],
+        "plies_se": 0.17209412445545622,
+        "first_camp_ply": [
+          5.4975,
+          5.54
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.00125,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.5325
+        ],
+        "lost_ranks": [
+          {
+            "GONG": 1
+          },
+          {
+            "ZHA": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.83,
+        "capture_opp_rate": [
+          0.7430585219991457,
+          0.7614085711232232
+        ],
+        "capture_opp_per_race": [
+          17.395,
+          17.81125
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.30375,
+          4.69625
+        ],
+        "delta": [
+          0.6075,
+          2.717567886736917,
+          0.09608053405232347,
+          6.322820808522652
+        ],
+        "ci95": [
+          0.419182153257446,
+          0.7958178467425541
+        ],
+        "win": [
+          0.45,
+          0.29625,
+          0.25375
+        ],
+        "plies_to_fill": [
+          46.8025,
+          46.8025
+        ],
+        "plies_se": 0.17209412445545622,
+        "first_camp_ply": [
+          3.435,
+          7.6025
+        ],
+        "captures": [
+          0.00125,
+          0.0
+        ],
+        "captures_total": 0.00125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.0
+        ],
+        "bomb_trades": [
+          0.00125,
+          0.0
+        ],
+        "lost_value": [
+          0.1,
+          0.5325
+        ],
+        "lost_ranks": [
+          {
+            "GONG": 1
+          },
+          {
+            "ZHA": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.83,
+        "capture_opp_rate": [
+          0.7583491862185584,
+          0.7459768873528458
+        ],
+        "capture_opp_per_race": [
+          17.93875,
+          17.2675
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-9 暴露低价值子 vs 接触基准": {
+      "spec": "CT_exlow vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.06375,
+          4.93625
+        ],
+        "delta": [
+          0.1275,
+          2.7564908038917837,
+          0.0974566669855119,
+          1.3082737584177222
+        ],
+        "ci95": [
+          -0.06351506729160333,
+          0.31851506729160334
+        ],
+        "win": [
+          0.38375,
+          0.34875,
+          0.2675
+        ],
+        "plies_to_fill": [
+          46.72375,
+          46.72375
+        ],
+        "plies_se": 0.16992207570424636,
+        "first_camp_ply": [
+          5.5175,
+          5.55
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.835,
+        "capture_opp_rate": [
+          0.7430726436289719,
+          0.7617875301043618
+        ],
+        "capture_opp_per_race": [
+          17.36375,
+          17.7925
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.31375,
+          4.68625
+        ],
+        "delta": [
+          0.6275,
+          2.687055839828771,
+          0.09500177028849187,
+          6.605140073647793
+        ],
+        "ci95": [
+          0.4412965302345559,
+          0.8137034697654439
+        ],
+        "win": [
+          0.44875,
+          0.28375,
+          0.2675
+        ],
+        "plies_to_fill": [
+          46.72375,
+          46.72375
+        ],
+        "plies_se": 0.16992207570424636,
+        "first_camp_ply": [
+          3.4325,
+          7.635
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.835,
+        "capture_opp_rate": [
+          0.7589602414103447,
+          0.7457544618712818
+        ],
+        "capture_opp_per_race": [
+          17.92,
+          17.23625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-10 随机暴露 vs 接触基准": {
+      "spec": "CT_exrandom vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.01375,
+          4.98625
+        ],
+        "delta": [
+          0.0275,
+          2.768361163109285,
+          0.09787634756040266,
+          0.28096675739793886
+        ],
+        "ci95": [
+          -0.1643376412183892,
+          0.2193376412183892
+        ],
+        "win": [
+          0.375,
+          0.37125,
+          0.25375
+        ],
+        "plies_to_fill": [
+          46.385,
+          46.385
+        ],
+        "plies_se": 0.17469542599859658,
+        "first_camp_ply": [
+          5.52,
+          5.56
+        ],
+        "captures": [
+          0.00125,
+          0.00125
+        ],
+        "captures_total": 0.0025,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.00125,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.00125
+        ],
+        "lost_value": [
+          0.57,
+          0.1375
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1,
+            "ZHA": 1
+          },
+          {
+            "PAI": 1,
+            "YING": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.845,
+        "capture_opp_rate": [
+          0.7401778496362167,
+          0.7591764135180294
+        ],
+        "capture_opp_per_race": [
+          17.1675,
+          17.60625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.28375,
+          4.71625
+        ],
+        "delta": [
+          0.5675,
+          2.7096349203817427,
+          0.09580006133709004,
+          5.923795789682717
+        ],
+        "ci95": [
+          0.37973187977930356,
+          0.7552681202206964
+        ],
+        "win": [
+          0.44625,
+          0.3,
+          0.25375
+        ],
+        "plies_to_fill": [
+          46.385,
+          46.385
+        ],
+        "plies_se": 0.17469542599859658,
+        "first_camp_ply": [
+          3.4425,
+          7.6375
+        ],
+        "captures": [
+          0.0025,
+          0.0
+        ],
+        "captures_total": 0.0025,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0025,
+          0.0
+        ],
+        "bomb_trades": [
+          0.00125,
+          0.0
+        ],
+        "lost_value": [
+          0.1375,
+          0.57
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1,
+            "YING": 1
+          },
+          {
+            "PAI": 1,
+            "ZHA": 1
+          }
+        ],
+        "spread2_rate": 0.96125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.845,
+        "capture_opp_rate": [
+          0.7560403221505146,
+          0.7431777329919931
+        ],
+        "capture_opp_per_race": [
+          17.71875,
+          17.055
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-11 暴露高价值子 vs 贪交换对手": {
+      "spec": "CT_exhigh vs CT_exhigh_gre",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          4.845,
+          5.155
+        ],
+        "delta": [
+          -0.31,
+          2.674479585136925,
+          0.09455713253976519,
+          -3.2784412098117732
+        ],
+        "ci95": [
+          -0.49533197977793975,
+          -0.12466802022206022
+        ],
+        "win": [
+          0.3,
+          0.3975,
+          0.3025
+        ],
+        "plies_to_fill": [
+          53.03875,
+          53.03875
+        ],
+        "plies_se": 0.23535249955265414,
+        "first_camp_ply": [
+          5.715,
+          5.5625
+        ],
+        "captures": [
+          0.0,
+          4.83125
+        ],
+        "captures_total": 4.83125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          4.2425
+        ],
+        "bomb_trades": [
+          0.0,
+          1.115
+        ],
+        "lost_value": [
+          973.0,
+          645.4475
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 628,
+            "SHI": 189,
+            "LIAN": 590,
+            "GONG": 727,
+            "ZHA": 500,
+            "LV": 244,
+            "YING": 330,
+            "TUAN": 289,
+            "SI": 40,
+            "LEI": 272,
+            "JUN": 56
+          },
+          {
+            "SHI": 119,
+            "GONG": 163,
+            "ZHA": 423,
+            "LIAN": 168,
+            "LV": 111,
+            "SI": 47,
+            "TUAN": 116,
+            "YING": 104,
+            "PAI": 168,
+            "JUN": 41
+          }
+        ],
+        "spread2_rate": 0.94875,
+        "captures_before_spread2": 0.9762845849802372,
+        "sign_flips": 0.85375,
+        "capture_opp_rate": [
+          0.7207767722473605,
+          0.6207871788828659
+        ],
+        "capture_opp_per_race": [
+          19.115,
+          16.4625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.3225,
+          4.6775
+        ],
+        "delta": [
+          0.645,
+          2.613908117083636,
+          0.09241560774941995,
+          6.97934056494963
+        ],
+        "ci95": [
+          0.4638654088111369,
+          0.8261345911888631
+        ],
+        "win": [
+          0.42375,
+          0.27375,
+          0.3025
+        ],
+        "plies_to_fill": [
+          53.03875,
+          53.03875
+        ],
+        "plies_se": 0.23535249955265414,
+        "first_camp_ply": [
+          3.505,
+          7.7725
+        ],
+        "captures": [
+          2.44875,
+          2.3825
+        ],
+        "captures_total": 4.83125,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.17125,
+          2.07125
+        ],
+        "bomb_trades": [
+          0.575,
+          0.54
+        ],
+        "lost_value": [
+          809.7325,
+          808.715
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 396,
+            "SHI": 151,
+            "LIAN": 378,
+            "GONG": 444,
+            "ZHA": 461,
+            "LV": 170,
+            "YING": 220,
+            "TUAN": 205,
+            "SI": 46,
+            "LEI": 136,
+            "JUN": 47
+          },
+          {
+            "SHI": 157,
+            "GONG": 446,
+            "PAI": 400,
+            "ZHA": 462,
+            "LIAN": 380,
+            "LEI": 136,
+            "YING": 214,
+            "JUN": 50,
+            "LV": 185,
+            "TUAN": 200,
+            "SI": 41
+          }
+        ],
+        "spread2_rate": 0.94875,
+        "captures_before_spread2": 0.9762845849802372,
+        "sign_flips": 0.85375,
+        "capture_opp_rate": [
+          0.6956927964122209,
+          0.6454221165279429
+        ],
+        "capture_opp_per_race": [
+          18.615,
+          16.9625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-12 卡位 + 强制接触 vs 接触基准": {
+      "spec": "CT_deny vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          4.99625,
+          5.00375
+        ],
+        "delta": [
+          -0.0075,
+          2.773907343881654,
+          0.09807243466209412,
+          -0.07647408801301858
+        ],
+        "ci95": [
+          -0.19972197193770447,
+          0.18472197193770445
+        ],
+        "win": [
+          0.365,
+          0.37125,
+          0.26375
+        ],
+        "plies_to_fill": [
+          44.09875,
+          44.09875
+        ],
+        "plies_se": 0.1649192863513494,
+        "first_camp_ply": [
+          5.5675,
+          5.91
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.84875,
+        "capture_opp_rate": [
+          0.7579245817975616,
+          0.7478462933575153
+        ],
+        "capture_opp_per_race": [
+          16.7075,
+          16.49375
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.30875,
+          4.69125
+        ],
+        "delta": [
+          0.6175,
+          2.704225359228011,
+          0.09560880446833771,
+          6.458610202625161
+        ],
+        "ci95": [
+          0.4301067432420581,
+          0.804893256757942
+        ],
+        "win": [
+          0.46,
+          0.27625,
+          0.26375
+        ],
+        "plies_to_fill": [
+          44.09875,
+          44.09875
+        ],
+        "plies_se": 0.1649192863513494,
+        "first_camp_ply": [
+          3.5575,
+          7.92
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.9625,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.84875,
+        "capture_opp_rate": [
+          0.7583230579531443,
+          0.7473189195389115
+        ],
+        "capture_opp_per_race": [
+          16.9125,
+          16.28875
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-13 卡位 + 营邻域吃子 + 强制接触 vs 接触基准": {
+      "spec": "CT_deny_cap vs CT_base",
+      "policy": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.13375,
+          4.865
+        ],
+        "delta": [
+          0.26875,
+          2.806932850556706,
+          0.09924006264819665,
+          2.7080797092270235
+        ],
+        "ci95": [
+          0.07423947720953455,
+          0.4632605227904654
+        ],
+        "win": [
+          0.39125,
+          0.32625,
+          0.2825
+        ],
+        "plies_to_fill": [
+          46.292866082603254,
+          46.295
+        ],
+        "plies_se": 0.18156663233046513,
+        "first_camp_ply": [
+          5.605,
+          6.06
+        ],
+        "captures": [
+          2.93875,
+          0.00125
+        ],
+        "captures_total": 2.94,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          2.80875,
+          0.00125
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0375,
+          326.475
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 1
+          },
+          {
+            "PAI": 467,
+            "SHI": 86,
+            "LIAN": 443,
+            "GONG": 592,
+            "LEI": 164,
+            "LV": 142,
+            "TUAN": 180,
+            "YING": 260,
+            "JUN": 16,
+            "QI": 1
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.6465295629820051,
+        "sign_flips": 0.82125,
+        "capture_opp_rate": [
+          0.723893900923775,
+          0.7490958164642375
+        ],
+        "capture_opp_per_race": [
+          16.75,
+          17.34625
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 0.99875,
+        "camps": [
+          5.31,
+          4.68875
+        ],
+        "delta": [
+          0.62125,
+          2.7504098568169013,
+          0.0972416730398776,
+          6.3887218368325795
+        ],
+        "ci95": [
+          0.4306563208418399,
+          0.81184367915816
+        ],
+        "win": [
+          0.43125,
+          0.28625,
+          0.2825
+        ],
+        "plies_to_fill": [
+          46.292866082603254,
+          46.295
+        ],
+        "plies_se": 0.18156663233046513,
+        "first_camp_ply": [
+          3.56,
+          8.105
+        ],
+        "captures": [
+          1.4925,
+          1.4475
+        ],
+        "captures_total": 2.94,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          1.4375,
+          1.3725
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          166.8875,
+          159.625
+        ],
+        "lost_ranks": [
+          {
+            "PAI": 224,
+            "SHI": 51,
+            "LIAN": 221,
+            "GONG": 281,
+            "LV": 71,
+            "LEI": 90,
+            "TUAN": 83,
+            "YING": 128,
+            "JUN": 8,
+            "QI": 1
+          },
+          {
+            "LEI": 74,
+            "GONG": 311,
+            "LIAN": 222,
+            "PAI": 244,
+            "LV": 71,
+            "TUAN": 97,
+            "SHI": 35,
+            "YING": 132,
+            "JUN": 8
+          }
+        ],
+        "spread2_rate": 0.9725,
+        "captures_before_spread2": 0.6465295629820051,
+        "sign_flips": 0.82125,
+        "capture_opp_rate": [
+          0.7443339747701518,
+          0.7285028371890004
+        ],
+        "capture_opp_per_race": [
+          17.40625,
+          16.69
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    },
+    "Δ6-14 强制接触基准 vs golden6 基准（接触本身的代价）": {
+      "spec": "CT_base vs D_BASE",
+      "policy": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.005,
+          4.995
+        ],
+        "delta": [
+          0.01,
+          2.7766052872440317,
+          0.09816782136443382,
+          0.10186637394015752
+        ],
+        "ci95": [
+          -0.18240892987429028,
+          0.2024089298742903
+        ],
+        "win": [
+          0.36,
+          0.3525,
+          0.2875
+        ],
+        "plies_to_fill": [
+          27.21625,
+          27.21625
+        ],
+        "plies_se": 0.10744784185955235,
+        "first_camp_ply": [
+          5.0525,
+          4.9275
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.765,
+        "capture_opp_rate": [
+          0.38527224313653474,
+          0.41977577651167064
+        ],
+        "capture_opp_per_race": [
+          5.245,
+          5.71
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      },
+      "seat": {
+        "n": 800,
+        "completion": 1.0,
+        "camps": [
+          5.3325,
+          4.6675
+        ],
+        "delta": [
+          0.665,
+          2.6957111442468165,
+          0.09530778151085356,
+          6.977394599456399
+        ],
+        "ci95": [
+          0.47819674823872704,
+          0.851803251761273
+        ],
+        "win": [
+          0.44375,
+          0.26875,
+          0.2875
+        ],
+        "plies_to_fill": [
+          27.21625,
+          27.21625
+        ],
+        "plies_se": 0.10744784185955235,
+        "first_camp_ply": [
+          3.37,
+          6.61
+        ],
+        "captures": [
+          0.0,
+          0.0
+        ],
+        "captures_total": 0.0,
+        "camp_origin_caps": [
+          0.0,
+          0.0
+        ],
+        "camp_zone_caps": [
+          0.0,
+          0.0
+        ],
+        "bomb_trades": [
+          0.0,
+          0.0
+        ],
+        "lost_value": [
+          0.0,
+          0.0
+        ],
+        "lost_ranks": [
+          {},
+          {}
+        ],
+        "spread2_rate": 0.97125,
+        "captures_before_spread2": 0.0,
+        "sign_flips": 0.765,
+        "capture_opp_rate": [
+          0.4189823168531216,
+          0.38544297876321454
+        ],
+        "capture_opp_per_race": [
+          5.805,
+          5.15
+        ],
+        "shuttle": 0.0,
+        "exit": 0.0
+      }
+    }
+  }
+}

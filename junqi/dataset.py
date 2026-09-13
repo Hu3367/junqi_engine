@@ -165,6 +165,30 @@ def load_list_cfg_metadata(cfg_path: str = "军旗复盘/list.cfg") -> dict[str,
     return records
 
 
+def terminal_label_from_meta(reason_code: int, winner_code: int) -> tuple[str, int]:
+    """P1 标签规则（AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §6 权威口径）。
+
+    根据官方 list.cfg 终局码判定该局的 Value 标签类别。
+    返回 (label_kind, final_winner_seat)：
+      - ("decided", seat)  明确胜负（+1/-1）：code 1 常规终局、21 主动认输、
+        22 长捉判负、23 超时判负（seat = 胜者座位 0/1）；
+      - ("draw", -1)       正规和棋（0）：code 40 协议和棋、42 循环和棋、
+        43 限步判和，以及无终局码但官方记 w=3 的对局；
+      - ("none", -1)       不赋 Value（仅保留合法 Policy 动作）：code 20
+        中途强退/逃跑与 code 24 断线——中止事件不反映棋力高低，不得作为
+        终局 Value（2026-09-13 修正：此前 code 24 被无条件视为明确胜负，
+        与基线计划 §6 冲突，现与 code 20 同口径废弃）。
+    """
+    rc, w = reason_code, winner_code
+    if rc in (1, 21, 22, 23) and w in (1, 2):
+        return "decided", (0 if w == 1 else 1)
+    if rc in (20, 24):
+        return "none", -1
+    if rc in (40, 42, 43) or w == 3:
+        return "draw", -1
+    return "none", -1
+
+
 def process_single_game(game: SavGame, cfg: RuleConfig,
                          meta_record: Optional[dict] = None) -> list[dict]:
     """重演单局并提取每个 ply 的训练样本。
@@ -190,17 +214,11 @@ def process_single_game(game: SavGame, cfg: RuleConfig,
     final_winner = -1
 
     if has_meta:
-        rc = meta_record.get("reason_code", 0)
-        w_code = meta_record.get("winner", 3)
-        # 1=常规终局, 21=主动认输, 22=长捉, 23=超时, 24=断线 -> 具有确定胜负的正式对局
-        if rc in (1, 21, 22, 23, 24) and w_code in (1, 2):
-            is_decided_winner = True
-            final_winner = 0 if w_code == 1 else 1
-        # 40=协议和棋, 42=循环和棋, 43=限步和棋 -> 正规和棋 (排除中途逃跑 code 20)
-        elif rc in (40, 42, 43) or (w_code == 3 and rc != 20):
-            is_rule_draw = True
-            final_winner = -1
-        # code 20 为早期强退，不赋 Value (has_value=False)，仅保留 Policy 动作
+        label_kind, final_winner = terminal_label_from_meta(
+            int(meta_record.get("reason_code", 0)),
+            int(meta_record.get("winner", 3)))
+        is_decided_winner = label_kind == "decided"
+        is_rule_draw = label_kind == "draw"
     else:
         # 回退到无元数据时的纯引擎判定
         is_decided_winner = game.winner in (0, 1) and not game.stopped_on_event

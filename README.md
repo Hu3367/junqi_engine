@@ -30,6 +30,7 @@
 - **实施指南**: [FOLDER_REFACTORING_IMPLEMENTATION_PLAN.md](docs/02-Architecture/FOLDER_REFACTORING_IMPLEMENTATION_PLAN.md), [REFACTORING_CHECKLIST.md](docs/01-GettingStarted/REFACTORING_CHECKLIST.md)
 - **快速参考**: [QUICK_REFERENCE_CARDS.md](docs/QUICK_REFERENCE_CARDS.md), [QUICK_REFERENCE_V2.0.md](docs/QUICK_REFERENCE_V2.0.md)
 - **理论体系**: [PROJECT_KNOWLEDGE_AND_THEORY.md](docs/03-RulesAndStrategy/PROJECT_KNOWLEDGE_AND_THEORY.md), [RL_TRAINING_ROADMAP.md](docs/05-ExecutionPlans/RL_TRAINING_ROADMAP.md)
+- **开局行营争夺**: [CAMP_RUSH_OPENING_PLAYBOOK.md](docs/03-RulesAndStrategy/CAMP_RUSH_OPENING_PLAYBOOK.md) - 邻营度定理、闭合期望模型、25000 场占营竞赛与先手/后手策略决策树
 - **变更记录**: [CHANGELOG.md](docs/CHANGELOG.md)
 
 ---
@@ -103,6 +104,15 @@ python cli.py train --epochs 5 --games 24
 
 # Benchmark 评测
 python cli.py benchmark     # 50 题固定评测
+
+# P0 评测门控（配对同牌/座位互换/Wilson 区间 + 三元 SPRT）
+python cli.py gate --a hybrid2 --b expert2 --seeds 100
+
+# P1 真实终局标签 Value 头重训（官方 list.cfg 解密标签，候选权重不覆盖 best.pt）
+python cli.py distill_value --p1-dir datasets/p1_v2 --out models/value_distilled_v2.pt
+
+# P2 搜索蒸馏（QSearch 专家教师软分布 -> Policy 头交叉熵）
+python cli.py distill_search --base models/bc_best.pt --states 1200 --depth 3
 ```
 
 ---
@@ -190,7 +200,7 @@ junqi_engine/
 
 ### 立即开始
 1. ✅ 阅读 [`FINAL_REFACTORING_SUMMARY.md`](docs/01-GettingStarted/FINAL_REFACTORING_SUMMARY.md) 了解工程重构
-2. ✅ 激活虚拟环境并运行 `.\run_tests.bat` 验证安装（124项单元测试）
+2. ✅ 激活虚拟环境并运行 `.\run_tests.bat` 验证安装（225项单元测试）
 3. ✅ 启动 GUI: `python cli.py gui` 体验人机对战
 
 ### 深入学习
@@ -296,7 +306,7 @@ junqi/fit_weights.py 复盘数据行为克隆拟合权重
 junqi/calculator.py  交互式局面计算器
 junqi/config.py      规则开关、估值权重、搜索参数
 junqi/gui.py         人机对战图形界面
-tests/               124 项全量单元测试（121 通过 / 3 跳过，规则 + 复盘 + RL/MCTS + P3/P4 专项）
+tests/               225 项全量单元测试（225 通过 / 3 跳过，规则 + 复盘 + RL/MCTS + P3/P4 + 开局占营竞赛与 Δ 战术专项）
 metrics/             实验靶场看板 (benchmark_dashboard.md) 与误差时序数据
 models/              核心深度学习模型权重 (best.pt, bc_best.pt, value_distilled.pt) 与发布目录
 reports/             1000 局官方大数据挖掘报告、专家引擎阶段报告与评测归档

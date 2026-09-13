@@ -3,8 +3,19 @@
 核心机制：
 1. 结合贝叶斯暗子信念跟踪 (BeliefTracker) 与并行确定化多世界采样 (PIMC)；
 2. 批量将 K 个采样世界打包输入深度神经网络 (JunqiNet) 进行 GPU 张量推理；
-3. 执行轻量战术硬约束拦截（一步吃旗、困毙判定、自杀送子剪枝、循环判和惩罚）；
-4. 综合输出动作决策分布与三分类胜率概率。
+3. 规则层只保留硬判定：一步吃旗终局捷径、结构性死锁和棋前置拦截、
+   重复局面根节点规避（价值量纲罚分）；
+4. 动作定价 = QSearch 战术搜索估值 + 神经网络对数先验融合，
+   彻底移除 ±15/±150/±400 等加性硬打分常数（2026-09-13 复盘分析报告
+   根因 2.1"量纲崩溃"与 2.3"规则踩踏"的根本性修复，归属阶段 P2）。
+
+价值量纲说明（对齐 HybridAgent / ai.py）：
+  - 战术估值与终局分同处搜索分值空间（±WIN_SCORE / 百分级物质分）；
+  - 先验项 = clip(log P(a|s) * prior_log_scale, -prior_band, 0)，影响上界
+    prior_band=15 分 < 最小子力单位（排长 18 分），仅作为近平手动作的
+    平局打破器，永不翻转搜索已定价的真实战术摆动；
+  - 重复和棋规避使用 REP_PENALTY=150（高于常规战术分、低于胜负分），
+    与 ai.py 的 Agent 根节点规避同口径。
 """
 from __future__ import annotations
 
@@ -17,13 +28,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .analysis import is_dead_draw
 from .belief import BeliefTracker
-from .config import RuleConfig
+from .config import EvalWeights
 from .encoder import action_to_index, encode_state_np, legal_action_mask
 from .net import JunqiNet
-from .rules import (ATTACKER_WINS, BOTH_DIE, CAMPS, NEIGHBORS, Rank,
-                    battle, is_camp, is_hq, other)
-from .state import Action, GameState, Piece, position_key
+from .rules import Rank
+from .search import ExpertSearchEngine
+from .state import WIN_SCORE, Action, GameState, position_key
 
 
 class HybridDecisionEngine:
@@ -32,13 +44,30 @@ class HybridDecisionEngine:
     def __init__(self, model_path: str = "models/best.pt",
                  k_worlds: int = 4,
                  device: Optional[str] = None,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 weights: Optional[EvalWeights] = None,
+                 candidate_k: int = 12,
+                 tactical_depth: int = 2,
+                 prior_weight: float = 0.25,
+                 prior_log_scale: float = 5.0,
+                 prior_band: float = 15.0,
+                 rep_penalty: float = 150.0):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
         self.k_worlds = max(1, k_worlds)
         self.rng = random.Random(seed)
         self.tracker = BeliefTracker(seed=seed)
+        self.weights = weights or EvalWeights()
+
+        # P2：QSearch 战术定价器（吃子截断 + Star1 几率节点），与教师搜索同源
+        self.engine = ExpertSearchEngine(weights=self.weights, seed=seed)
+        self.candidate_k = max(4, candidate_k)
+        self.tactical_depth = max(1, tactical_depth)
+        self.prior_weight = float(prior_weight)
+        self.prior_log_scale = float(prior_log_scale)
+        self.prior_band = float(prior_band)
+        self.rep_penalty = float(rep_penalty)
 
         if model_path and os.path.exists(model_path):
             self.net = JunqiNet.load_from_file(model_path, device=device)
@@ -63,8 +92,7 @@ class HybridDecisionEngine:
             else:
                 return {"win": 0.0, "draw": 0.0, "loss": 1.0, "value": -1.0, "best_action": None}
 
-        # 结构性必和死锁前置拦截
-        from .analysis import is_dead_draw
+        # 结构性必和死锁前置拦截（规则层硬判定：直接返回 Draw）
         is_draw, _ = is_dead_draw(state)
         if is_draw:
             scored_acts = [(a, 0.0) for a in acts]
@@ -100,10 +128,10 @@ class HybridDecisionEngine:
             public_logits, _ = self.net(public_t, legal_mask=public_mask_t)
             public_probs = F.softmax(public_logits, dim=-1).squeeze(0).cpu().numpy()
 
-        action_scores = {}
+        policy_probs: Dict[Action, float] = {}
         for a in acts:
             idx = action_to_index(a)
-            action_scores[a] = float(public_probs[idx])
+            policy_probs[a] = float(public_probs[idx])
 
         # 2. 多世界采样批量前向推理 -> 仅计算 Value 头（期望胜率与价值评估）
         batch_tensors = []
@@ -130,8 +158,8 @@ class HybridDecisionEngine:
                 mean_loss = max(0.0, -scalar_val)
                 mean_draw = max(0.0, 1.0 - mean_win - mean_loss)
 
-        # 战术硬规则加权
-        scored_actions = self._apply_tactical_rules(state, action_scores, history_counts)
+        # 3. QSearch 战术定价 + 对数先验融合（P2 重构：无加性硬打分常数）
+        scored_actions = self._price_actions(state, policy_probs, history_counts)
         best_act = scored_actions[0][0] if scored_actions else acts[0]
 
         return {
@@ -146,7 +174,7 @@ class HybridDecisionEngine:
     def choose_actions(self, state: GameState, topn: int = 1,
                        avoid: Optional[Set] = None,
                        history_counts: Optional[dict] = None) -> List[Tuple[Action, float]]:
-        """实现 Agent 接口：返回排序后的 [(action, score)] 列表。"""
+        """实现 Agent 接口：返回排序后的 [(action, score)] 列表（搜索分值量纲）。"""
         acts = state.legal_actions()
         if not acts or state.is_terminal():
             return []
@@ -158,14 +186,12 @@ class HybridDecisionEngine:
         if not scored and acts:
             scored = [(acts[0], 0.0)]
 
-        # 若存在 avoid 惩罚
+        # 重复和棋根节点规避（基线 §4.1：与 ai.py Agent 的 REP_PENALTY 同口径）
         if avoid:
             adjusted = []
             for a, s in scored:
-                if a.kind == "move":
-                    pk = position_key(state.apply(a))
-                    if pk in avoid:
-                        s -= 100.0
+                if a.kind == "move" and position_key(state.apply(a)) in avoid:
+                    s -= self.rep_penalty
                 adjusted.append((a, s))
             adjusted.sort(key=lambda t: t[1], reverse=True)
             scored = adjusted
@@ -186,153 +212,91 @@ class HybridDecisionEngine:
         acts = state.legal_actions()
         return acts[0] if acts else Action("pass")
 
-    def _apply_tactical_rules(self, state: GameState,
-                              policy_probs: Dict[Action, float],
-                              history_counts: Optional[dict] = None) -> List[Tuple[Action, float]]:
-        """战术硬约束与启发式安全规则修正。"""
-        acts = list(policy_probs.keys())
-        scored: List[Tuple[Action, float]] = []
+    # ------------------------------------------------------------- 动作定价
 
-        my_clr = state.my_color()
+    def _price_actions(self, state: GameState,
+                       policy_probs: Dict[Action, float],
+                       history_counts: Optional[dict] = None) -> List[Tuple[Action, float]]:
+        """P2 动作定价：QSearch 战术搜索估值 + 神经网络对数先验融合。
 
-        for a in acts:
-            score = policy_probs.get(a, 0.0)
-
+        规则层硬判定（不经评分）：
+          1. 一步吃旗必胜 -> 终局捷径直接返回；
+          2. 走后立即终局的动作 -> ±WIN_SCORE / 0；
+        其余动作的"好与坏"全部交给战术搜索定价，先验仅做平局打破。
+        """
+        # 终局捷径：一步吃旗制胜，直接选为决策动作（Terminal Win Shortcut）
+        for a in policy_probs:
             if a.kind == "move":
                 tgt = state.board.get(a.to)
-                mover = state.board.get(a.frm)
-
-                # 1. 一步吃旗制胜 (Instant Flag Capture)
                 if tgt is not None and tgt.revealed and tgt.rank == Rank.QI:
-                    score += 10000.0
+                    return [(a, float(WIN_SCORE))]
 
-                # 2. 困毙终结 (Immobilization Win)
+        # 候选集：策略 Top-K + 全部吃明子走法（战术验证不可漏吃子线）
+        ranked = sorted(policy_probs.items(), key=lambda t: t[1], reverse=True)
+        cand_set = {a for a, _ in ranked[:self.candidate_k]}
+        for a in policy_probs:
+            if a.kind == "move":
+                tgt = state.board.get(a.to)
+                if tgt is not None and tgt.revealed:
+                    cand_set.add(a)
+
+        scored: List[Tuple[Action, float]] = []
+        for a in cand_set:
+            if a.kind == "move":
                 nxt = state.apply(a)
-                if nxt.is_terminal() and nxt.winner == state.turn:
-                    score += 5000.0
-                elif nxt.is_terminal() and nxt.winner == -1:
-                    # 避免在均势/优势下主动走成和棋
-                    score -= 50.0
-
-                # 3. 规避重复局面判和 (Repetition Avoidance)
-                if history_counts:
-                    pk = position_key(nxt)
-                    c = history_counts.get(pk, 0)
-                    if c >= 2:
-                        score -= 200.0
-                    elif c == 1:
-                        score -= 10.0
-
-                # 4. 1-ply 战术反扑威胁与反杀检测 (Counter-Attack / Poisoned Piece Trap)
-                # 检查若执行此动作，下一手敌方明子是否能在 a.to 处反杀我方 mover
-                fatal_threat = False
-                is_threatened = False
-                for opp_a in nxt.legal_actions():
-                    if opp_a.kind == "move" and opp_a.to == a.to:
-                        opp_pc = nxt.board.get(opp_a.frm)
-                        if opp_pc is not None and opp_pc.revealed and mover is not None:
-                            b_res = battle(opp_pc.rank, mover.rank)
-                            if b_res in (ATTACKER_WINS, BOTH_DIE):
-                                is_threatened = True
-                                if b_res == ATTACKER_WINS or opp_pc.rank <= mover.rank:
-                                    fatal_threat = True
-                                    break
-
-                leaves_camp = is_camp(a.frm) and not is_camp(a.to)
-                enters_camp = not is_camp(a.frm) and is_camp(a.to)
-                camp_to_camp = is_camp(a.frm) and is_camp(a.to)
-
-                # 检查放弃行营后，行营是否次手直接面临敌方入侵占领 (丢营风险)
-                camp_invadable = False
-                if leaves_camp:
-                    for opp_a in nxt.legal_actions():
-                        if opp_a.kind == "move" and opp_a.to == a.frm:
-                            camp_invadable = True
-                            break
-
-                # 行营据点战略奖励：积极占领空行营或营间机动
-                if enters_camp:
-                    score += 25.0
-                elif camp_to_camp:
-                    score += 15.0
-
-                # 5. 吃子战术硬门保护与白送/诱杀陷阱严格拦截（基于 rules.battle）
-                from .config import EvalWeights
-                weights = EvalWeights()
-
-                if tgt is not None and tgt.revealed and mover is not None:
-                    res = battle(mover.rank, tgt.rank)
-                    piece_val = weights.piece.get(tgt.rank, 30.0)
-                    mover_val = weights.piece.get(mover.rank, 30.0)
-
-                    if res == "defender_wins":
-                        # 真正的自杀：小子撞大子或非工兵撞地雷
-                        score -= 500.0
-                    elif res == "attacker_wins":
-                        if fatal_threat:
-                            # 诱杀陷阱：吃子后次手立即被敌方反杀！
-                            # 若吃小亏大（如工兵挖雷被连长反吃、或大子吃小子被反吃），或弃营被反杀，重度惩罚
-                            if piece_val < mover_val or leaves_camp:
-                                score -= 300.0
-                            else:
-                                score += max(0.0, (piece_val - mover_val) * 0.5)
-                        else:
-                            # 安全吃子：军长吃排长、营长吃排长、工兵挖雷等
-                            score += 50.0 + piece_val * 0.5
-                            if mover.rank == Rank.GONG and tgt.rank == Rank.LEI:
-                                score += 30.0
-                    elif res == "both_die":
-                        # 同归于尽：炸弹兑高价值大子（司令/军长/师长）给予战术优先
-                        if mover.rank == Rank.ZHA and tgt.rank in (Rank.SI, Rank.JUN, Rank.SHI):
-                            score += 80.0
-                        elif mover.rank == Rank.ZHA and tgt.rank not in (Rank.QI, Rank.SI, Rank.JUN, Rank.SHI):
-                            # 严禁炸弹主动撞廉价小子 (排/连/营/团/工兵) 自爆贱卖
-                            score -= 350.0
-                        elif fatal_threat:
-                            score -= 100.0
-                else:
-                    # 静止/普通走步：若无故走入敌方明子火力网白送吃
-                    if fatal_threat:
-                        score -= 400.0
-
-                # 6. 行营战略庇护特权与“占营优于吃小子”原则 (Camp Hegemony)
-                # 行营是不可侵犯的绝对避难所与控制据点。离开行营意味着丧失庇护！
-                if leaves_camp:
-                    if fatal_threat:
-                        # 任何离开行营后次手在目标格面临被反杀的走法，无论目的为何均顶格严惩
-                        score -= 400.0
-                    if tgt is not None and tgt.revealed:
-                        # 离开行营去吃小子（排长、连长、营长或地雷）
-                        # 核心棋理：实战占营比吃一个小子更重要，严防为了贪吃廉价小子而主动弃营
-                        if tgt.rank not in (Rank.QI, Rank.SI, Rank.JUN):
-                            if mover.rank <= Rank.YING:
-                                score -= 150.0  # 小子/中子弃营吃小子，得不偿失
-                            elif fatal_threat or camp_invadable:
-                                score -= 150.0  # 大子弃营吃小子但面临反扑或丢营
-                            else:
-                                score -= 20.0   # 安全出击但放弃据点折损
+                if nxt.is_terminal():
+                    if nxt.winner == state.turn:
+                        val = float(WIN_SCORE)
+                    elif nxt.winner == -1:
+                        val = 0.0
                     else:
-                        # 无目的离开行营（闲走弃营）
-                        score -= 80.0
+                        val = -float(WIN_SCORE)
+                else:
+                    # 对手视角浅层搜索（叶子由 QSearch 吃子截断，
+                    # 彻底消除 1-ply 反杀检测的地平线盲区）。
+                    # as_evaluator=True：跳过教师"唯一合法走法返 0 分"的决策捷径，
+                    # 返回强制应着的真实搜索分（子局必胜/必败线不被误估为 0）
+                    _, opp_score, _ = self.engine.search(
+                        nxt, max_depth=max(1, self.tactical_depth - 1),
+                        as_evaluator=True)
+                    val = -opp_score
+            else:
+                # 翻棋几率节点：Star1 期望估值（含深层截断解析回退）
+                val = self.engine._evaluate_chance_flip(
+                    state, a, self.tactical_depth, 0, -WIN_SCORE, WIN_SCORE, set())
 
-                    if camp_invadable:
-                        # 弃营且次手即被敌军入驻占领（丢营）
-                        score -= 100.0
+            # 重复局面规避（价值量纲罚分：高于常规战术分、低于胜负分）
+            if history_counts and a.kind == "move":
+                c = history_counts.get(position_key(state.apply(a)), 0)
+                if c >= 2:
+                    val -= self.rep_penalty
+                elif c == 1:
+                    val -= self.rep_penalty * 0.1
 
-            elif a.kind == "flip":
-                # 7. 据点辐射拓荒翻棋激励 (Adjacent Flip Incentive)
-                # 若翻棋位置邻接己方已占领的行营，给予据点辐射战术加分，破除“龟缩拒翻”死循环
-                is_camp_adj = False
-                for c in CAMPS:
-                    if a.frm in NEIGHBORS[c]:
-                        occ = state.board.get(c)
-                        if occ is not None and occ.revealed and occ.color == my_clr:
-                            is_camp_adj = True
-                            break
-                if is_camp_adj:
-                    score += 15.0
+            # 对数先验融合：先验影响被 prior_band 截断（默认 15 分 < 最小子力单位
+            # "排长 18 分"），保证先验只做近平手动作的平局打破器，
+            # 永不翻转搜索已定价的真实子力/战术摆动（量纲崩溃的核心防线）
+            p = max(float(policy_probs.get(a, 0.0)), 1e-6)
+            prior_term = max(-self.prior_band,
+                             min(0.0, math.log(p) * self.prior_log_scale))
+            total = (1.0 - self.prior_weight) * val + self.prior_weight * prior_term
+            scored.append((a, total))
 
-            scored.append((a, score))
+        # 非候选动作（策略尾部且非吃子）：不做战术搜索，按先验-only 评分补齐，
+        # 保持 choose_actions 返回完整合法动作排序的既有契约（如 scan_replays 依赖）
+        priced = {a for a, _ in scored}
+        for a, p_raw in policy_probs.items():
+            if a in priced:
+                continue
+            p = max(float(p_raw), 1e-6)
+            prior_term = max(-self.prior_band,
+                             min(0.0, math.log(p) * self.prior_log_scale))
+            total = self.prior_weight * prior_term
+            if history_counts and a.kind == "move":
+                c = history_counts.get(position_key(state.apply(a)), 0)
+                if c >= 2:
+                    total -= self.rep_penalty
+            scored.append((a, total))
 
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored

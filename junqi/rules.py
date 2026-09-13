@@ -167,8 +167,8 @@ DEFENDER_WINS = "defender_wins"
 BOTH_DIE = "both_die"
 
 
-def battle(attacker: Rank, defender: Rank) -> str:
-    """返回战斗结果。调用方保证 attacker 不是 LEI/QI，且军旗攻击合法性已在走法层把关。"""
+def _battle_impl(attacker: Rank, defender: Rank) -> str:
+    """战斗结算原始实现（作为查表矩阵的构建源，结果与查表逐一相同）。"""
     if defender == Rank.QI:
         return ATTACKER_WINS          # 扛旗成功（炸弹同尽见下）
     if attacker == Rank.ZHA or defender == Rank.ZHA:
@@ -178,3 +178,15 @@ def battle(attacker: Rank, defender: Rank) -> str:
     if attacker == defender:
         return BOTH_DIE
     return ATTACKER_WINS if attacker > defender else DEFENDER_WINS
+
+
+# 战斗结算查表矩阵：由 _battle_impl 逐一构建，结果与分支实现完全一致。
+# battle 位于搜索/估值/走法生成的最高频热路径（实测单局 ~870 万次调用），
+# 查表省去每次调用的分支判定开销。
+_BATTLE_TABLE = {(a, d): _battle_impl(a, d) for a in Rank for d in Rank}
+
+
+def battle(attacker: Rank, defender: Rank) -> str:
+    """返回战斗结果（查表实现，语义与原分支实现一致）。
+    调用方保证 attacker 不是 LEI/QI，且军旗攻击合法性已在走法层把关。"""
+    return _BATTLE_TABLE[(attacker, defender)]

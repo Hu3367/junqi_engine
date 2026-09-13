@@ -87,6 +87,9 @@ def main(argv=None):
     dv.add_argument("--out", default="models/value_distilled.pt", help="输出权重路径")
     dv.add_argument("--data", default="datasets/distill_tactical_labeled.json",
                     help="预打标数据集 JSON 路径（若存在则优先加载）")
+    dv.add_argument("--p1-dir", default=None,
+                    help="P1: 使用 export_dataset 导出的 npz 数据集目录"
+                         "（官方 list.cfg 真实终局标签，优先级高于 --data）")
     dv.add_argument("--samples", type=int, default=None, help="蒸馏局面数（默认使用全部数据或1200）")
     dv.add_argument("--epochs", type=int, default=8, help="训练轮数")
     dv.add_argument("--batch-size", type=int, default=128, help="批大小")
@@ -96,6 +99,35 @@ def main(argv=None):
     dv.add_argument("--depth", type=int, default=3, help="专家搜索深度")
     dv.add_argument("--time-limit-ms", type=int, default=300, help="专家搜索单步时间预算（毫秒）")
     dv.add_argument("--device", default=None, help="计算设备")
+
+    g = sub.add_parser("gate", help="P0: 统计严谨的模型晋级评测门控（配对同牌/座位互换/Wilson+SPRT）")
+    g.add_argument("--a", default="hybrid2", help="候选策略 (random/greedy/search2/expert2/hybrid2/nn)")
+    g.add_argument("--b", default="expert2", help="基准策略")
+    g.add_argument("--seeds", type=int, default=100,
+                   help="配对种子数（每种子先后手各一局；正式晋级建议 >=100 组即 200 局）")
+    g.add_argument("--seed-base", type=int, default=2026, help="种子基数")
+    g.add_argument("--workers", type=int, default=1, help="并行进程数")
+    g.add_argument("--max-plies", type=int, default=None, help="和棋手数上限（默认引擎规则 1000）")
+    g.add_argument("--model-a", default=None, help="候选策略模型权重路径")
+    g.add_argument("--model-b", default=None, help="基准策略模型权重路径")
+    g.add_argument("--elo0", type=float, default=0.0, help="SPRT H0 Elo 差")
+    g.add_argument("--elo1", type=float, default=65.0, help="SPRT H1 Elo 差")
+    g.add_argument("--out", default="reports", help="报告输出目录")
+
+    ds = sub.add_parser("distill_search", help="P2: 搜索蒸馏（QSearch 教师软分布 -> Policy 头）")
+    ds.add_argument("--base", default="models/bc_best.pt", help="基座模型路径")
+    ds.add_argument("--out", default="models/search_distilled.pt", help="输出权重路径")
+    ds.add_argument("--states", type=int, default=1200, help="蒸馏局面数")
+    ds.add_argument("--eval-sets", nargs="*", default=None, help="附加固定评测集 jsonl")
+    ds.add_argument("--epochs", type=int, default=6, help="训练轮数")
+    ds.add_argument("--batch-size", type=int, default=128, help="批大小")
+    ds.add_argument("--lr", type=float, default=3e-4, help="学习率")
+    ds.add_argument("--depth", type=int, default=3, help="教师搜索深度")
+    ds.add_argument("--time-limit-ms", type=int, default=300, help="教师单步时间预算（毫秒）")
+    ds.add_argument("--temperature", type=float, default=120.0, help="教师软分布温度")
+    ds.add_argument("--seed", type=int, default=2026, help="随机种子")
+    ds.add_argument("--workers", type=int, default=0, help="教师打标并行进程数 (0=单进程)")
+    ds.add_argument("--device", default=None, help="计算设备")
 
     sub.add_parser("test", help="运行单元测试")
 
@@ -188,14 +220,39 @@ def main(argv=None):
                      seed=args.seed, out_dir=args.out_dir, device=args.device,
                      fresh=args.fresh, rebase_baseline=args.rebase_baseline)
     elif args.cmd == "distill_value":
-        from .train_value_distill import train_value_distill
-        train_value_distill(base_model=args.base, out_path=args.out,
-                            data_path=getattr(args, "data", None),
-                            n_samples=args.samples, epochs=args.epochs,
-                            batch_size=args.batch_size, lr=args.lr,
-                            val_ratio=args.val_ratio, seed=args.seed,
-                            depth=args.depth, time_limit_ms=args.time_limit_ms,
-                            device=args.device)
+        if getattr(args, "p1_dir", None):
+            from .train_value_distill import train_value_from_p1_dataset
+            train_value_from_p1_dataset(p1_dir=args.p1_dir, base_model=args.base,
+                                        out_path=args.out, epochs=args.epochs,
+                                        batch_size=args.batch_size, lr=args.lr,
+                                        seed=args.seed, device=args.device)
+        else:
+            from .train_value_distill import train_value_distill
+            train_value_distill(base_model=args.base, out_path=args.out,
+                                data_path=getattr(args, "data", None),
+                                n_samples=args.samples, epochs=args.epochs,
+                                batch_size=args.batch_size, lr=args.lr,
+                                val_ratio=args.val_ratio, seed=args.seed,
+                                depth=args.depth, time_limit_ms=args.time_limit_ms,
+                                device=args.device)
+    elif args.cmd == "gate":
+        from .eval_gate import format_gate_report, run_gate
+        seeds = list(range(args.seed_base, args.seed_base + args.seeds))
+        rep = run_gate(args.a, args.b, seeds=seeds, workers=args.workers,
+                       max_plies=args.max_plies, model_a=args.model_a,
+                       model_b=args.model_b, elo0=args.elo0, elo1=args.elo1,
+                       out_dir=args.out)
+        print(format_gate_report(rep))
+        print(f"JSON 已保存: {os.path.join(args.out, f'gate_{args.a}_vs_{args.b}.json')}")
+    elif args.cmd == "distill_search":
+        from .train_search_distill import train_search_distill
+        train_search_distill(base_model=args.base, out_path=args.out,
+                             n_states=args.states, eval_sets=args.eval_sets,
+                             epochs=args.epochs, batch_size=args.batch_size,
+                             lr=args.lr, depth=args.depth,
+                             time_limit_ms=args.time_limit_ms,
+                             temperature=args.temperature, seed=args.seed,
+                             workers=args.workers, device=args.device)
     elif args.cmd == "test":
         import unittest
         suite = unittest.defaultTestLoader.discover("tests")
