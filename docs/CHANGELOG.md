@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## [2026-09-15] — P0 修复：训练闭环两处致命缺陷 + 门控统一 + 经验池瘦身（代码审查落地）
+
+阶段归属：**P0（正确性与可复现性）为主，含 P3 运营修正**。依据 [AGENTS.md](../AGENTS.md) 与
+[AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](../AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) §5 P0 / §7。
+完整审查结论见 [reviews/CODE_REVIEW_2026-09-15.md](../reviews/CODE_REVIEW_2026-09-15.md)。
+**未改动** `RuleConfig` 规则定义、终局奖励语义、信息边界，也未触碰 `models/best.pt`。
+
+### 一、致命缺陷修复（这两条使此前自博弈训练在数学上无效）
+
+1. **热启动 optimizer 脱钩 → 权重零更新**（`junqi/train_rl.py:1162/1174/1179`）
+   `net = JunqiNet.load_from_file(...)` 重新绑定变量名，而 `optimizer` 在此之前已构造完毕，
+   其 `param_groups` 仍指向旧网络参数；新网络反传后旧参数 `grad is None`，AdamW 全部跳过。
+   触发条件：首次训练 / `--fresh` / `--rebase-baseline` 之后（断点续训路径不受影响）。
+   唯一可观测征兆是 loss 恒定。
+   **修复**：新增 `warmstart_candidate(net, optimizer, path, ...)`，主干超参一致时**就地**载入并返回原对象；
+   仅当检查点主干超参不一致、无法就地载入时才重建网络并**同时**重建 optimizer。
+2. **自博弈 "best 对手" 是随机初始化网络**（`junqi/train_rl.py:1217` + Worker `:537`）
+   `torch.load(net.save(path))` 得到的是 `{"model_state": ...}` 包装字典，却被直接喂给
+   `load_state_dict(..., strict=False)`：键名无一匹配、静默通过。OPP_MIX 中 best 约占 25%，
+   即四分之一对局的"强对手"从未训练过，且日志完全看不出异常。
+   **修复**：新增 `JunqiNet.unwrap_state_dict` / `adapt_state_dict` / `load_state_dict_into` 与
+   `train_rl.load_weights_into_net` / `infer_net_architecture` / `build_opponent_net`；
+   缺键即**降级为 None**（回落 greedy/expert）并打印原因，**绝不返回随机初始化的假对手**。
+   顺带修掉原实现只看 `in_conv.0.weight.shape[1]` 推断架构的问题（非默认 128/6 的检查点同样会静默退化）。
+
+### 二、门控统一（R3）
+
+`train_rl.evaluate_gate` 原是与 `eval_gate.run_gate` 平行的第二套实现，且两处都错：
+两个方向用 `seed+i` 与 `seed+100_000+i`（**非配对同牌**）、子进程 `device` 写死 `"cpu"`。
+
+- `eval_gate.run_gate` 新增 `init_states`（与 seeds 等长，两局共用同一初始局面）与 `device` 透传；
+- `train_rl.evaluate_gate` 改为逐场景委托 `run_gate`，保留原 `stage_stats` 返回契约；
+- 删除 `train_rl` 内已失效的 `_gate_game_job` / `_run_jobs` / `_tally`；参考对抗（vs search2）同样走配对口径；
+- `device` 由训练主循环传入（有 GPU 时门控不再强制 CPU）。
+
+### 三、P3 运营：经验池落盘瘦身（P1）
+
+`models/candidate_latest_buffer.pkl` 实测 **3.8 GB/份**（三个实验目录合计约 11.4 GB），
+原实现每轮无条件写入且非原子。
+
+- 新增 `should_save_buffer(epoch, end_epoch, every)` 纯函数节流判据；
+- `save_checkpoint(..., save_buffer=...)` 控制是否落池；改为 **`.tmp` + `os.replace` 原子写**；
+- CLI `--buffer-save-every`（默认 **5**，末轮恒写；`0`=除末轮外不写；`1`=恢复旧行为）。
+
+### 四、`junqi/expert/` 标记为废弃（R4）
+
+AST 依赖图 + 成员存在性核验：11 个模块引用 `state.Move` / `get_piece_at` / `current_turn` /
+`turn_count` / `get_pieces` / `config.PIECE_RANKS` / `board.is_my_base` 等**全部不存在**的成员，
+`import junqi.expert` 直接 `NameError`；fan-in 为 0，主流程零调用。在线传统搜索引擎是
+`junqi/search.py::ExpertSearchEngine`。新增 `junqi/expert/DEPRECATED.md` 说明现状与复活路径，
+并新增守卫测试防止它被重新接回主流程。
+
+### 五、测试
+
+- 新增 `tests/test_p0_hotstart_and_opponent.py`（10 项）：包装字典事实固化、旧写法"零载入"证据、
+  对手权重逐位一致、垃圾 payload 返回 None、热启动保持对象同一性、optimizer 仍绑定当前 net、
+  **热启动后优化步必须改变权重**、架构不一致时重建 optimizer；
+- 新增 `tests/test_p0_gate_pairing.py`（6 项）：配对同牌（同 seed 同初始局面、只换模型）、
+  `init_states` 长度不一致报错、`device` 透传、`evaluate_gate` 逐场景委托且每 seed 只发射一次；
+- 新增 `tests/test_p3_buffer_persistence.py`（9 项）：节流判据、`save_buffer=False` 不写池、
+  原子写无 `.tmp` 残留、无 buffer 检查点仍可加载、空池 pickle 可读；
+- 新增 `tests/test_p0_expert_deprecated.py`（3 项）：废弃说明存在、主流程零依赖、在线引擎归属；
+- 全量：**298 passed / 3 skipped → 全量通过**（修复前基线 298/3，新增 28 项）。
+
+### 六、未处理（留待下一轮，按优先级）
+
+`search.py` IDS 25% 早停语义错误与超时返回 `-inf`（C1/C2，会污染搜索蒸馏教师标签）、
+根节点 alpha 窗口上界当精确分（C3）、`dataset.py:421` 把 code 24 计入 `decided_win`（C7）、
+伪 Elo 随机游走（C9）、MCTS batch=1 前向（P2）。详见审查报告。
+
+---
+
 ## [2026-09-14] — P3 修订：Value 对齐根因定位（学习率）+ 每轮 Value 重锚 + p1_v3/test 独立健康验收
 
 阶段归属：**P3（数据质量改造，基线计划 2026-09-13 修订版）**，依据 [AGENTS.md](../AGENTS.md) 与 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](../AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) §6。逐条落实 [SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md](SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md) §5 方案的验证修正版（该文档 §4 的"认输投毒"假设已被 §3 实验 B 推翻；本次进一步给出了根因的受控实验证据）。未修改 `RuleConfig` 定义与终局奖励语义；未触碰 `models/best.pt`。

@@ -258,6 +258,60 @@ class JunqiNet(nn.Module):
             "channels": self.in_conv[0].out_channels,
         }, path)
 
+    # ------------------------------------------------- 权重读取与就地载入
+
+    @staticmethod
+    def unwrap_state_dict(obj) -> dict:
+        """把 checkpoint 产物规范成裸 state_dict。
+
+        `self.save()` 写出的文件带有 {"model_state", "in_channels", ...} 包装，
+        而 `torch.load` 只是把它原样读回。历史上曾有调用点把这个包装字典直接
+        喂给 `load_state_dict(..., strict=False)`：键名无一匹配、STATIC 静默通过，
+        使自博弈 25% 的 "best 对手" 退化为随机初始化网络（审查 R2）。
+        所有载入路径必须先过本方法。
+        """
+        if isinstance(obj, dict):
+            if isinstance(obj.get("model_state"), dict):
+                return obj["model_state"]
+            return obj
+        return obj.state_dict()          # 直接 pickle 出来的 nn.Module
+
+    @classmethod
+    def adapt_state_dict(cls, state_dict: dict, in_channels: int) -> dict:
+        """按目标网络的输入通道/价值头维度改写旧格式 state_dict。"""
+        adapted = {}
+        for k, v in state_dict.items():
+            if k == "in_conv.0.weight" and v.shape[1] < in_channels:
+                new_w = torch.zeros((v.shape[0], in_channels, v.shape[2], v.shape[3]),
+                                    dtype=v.dtype)
+                new_w[:, :v.shape[1], :, :] = v
+                adapted[k] = new_w
+            elif k == "value_head.6.weight" and v.shape[0] == 1:
+                new_w = torch.zeros((3, v.shape[1]), dtype=v.dtype)
+                new_w[0, :] = v[0, :]
+                new_w[2, :] = -v[0, :]
+                adapted[k] = new_w
+            elif k == "value_head.6.bias" and v.shape[0] == 1:
+                new_b = torch.zeros(3, dtype=v.dtype)
+                new_b[0] = v[0]
+                new_b[2] = -v[0]
+                adapted[k] = new_b
+            else:
+                adapted[k] = v
+        return adapted
+
+    @classmethod
+    def load_state_dict_into(cls, net: "JunqiNet", state_dict) -> Tuple[list, list]:
+        """把权重**就地**载入已存在的 net，返回 (missing_keys, unexpected_keys)。
+
+        与 `load_from_file` 的区别：本方法不新建对象，因此在其之前构造的
+        optimizer/LR scheduler 仍与 net 保持绑定。热启动链路必须使用本方法，
+        禁止 `net = JunqiNet.load_from_file(...)` 式的变量名重绑（审查 R1）。
+        """
+        sd = cls.adapt_state_dict(cls.unwrap_state_dict(state_dict), net.in_channels)
+        res = net.load_state_dict(sd, strict=False)
+        return list(res.missing_keys), list(res.unexpected_keys)
+
     @classmethod
     def load_from_file(cls, path: str, device: torch.device | str = "cpu",
                        in_channels: int = NUM_CHANNELS, num_blocks: int = 6,
@@ -266,13 +320,11 @@ class JunqiNet(nn.Module):
         if isinstance(obj, dict) and "model_state" in obj:
             b = obj.get("num_blocks", num_blocks)
             c = obj.get("channels", channels)
-            in_c = obj.get("in_channels", in_channels)
             sd = obj["model_state"]
         elif isinstance(obj, dict):
             sd = obj
             b = num_blocks
             c = channels
-            in_c = in_channels
         else:
             net = obj
             net.to(device)
@@ -280,26 +332,7 @@ class JunqiNet(nn.Module):
             return net
 
         net = cls(in_channels=in_channels, num_blocks=b, channels=c)
-        adapted_sd = {}
-        for k, v in sd.items():
-            if k == "in_conv.0.weight" and v.shape[1] < in_channels:
-                new_w = torch.zeros((v.shape[0], in_channels, v.shape[2], v.shape[3]), dtype=v.dtype)
-                new_w[:, :v.shape[1], :, :] = v
-                adapted_sd[k] = new_w
-            elif k == "value_head.6.weight" and v.shape[0] == 1:
-                new_w = torch.zeros((3, v.shape[1]), dtype=v.dtype)
-                new_w[0, :] = v[0, :]
-                new_w[2, :] = -v[0, :]
-                adapted_sd[k] = new_w
-            elif k == "value_head.6.bias" and v.shape[0] == 1:
-                new_b = torch.zeros(3, dtype=v.dtype)
-                new_b[0] = v[0]
-                new_b[2] = -v[0]
-                adapted_sd[k] = new_b
-            else:
-                adapted_sd[k] = v
-
-        net.load_state_dict(adapted_sd, strict=False)
+        net.load_state_dict(cls.adapt_state_dict(sd, in_channels), strict=False)
         net.to(device)
         net.eval()
         return net

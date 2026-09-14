@@ -98,6 +98,9 @@ def main(argv=None):
     tr.add_argument("--inloop-gate-promote", action="store_true",
                     help="回滚开关：恢复轮内 n=16 门控晋升判定（默认降级为只记录，"
                          "晋升改由正式 SPRT 门控裁定）")
+    tr.add_argument("--buffer-save-every", type=int, default=5,
+                    help="经验池落盘频率（实测约 3.8GB/份）：每 N 轮写一次，"
+                         "最后一轮恒写入；0=除最后一轮外不写；1=每轮写（旧行为）")
     tr.add_argument("--no-resign", action="store_true",
                     help="2026-09-13 回滚开关：关闭自博弈认输（Value 重校准模式）")
     tr.add_argument("--rebase-baseline", action="store_true",
@@ -251,7 +254,8 @@ def main(argv=None):
                      pool_weights=args.pool_weights,
                      opp_preset=args.opp_preset,
                      inloop_gate_promote=args.inloop_gate_promote,
-                     lr_schedule=args.lr_schedule)
+                     lr_schedule=args.lr_schedule,
+                     buffer_save_every=args.buffer_save_every)
     elif args.cmd == "distill_value":
         if getattr(args, "p1_dir", None):
             from .train_value_distill import train_value_from_p1_dataset

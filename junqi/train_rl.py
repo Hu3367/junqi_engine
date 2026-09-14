@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset   # PolicyDataset/ValueDataset 的基类
 
 from .analysis import (PHASE_ENDGAME, PHASE_MIDGAME, PHASE_OPENING,
                        detect_phase)
@@ -36,6 +36,7 @@ from .config import RuleConfig
 from .encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, encode_state_np,
                       legal_action_mask)
 from .endgame_gen import gen_endgame
+from .eval_gate import run_gate            # P0 修复 R3：统一门控实现（唯一真源）
 from .mcts import MCTS
 from .net import JunqiNet
 from .selfplay import play_game
@@ -496,6 +497,122 @@ def value_acceptance(health: dict) -> Tuple[bool, str]:
     return ok, detail
 
 
+# ------------------------------------------------- 权重热启动与 Worker 载入
+#
+# P0 修复（2026-09-15 审查 R1 / R2，详见 reviews/CODE_REVIEW_2026-09-15.md）
+#   R1 热启动曾写成 `net = JunqiNet.load_from_file(...)` 重新绑定变量名，而
+#      optimizer 在此之前已经构造完毕 → 两者脱钩，全部 AdamW step 因参数
+#      grad is None 被跳过 → 训练全程权重零更新。
+#   R2 `torch.load(net.save(path))` 得到的是 {"model_state": ...} 包装字典，
+#      worker 却把它直接喂给 load_state_dict(strict=False) → 键名无一匹配、
+#      静默通过 → OPP_MIX 中约 25% 的 "best 对手" 退化为随机初始化网络。
+
+# 旧检查点没有 S2 辅助回归头，这些键缺失属正常向后兼容
+TOLERATED_MISSING_PREFIXES = ("aux_head.",)
+
+
+def load_weights_into_net(net: JunqiNet, payload, role: str = "net") -> bool:
+    """把 Worker 收到的权重 payload 就地载入 net，返回是否**完整**载入。
+
+    同时兼容 `net.save()` 的包装字典与裸 state_dict。不完整时返回 False 并打印
+    原因，由调用方决定是报错（候选网络）还是降级（对手网络）。
+    绝不静默通过——那正是 R2 的成因。
+    """
+    try:
+        missing, unexpected = JunqiNet.load_state_dict_into(net, payload)
+    except (RuntimeError, TypeError, KeyError, ValueError) as exc:
+        print(f"⚠️ [{role}] 权重载入失败：{type(exc).__name__}: {exc}", flush=True)
+        return False
+    real_missing = [k for k in missing
+                    if not k.startswith(TOLERATED_MISSING_PREFIXES)]
+    if real_missing or unexpected:
+        print(f"⚠️ [{role}] 权重不完全匹配：缺失 {len(real_missing)} 键"
+              f"（例 {real_missing[:3]}）、多余 {len(unexpected)} 键", flush=True)
+        return False
+    return True
+
+
+def infer_net_architecture(payload) -> Tuple[int, int, int, int]:
+    """从权重 payload 推断 (in_channels, channels, num_blocks, value_out)。
+
+    优先取 `net.save()` 写入的元信息；裸 state_dict 则从张量形状推导。
+    原实现只看 `in_conv.0.weight.shape[1]`（输入通道）就构造 JunqiNet，
+    一旦 any 检查点的主干宽度/深度非默认（128 / 6），同样会静默退化为随机网络。
+    """
+    meta = payload if isinstance(payload, dict) else {}
+    sd = JunqiNet.unwrap_state_dict(payload)
+    sd = sd if isinstance(sd, dict) else {}
+
+    def _meta_int(key, default):
+        v = meta.get(key) if isinstance(meta, dict) else None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    w = sd.get("in_conv.0.weight")
+    has_w = hasattr(w, "shape") and len(tuple(w.shape)) >= 2
+    in_c = int(w.shape[1]) if has_w else _meta_int("in_channels", NUM_CHANNELS)
+    channels = _meta_int("channels", int(w.shape[0]) if has_w else 128)
+
+    num_blocks = _meta_int("num_blocks", -1)
+    if num_blocks < 0:
+        n = 0
+        while f"blocks.{n}.conv1.weight" in sd:
+            n += 1
+        num_blocks = n or 6
+
+    vw = sd.get("value_head.6.weight")
+    val_out = (int(vw.shape[0]) if hasattr(vw, "shape") and len(tuple(vw.shape)) >= 1
+               else 3)
+    return in_c, channels, num_blocks, val_out
+
+
+def build_opponent_net(payload, device: torch.device | str = "cpu"):
+    """自博弈 Worker：由主进程传来的权重 payload 构造对手网络。
+
+    载入失败返回 None（交由上层回落到 greedy / expert 分支），
+    **绝不返回随机初始化的假对手**——那会让约 25% 的自博弈对局失去意义（R2）。
+    """
+    if payload is None:
+        return None
+    in_c, channels, num_blocks, val_out = infer_net_architecture(payload)
+    net = JunqiNet(in_channels=in_c, num_blocks=num_blocks, channels=channels)
+    if val_out == 1:
+        net.value_head[6] = nn.Linear(128, 1)
+    if not load_weights_into_net(net, payload, role="对手"):
+        return None
+    net.to(device)
+    net.eval()
+    return net
+
+
+def warmstart_candidate(net: JunqiNet, optimizer, path: str, *, device,
+                        lr: float, weight_decay: float = 1e-4):
+    """训练主循环热启动：把检查点权重载入**已存在**的 net。
+
+    返回 (net, optimizer)。主干超参一致时就地载入并返回原对象，保证 optimizer
+    与 net 仍然绑定；仅当检查点的主干超参与当前 net 不一致、无法就地载入时才
+    重建网络，并**同时**重建 optimizer（缺一即回到 R1 的"权重零更新"缺陷）。
+    """
+    tmp = JunqiNet.load_from_file(path, device=device)
+    same_arch = (len(tmp.blocks) == len(net.blocks)
+                 and tmp.in_conv[0].out_channels == net.in_conv[0].out_channels)
+    if same_arch:
+        missing, unexpected = JunqiNet.load_state_dict_into(net, tmp.state_dict())
+        real_missing = [k for k in missing
+                        if not k.startswith(TOLERATED_MISSING_PREFIXES)]
+        if real_missing or unexpected:
+            print(f"⚠️ 热启动权重部分缺失（缺失 {len(real_missing)} 键、"
+                  f"多余 {len(unexpected)} 键）：{path}", flush=True)
+        net.to(device)
+        return net, optimizer
+
+    print(f"热启动源 {path} 主干超参不一致（blocks={len(tmp.blocks)}, "
+          f"channels={tmp.in_conv[0].out_channels}），重建候选网络与优化器", flush=True)
+    return tmp, torch.optim.AdamW(tmp.parameters(), lr=lr, weight_decay=weight_decay)
+
+
 # ------------------------------------------------------------- 模块级多进程 Worker
 
 def _selfplay_worker_chunk(job_args):
@@ -508,35 +625,15 @@ def _selfplay_worker_chunk(job_args):
     torch.manual_seed(base_seed % (2 ** 31))
     device = torch.device(device_str)
 
-    in_c0 = 38
-    val_out0 = 3
-    if "in_conv.0.weight" in net_dict:
-        in_c0 = net_dict["in_conv.0.weight"].shape[1]
-    if "value_head.6.weight" in net_dict:
-        val_out0 = net_dict["value_head.6.weight"].shape[0]
+    # P0 修复（R2）：候选权重同样过一遍规范化载入，缺键即 fail fast，
+    # 避免"看似在训练、实际随机初始化"的静默失败。
+    net0 = build_opponent_net(net_dict, device)
+    if net0 is None:
+        raise RuntimeError("自博弈 Worker 无法载入候选网络权重，终止该 worker")
 
-    net0 = JunqiNet(in_channels=in_c0)
-    if val_out0 == 1:
-        net0.value_head[6] = nn.Linear(128, 1)
-    net0.load_state_dict(net_dict, strict=False)
-    net0.to(device)
-    net0.eval()
-
-    net1 = None
-    if opp_net_dict is not None:
-        in_c1 = 38
-        val_out1 = 3
-        if "in_conv.0.weight" in opp_net_dict:
-            in_c1 = opp_net_dict["in_conv.0.weight"].shape[1]
-        if "value_head.6.weight" in opp_net_dict:
-            val_out1 = opp_net_dict["value_head.6.weight"].shape[0]
-
-        net1 = JunqiNet(in_channels=in_c1)
-        if val_out1 == 1:
-            net1.value_head[6] = nn.Linear(128, 1)
-        net1.load_state_dict(opp_net_dict, strict=False)
-        net1.to(device)
-        net1.eval()
+    # P0 修复（R2）：对手过去全部命中失败分支 → net1 实为随机网络。
+    # 现在载入失败一律返回 None，由 opponent_type_for 回落到其它对手。
+    net1 = build_opponent_net(opp_net_dict, device)
 
     all_p_samples = []
     all_v_samples = []
@@ -685,12 +782,79 @@ def inloop_gate_decision(stage_stats: Dict[str, dict],
                             prev_ref_score=prev_ref_score)
 
 
-def _gate_game_job(job):
-    """子进程任务：单局门控对局（复用 selfplay.play_game，规则/循环判和口径一致）。"""
-    spec0, spec1, seed, mp0, mp1, init_json = job
-    init = GameState.from_json(init_json) if init_json else None
-    return play_game(spec0, spec1, seed, model_path0=mp0, model_path1=mp1,
-                     init_state=init, device="cpu")
+def _tally_from_report(rep: dict) -> dict:
+    """把 eval_gate.run_gate 的报告折算成本模块的 stage_stats 条目。
+
+    reason_breakdown 的原结构为 {原因: {wins, draws, losses}}，这里压平成
+    {原因: 局数} 以对齐本模块 stage_stats 的历史契约。
+    """
+    t = rep["totals"]
+    reasons = {r: sum(c.values()) for r, c in rep.get("reason_breakdown", {}).items()}
+    return {"wins": t["wins"], "draws": t["draws"], "losses": t["losses"],
+            "games": t["wins"] + t["draws"] + t["losses"], "reasons": reasons}
+
+
+def evaluate_gate(candidate_pt: str, best_pt: str, sims: int,
+                  games_per_side: int, seed: int, workers: int = 4,
+                  ref_games: int = 0, device: str = "cpu") -> Tuple[Dict[str, dict], Optional[float]]:
+    """门控评测。返回 (stage_stats, ref_vs_search2 得分)。
+    stage_stats 含 opening/midgame/endgame/random/overall 五项，
+    每项 {wins, draws, losses, games, reasons}（候选视角）。
+
+    P0 修复（审查 R3，2026-09-15）：本函数过去是与 eval_gate.run_gate 平行的
+    第二套实现，且两处都错：
+      1. 两个方向用 seed+i 与 seed+100_000+i → 非配对同牌，先后手差异与发牌
+         运气没有被消去，和棋密集规则下分辨力极低；
+      2. 子进程 device 写死 "cpu"。
+    现在统一委托给 eval_gate.run_gate（配对同牌 + 显式座位 + Wilson + 三元 SPRT），
+     device 由训练主循环透传。
+    """
+    spec = f"nn_mcts_{sims}"
+    stage_stats: Dict[str, dict] = {}
+    overall = {"wins": 0, "draws": 0, "losses": 0, "games": 0, "reasons": {}}
+
+    scenarios = [(st, _load_eval_jsons(st, games_per_side)) for st in GATE_STAGES]
+    scenarios.append(("random", [None] * games_per_side))
+
+    for name, jsons in scenarios:
+        if not jsons:
+            stage_stats[name] = {"wins": 0, "draws": 0, "losses": 0,
+                                 "games": 0, "reasons": {}}
+            continue
+        # 每个种子一副牌：run_gate 内部对该种子跑先后手两局（真配对）
+        seeds = [seed + i for i in range(len(jsons))]
+        rep = run_gate(spec, spec, seeds=seeds, workers=workers,
+                       model_a=candidate_pt, model_b=best_pt,
+                       init_states=jsons, device=device)
+        stage_stats[name] = _tally_from_report(rep)
+        overall = _merge_tally(overall, stage_stats[name])
+
+    stage_stats["overall"] = overall
+
+    # search2 参考对抗（仅记录，不参与晋升判定）；同样走配对同牌口径
+    ref_score: Optional[float] = None
+    if ref_games > 0:
+        ref_n = max(1, (ref_games + 1) // 2)          # 每+种子贡献先后手两局
+        ref_seeds = [seed + 500_000 + i for i in range(ref_n)]
+        ref_tally = {"wins": 0, "draws": 0, "losses": 0}
+        n_ref = 0
+        for st_name in GATE_STAGES:
+            js_list = _load_eval_jsons(st_name, ref_n)
+            if not js_list:
+                continue
+            rep = run_gate(spec, "search2", seeds=ref_seeds[:len(js_list)],
+                           workers=workers, model_a=candidate_pt,
+                           model_b=None, init_states=js_list, device=device)
+            t = rep["totals"]
+            ref_tally["wins"] += t["wins"]
+            ref_tally["draws"] += t["draws"]
+            ref_tally["losses"] += t["losses"]
+            n_ref += t["wins"] + t["draws"] + t["losses"]
+        ref_score = ((ref_tally["wins"] + 0.5 * ref_tally["draws"]) / n_ref
+                     if n_ref else None)
+        stage_stats["ref_vs_search2"] = {**ref_tally, "games": n_ref}
+
+    return stage_stats, ref_score
 
 
 def _load_eval_jsons(stage: str, limit: int) -> List[str]:
@@ -702,16 +866,6 @@ def _load_eval_jsons(stage: str, limit: int) -> List[str]:
     return lines[:limit]
 
 
-def _tally(records: List[dict], cand_seat: int) -> dict:
-    wins = sum(1 for r in records if r["winner"] == cand_seat)
-    losses = sum(1 for r in records
-                 if r["winner"] is not None and r["winner"] not in (-1, cand_seat))
-    draws = len(records) - wins - losses
-    reasons = Counter(r.get("reason") or "unknown" for r in records)
-    return {"wins": wins, "draws": draws, "losses": losses,
-            "games": len(records), "reasons": dict(reasons)}
-
-
 def _merge_tally(a: dict, b: dict) -> dict:
     return {"wins": a["wins"] + b["wins"], "draws": a["draws"] + b["draws"],
             "losses": a["losses"] + b["losses"],
@@ -719,78 +873,38 @@ def _merge_tally(a: dict, b: dict) -> dict:
             "reasons": dict(Counter(a["reasons"]) + Counter(b["reasons"]))}
 
 
-def _run_jobs(jobs: List[tuple], workers: int) -> List[dict]:
-    if workers > 1 and len(jobs) > 1:
-        with Pool(min(workers, len(jobs))) as pool:
-            return pool.map(_gate_game_job, jobs)
-    return [_gate_game_job(j) for j in jobs]
-
-
-def evaluate_gate(candidate_pt: str, best_pt: str, sims: int,
-                  games_per_side: int, seed: int, workers: int = 4,
-                  ref_games: int = 0) -> Tuple[Dict[str, dict], Optional[float]]:
-    """门控评测。返回 (stage_stats, ref_vs_search2 得分)。
-    stage_stats 含 opening/midgame/endgame/random/overall 五项，
-    每项 {wins, draws, losses, games, reasons}（候选视角）。
-    """
-    spec = f"nn_mcts_{sims}"
-    stage_stats: Dict[str, dict] = {}
-    overall = {"wins": 0, "draws": 0, "losses": 0, "games": 0, "reasons": {}}
-
-    scenarios = [(st, _load_eval_jsons(st, games_per_side)) for st in GATE_STAGES]
-    scenarios.append(("random", [None] * games_per_side))
-
-    for name, jsons in scenarios:
-        jobs_a, jobs_b = [], []
-        for i, js in enumerate(jsons):
-            # 固定种子 + 先后手各半（方向 A 候选执先，方向 B 候选执后）
-            jobs_a.append((spec, spec, seed + i, candidate_pt, best_pt, js))
-            jobs_b.append((spec, spec, seed + 100_000 + i, best_pt, candidate_pt, js))
-        recs_a = _run_jobs(jobs_a, workers)
-        recs_b = _run_jobs(jobs_b, workers)
-        stats = _merge_tally(_tally(recs_a, 0), _tally(recs_b, 1))
-        stage_stats[name] = stats
-        overall = _merge_tally(overall, stats)
-
-    stage_stats["overall"] = overall
-
-    # search2 参考对抗（仅记录，不参与晋升判定）
-    ref_score: Optional[float] = None
-    if ref_games > 0:
-        ref_jobs = []
-        for st_name in GATE_STAGES:
-            js_list = _load_eval_jsons(st_name, ref_games)
-            for i, js in enumerate(js_list):
-                cand_first = (i % 2 == 0)
-                if cand_first:
-                    ref_jobs.append((spec, "search2", seed + 500_000 + i,
-                                     candidate_pt, None, js))
-                else:
-                    ref_jobs.append(("search2", spec, seed + 500_000 + i,
-                                     None, candidate_pt, js))
-        ref_recs = _run_jobs(ref_jobs, workers)
-        ref_tally = {"wins": 0, "draws": 0, "losses": 0}
-        for idx, r in enumerate(ref_recs):
-            cand_seat = 0 if idx % 2 == 0 else 1
-            if r["winner"] == cand_seat:
-                ref_tally["wins"] += 1
-            elif r["winner"] in (-1, None):
-                ref_tally["draws"] += 1
-            else:
-                ref_tally["losses"] += 1
-        n_ref = len(ref_recs)
-        ref_score = ((ref_tally["wins"] + 0.5 * ref_tally["draws"]) / n_ref
-                     if n_ref else None)
-        stage_stats["ref_vs_search2"] = {**ref_tally, "games": n_ref}
-
-    return stage_stats, ref_score
-
-
 # ------------------------------------------------------------- 完整 checkpoint（§3.1.3）
 
+def should_save_buffer(epoch: int, end_epoch_exclusive: int,
+                       every: int = 1) -> bool:
+    """经验池落盘节流判据（纯函数，可单测）。
+
+    every is None / <0：每轮保存（历史默认行为，会产生 GB 级文件）；
+    every == 0       ：永不保存，但**最后一轮必须保存**，否则断点续训丢全部经验；
+    every == 1       ：每轮保存；
+    every  > 1       ：每 every 轮保存一次，同样保证最后一轮落盘。
+
+    end_epoch_exclusive 为本轮之后即将执行的下一轮编号（即最后一轮 +1）。
+    """
+    if every is None or every < 0:
+        return True
+    if epoch >= end_epoch_exclusive - 1:        # 最后一轮恒写
+        return True
+    if every == 0:
+        return False
+    return epoch % every == 0
+
+
 def save_checkpoint(path: str, net: JunqiNet, optimizer, epoch: int, elo: float,
-                    main_rng: random.Random, buffer: Optional[StratifiedReplayBuffer] = None):
-    """完整检查点：网络 + 优化器 + 随机源状态 + 元数据 + 真实经验池样本。"""
+                    main_rng: random.Random,
+                    buffer: Optional[StratifiedReplayBuffer] = None,
+                    save_buffer: bool = True):
+    """完整检查点：网络 + 优化器 + 随机源状态 + 元数据 + （可选）经验池样本。
+
+    P3 修订（审查 P1，2026-09-15）：经验池 pickle 实测约 3.8 GB/份，过去每轮
+    无条件写入。现由 `save_buffer` 控制是否落盘（配合 `should_save_buffer` 节流），
+    并改为**原子写**：先写 .tmp 再 os.replace，避免中断留下损坏的巨文件。
+    """
     payload = {
         "net": net.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -801,8 +915,9 @@ def save_checkpoint(path: str, net: JunqiNet, optimizer, epoch: int, elo: float,
         "buffer_stats": buffer.stats() if buffer is not None else None,
     }
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    torch.save(payload, path)
-    if buffer is not None:
+    torch.save(payload, path + ".tmp")
+    os.replace(path + ".tmp", path)
+    if buffer is not None and save_buffer:
         buf_path = path.replace(".pt", "_buffer.pkl")
         buffer.save(buf_path)
 
@@ -1067,6 +1182,7 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
                  pool_weights: str = "fixed",
                  opp_preset: str = "baseline",
                  inloop_gate_promote: bool = False,
+                 buffer_save_every: int = 5,
                  lr_schedule: str = "constant") -> JunqiNet:
     """深度强化学习自对弈训练主闭环（V2.3 + S0/S1/S2 整改）。
 
@@ -1159,7 +1275,9 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         # 实测平衡准确率 0.735 / MAE 0.288，而 value_distilled.pt 为 0.318 / 0.599
         # （84% 预测画和棋的塌缩头）。旧接线只认 value_distilled.pt。
         print(f"无检查点，从价值蒸馏模型热启动候选: {vd_path}")
-        net = JunqiNet.load_from_file(vd_path, device=device)
+        # P0 修复（R1）：就地载入，禁止重新绑定 net，否则 optimizer 脱钩
+        net, optimizer = warmstart_candidate(net, optimizer, vd_path,
+                                             device=device, lr=lr, weight_decay=1e-4)
         if not os.path.exists(best_path):
             net.save(best_path)
     elif os.path.exists(bc_path):
@@ -1171,12 +1289,16 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         if not os.path.exists(os.path.join("models", "value_distilled.pt")):
             print("⚠️ 未检测到 value_distilled.pt：建议先执行 distill_value 蒸馏预热，"
                   "否则候选初期棋力可能弱于旧版模型（BC 价值头未锚定）")
-        net = JunqiNet.load_from_file(bc_path, device=device)
+        # P0 修复（R1）：就地载入，禁止重新绑定 net
+        net, optimizer = warmstart_candidate(net, optimizer, bc_path,
+                                             device=device, lr=lr, weight_decay=1e-4)
         if not os.path.exists(best_path):
             net.save(best_path)
     elif os.path.exists(best_path):
         print(f"无检查点，从已发布模型热启动候选: {best_path}")
-        net = JunqiNet.load_from_file(best_path, device=device)
+        # P0 修复（R1）：同上
+        net, optimizer = warmstart_candidate(net, optimizer, best_path,
+                                             device=device, lr=lr, weight_decay=1e-4)
     else:
         net.save(best_path)
     if not os.path.exists(best_path):
@@ -1309,8 +1431,8 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         print(f"执行门控评测 (候选 vs 已发布 best，每阶段/方向 {eval_games} 局)..." )
         stage_stats, ref_score = evaluate_gate(
             cand_pt, best_path, sims=sims, games_per_side=eval_games,
-            seed=gate_seed, workers=workers, ref_games=ref_games
-        )
+            seed=gate_seed, workers=workers, ref_games=ref_games,
+            device=device)
         ov = stage_stats["overall"]
         ov_score, _ = _stage_score(ov)
         print(f"门控总体: 胜 {ov['wins']} / 和 {ov['draws']} / 负 {ov['losses']} | 得分 {ov_score:.3f}", flush=True)
@@ -1340,7 +1462,13 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         current_elo += 16.0 * (ov_score - 0.5) * 2
 
         # 每轮保存完整检查点（无论是否晋升）
-        save_checkpoint(ckpt_path, net, optimizer, ep, current_elo, main_rng, buffer)
+        # P1 瘦身（审查 P1）：经验池 pickle 约 3.8 GB/份，按节流判据落盘
+        save_buf = should_save_buffer(ep, end_epoch, buffer_save_every)
+        if not save_buf:
+            print(f"跳过经验池落盘（每 {buffer_save_every} 轮一次），"
+                  f"仅保存网络/优化器状态", flush=True)
+        save_checkpoint(ckpt_path, net, optimizer, ep, current_elo, main_rng, buffer,
+                        save_buffer=save_buf)
 
         elapsed = time.time() - t0
         log_entry = {

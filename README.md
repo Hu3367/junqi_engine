@@ -10,8 +10,12 @@
 > - ✅ 1:1 独立极简纯净 APK 引擎 (ApkSearchEngine)：5 大逆向差异全量对齐（2560 等比估值核、纯明子树拓扑、开局 6 黄金位、Jitter 抖动与 70 步和棋）
 > - ✅ 高性能 C++ 原生引擎基础设施 (`src_cpp/`) 与双轨热拔插网桥 (`junqi/core_bridge.py`)：60 字节紧凑内存布局、50~100 倍潜在算力加速、未编译环境透明自动降级
 > - ✅ 13 份专业文档 (>120k 字)
-> - ✅ 100% 测试通过的质量保证 (188 项测试全量通过)
+> - ✅ 全量单元测试通过（`python -m pytest tests/ -q`，数量随迭代增长，以 CI 输出为准）
 > - ⚠️ Python ≥ 3.10，必须使用虚拟环境运行
+>
+> **代码审查报告**：[reviews/CODE_REVIEW_2026-09-15.md](reviews/CODE_REVIEW_2026-09-15.md)
+> ⚠️ `junqi/expert/` 已废弃且不可导入，在线搜索引擎是 `junqi/search.py`，详见
+> [junqi/expert/DEPRECATED.md](junqi/expert/DEPRECATED.md)
 
 ---
 
@@ -83,7 +87,7 @@ python --version
 # 方法 3: 激活虚拟环境后运行
 python -m pytest tests/test_rules.py -v
 
-# 运行所有单元测试（258 项 + 3 跳过应全部通过）
+# 运行所有单元测试（数量随迭代增长，此处不写死，以 `pytest` 输出为准）
 python -m pytest tests/ -v --tb=short
 ```
 
@@ -179,14 +183,16 @@ junqi_engine/
 
 ## 🔧 高级配置
 
-所有运行参数可通过 `configs/*.yaml` 统一管理：
+> **现状说明（2026-09-15 审查）**：`configs/*.yaml` 目前是**待接线的配置模板**，
+> 运行期真正生效的是代码里的 `junqi/config.py`（`RuleConfig` / `SearchConfig` /
+> `EvalWeights` 三个 dataclass）。**修改 YAML 不会影响运行行为**，也无热加载。
+> 需要改参数请直接改 `junqi/config.py`，或先实现 YAML 加载再加开关。
+> 目前仅有 `scripts/mini_junqi_experiment.py` 读取 `configs/mini_junqi_config.json`。
 
-- **规则开关**: [`configs/rules.yaml`](configs/rules.yaml) - APK 对齐参数
-- **训练超参**: [`configs/training.yaml`](configs/training.yaml) - LR、batch size、早停等
-- **搜索配置**: [`configs/search.yaml`](configs/search.yaml) - MCTS 参数、权重因子
-- **棋盘规格**: [`configs/boards/*.yaml`](configs/boards/) - 支持多棋盘尺寸
-
-**注意**: 修改这些 YAML 文件后无需重启程序即可生效！
+- **规则开关**: `junqi/config.py::RuleConfig` - APK 对齐参数（`configs/rules.yaml` 为模板）
+- **训练超参**: `junqi/config.py` 与 `train_rl` CLI（`configs/training.yaml` 为模板）
+- **搜索配置**: `junqi/config.py::SearchConfig`（`configs/search.yaml` 为模板）
+- **棋盘规格**: `configs/boards/*.yaml` - 支持多棋盘尺寸（模板）
 
 ---
 
@@ -207,7 +213,7 @@ junqi_engine/
 
 ### 立即开始
 1. ✅ 阅读 [`FINAL_REFACTORING_SUMMARY.md`](docs/01-GettingStarted/FINAL_REFACTORING_SUMMARY.md) 了解工程重构
-2. ✅ 激活虚拟环境并运行 `.\run_tests.bat` 验证安装（225项单元测试）
+2. ✅ 激活虚拟环境并运行 `.\run_tests.bat` 验证安装
 3. ✅ 启动 GUI: `python cli.py gui` 体验人机对战
 
 ### 深入学习
@@ -279,6 +285,10 @@ python scripts/mine_replays_report.py        # 1000局官方历史数据库(list
 # 首次从旧基线重启可加 --rebase-baseline（备份旧 best 并用 bc_best 重建发布基线）。
 python -m junqi train_rl --epochs 5 --games 24 --sims 25 --eval-games 4 --workers 4 --out-dir models
 
+# 经验池落盘默认每 5 轮一次（实测约 3.8 GB/份）；--buffer-save-every 0 除末轮外不写，
+# 1 恢复旧的"每轮写 4GB"行为
+python -m junqi train_rl --epochs 5 --games 24 --buffer-save-every 5
+
 # 运行固定 50 题实验靶场基准测试（S0 起真值与类别一致，含 Brier/预测熵指标）
 python -m junqi benchmark --model models/best.pt
 
@@ -289,7 +299,9 @@ python -m junqi distill_value --base models/bc_best.pt --out models/value_distil
 - **状态张量化（38 通道双模式）**：包含己方/敌方 12 级明子分布、暗子掩码、精确子力差平面、死区潜力、铁路/行营几何掩码、工兵地雷存活全局状态、连续无吃子步数进度、阶段标记、世界模式标志、以及 **通道36/37的重复历史计数（seen >= 1 / seen >= 2）**。
 - **双头网络架构 (`JunqiNet`)**：6-Block 残差卷积（ResNet）主干，Policy Head（输出 3650 维动作 logits）+ Value Head（输出 Win / Draw / Loss 三分类概率）。
 - **MCTS 搜索 (`MCTS`)**：使用 $c_{\text{puct}} = 0.6$ 与 $\epsilon = 0.20, \alpha = 0.15$ Dirichlet 探索噪声；历史重复计数已接入 NN/MCTS 根、叶与树内终局判断，并新增循环规避专项测试。
-- **训练闭环与门控（V2.3）**：candidate 与 best 已分离，检查点可恢复真实 Replay Buffer；Worker 已有多类对手分支，但实际对手占比日志、自动熔断和 Value 晋升否决条件仍待补齐。
+- **训练闭环与门控（V2.3）**：candidate 与 best 已分离，检查点可恢复真实 Replay Buffer；Worker 已有多类对手分支。
+- **晋升门控唯一真源（`junqi/eval_gate.py`）**：2026-09-15 起训练主循环的 `train_rl.evaluate_gate` 直接委托 `eval_gate.run_gate`（配对同牌 + 先后手互换 + Wilson + 三元 SPRT），
+  此前它是另一套**非配对同牌**且 `device` 写死 `cpu` 的平行实现，其数字不具备统计效力。
 - **数据质量改造（2026-09-13）**：自对弈生成侧使用独立夹具（无吃子判和 70→120 步、循环判和 3→4 次），评测门控保持官方规则；认输机制（走子方根 Value ≤ −0.95 连续 8 回合、ply ≥ 40）按官方 code 21 语义提前终局（认输局的 Value 样本不入训练池，仅保留 Policy——防止未校准 Value 的自证回路）；和棋局 quiet ≥ 60 的尾部垃圾样本不入池；每轮打印决胜率与终局原因分布。详见 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) P3 节修订。
 
 > **训练状态（2026-09-01）**：P4.4 长期挂机准入仍未通过。Epoch 6 已将重复和棋降至 0/32，但候选仍 `promoted=false`，Value MAE `0.5690`、准确率 `20.0%`、Win 预测为 0。启动训练和自动晋升采用两套独立门槛，详见 [P4 执行计划](docs/P4_EXECUTION_PLAN.md#p44-长期挂机准入复审与开启条件2026-09-01)。
@@ -314,7 +326,7 @@ junqi/fit_weights.py 复盘数据行为克隆拟合权重
 junqi/calculator.py  交互式局面计算器
 junqi/config.py      规则开关、估值权重、搜索参数
 junqi/gui.py         人机对战图形界面
-tests/               225 项全量单元测试（225 通过 / 3 跳过，规则 + 复盘 + RL/MCTS + P3/P4 + 开局占营竞赛与 Δ 战术专项）
+tests/               全量单元测试（规则 + 复盘 + RL/MCTS + P3/P4 + 开局占营竞赛与 Δ 战术专项）
 metrics/             实验靶场看板 (benchmark_dashboard.md) 与误差时序数据
 models/              核心深度学习模型权重 (best.pt, bc_best.pt, value_distilled.pt) 与发布目录
 reports/             1000 局官方大数据挖掘报告、专家引擎阶段报告与评测归档

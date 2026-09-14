@@ -147,14 +147,29 @@ def _score_at_seat(rec: dict, seat: int) -> Tuple[float, str]:
 
 
 def _run_pair(job) -> List[dict]:
-    """子进程任务：同一 seed 跑一配对（A 先手 + B 先手），返回两条记录。"""
-    spec_a, spec_b, seed, max_plies, model_a, model_b = job
+    """子进程任务：同一 seed 跑一配对（A 先手 + B 先手），返回两条记录。
+
+    P0 修复（审查 R3，2026-09-15）：新增 init_json / device 两个字段。
+    init_json 非空时**两局共用同一副初始局面**（配对同牌），否则每局各自随机发牌；
+    device 由调用方透传，不再写死 "cpu"。
+    """
+    spec_a, spec_b, seed, max_plies, model_a, model_b, init_json, device = job
+    if isinstance(init_json, (list, tuple)):
+        raise ValueError("init_json 必须是单个初始局面（JSON 字符串），"
+                         "每个 seed 的局面由 run_gate 的 init_states 按位给出")
+
     from .selfplay import play_game
     cfg = RuleConfig(max_plies=max_plies) if max_plies else RuleConfig()
+    init = GameState.from_json(init_json) if init_json else None
+    kw = {"device": device}
     r0 = play_game(spec_a, spec_b, seed, cfg,
-                   model_path0=model_a, model_path1=model_b)
+                   model_path0=model_a, model_path1=model_b,
+                   init_state=init, **kw)
+    # 同一副牌重来：从同一初始局面重建，避免上一局就地改动了它的状态
+    init2 = GameState.from_json(init_json) if init_json else None
     r1 = play_game(spec_b, spec_a, seed, cfg,
-                   model_path0=model_b, model_path1=model_a)
+                   model_path0=model_b, model_path1=model_a,
+                   init_state=init2, **kw)
     return [r0, r1]
 
 
@@ -164,15 +179,28 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
              elo0: float = 0.0, elo1: float = 65.0,
              out_dir: Optional[str] = None,
              out_name: Optional[str] = None,
-             adjudicate_margin: float = 0.0) -> dict:
+             adjudicate_margin: float = 0.0,
+             init_states: Optional[List[Optional[str]]] = None,
+             device: str = "cpu") -> dict:
     """执行配对门控评测并返回完整报告 dict。
 
     每个种子跑两局（候选 A 先手 / 后手各一局，同一副牌），
     报告 A 相对 B 的得分率、配对检验、Wilson 区间、SPRT 与终局原因拆分。
+
+    init_states（P0 修复 R3）：与 seeds **等长**，给出每个种子要用的初始局面
+    （`GameState.to_json()` 字符串）。非空时两局共用同一副初始局面，实现真正的
+    "配对同牌"；该项为 None 时按 seed 各自随机发牌（原行为）。
+    device：透传给对局执行层，默认 "cpu"；训练主循环可传 CUDA 设备。
     """
     from .selfplay import play_game
 
-    jobs = [(spec_a, spec_b, s, max_plies, model_a, model_b) for s in seeds]
+    init_states = list(init_states) if init_states is not None else [None] * len(seeds)
+    if len(init_states) != len(seeds):
+        raise ValueError(f"init_states 长度 {len(init_states)} 与 seeds "
+                         f"{len(seeds)} 不一致（配对同牌要求一一对应）")
+
+    jobs = [(spec_a, spec_b, s, max_plies, model_a, model_b, js, device)
+            for s, js in zip(seeds, init_states)]
     if workers > 1:
         import multiprocessing as mp
         with mp.Pool(processes=workers) as pool:
