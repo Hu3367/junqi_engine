@@ -83,36 +83,43 @@ python --version
 # 方法 3: 激活虚拟环境后运行
 python -m pytest tests/test_rules.py -v
 
-# 运行所有单元测试（44 项应全部通过）
+# 运行所有单元测试（258 项 + 3 跳过应全部通过）
 python -m pytest tests/ -v --tb=short
 ```
 
 ### CLI 命令
 
+统一入口是 `python -m junqi <子命令>`（旧 `cli.py` 为已失效的历史壳，其 `train/`、`eval/`、`ui/` 目录已不存在）。
+
 ```bash
 # 测试套件
-python cli.py test          # 全量单元测试
+python -m junqi test        # 全量单元测试
 
 # GUI 界面
-python cli.py gui           # 启动人机对战
+python -m junqi gui         # 启动人机对战
 
 # 局面计算器  
-python cli.py calc          # 交互式计算
+python -m junqi calc        # 交互式计算
 
 # 训练（需要 PyTorch/GPU）
-python cli.py train --epochs 5 --games 24
+python -m junqi train_rl --epochs 5 --games 24
+
+# 训练（P3 修订 2026-09-14：默认 lr=1e-4 + 每轮 Value 重锚 + p1_v3/test 健康验收）
+#   --fresh 会优先热启动 models/value_distilled_v2.pt（健康 Value 头）
+python -m junqi train_rl --epochs 5 --games 500 --sims 20 --fresh
+#   回滚开关：--no-reanchor 关闭每轮重锚（此时仅低学习率起作用）
 
 # Benchmark 评测
-python cli.py benchmark     # 50 题固定评测
+python -m junqi benchmark     # 50 题固定评测
 
 # P0 评测门控（配对同牌/座位互换/Wilson 区间 + 三元 SPRT）
-python cli.py gate --a hybrid2 --b expert2 --seeds 100
+python -m junqi gate --a hybrid2 --b expert2 --seeds 100
 
 # P1 真实终局标签 Value 头重训（官方 list.cfg 解密标签，候选权重不覆盖 best.pt）
-python cli.py distill_value --p1-dir datasets/p1_v2 --out models/value_distilled_v2.pt
+python -m junqi distill_value --p1-dir datasets/p1_v3 --out models/value_distilled_v2.pt
 
 # P2 搜索蒸馏（QSearch 专家教师软分布 -> Policy 头交叉熵）
-python cli.py distill_search --base models/bc_best.pt --states 1200 --depth 3
+python -m junqi distill_search --base models/bc_best.pt --states 1200 --depth 3
 ```
 
 ---
@@ -283,7 +290,7 @@ python -m junqi distill_value --base models/bc_best.pt --out models/value_distil
 - **双头网络架构 (`JunqiNet`)**：6-Block 残差卷积（ResNet）主干，Policy Head（输出 3650 维动作 logits）+ Value Head（输出 Win / Draw / Loss 三分类概率）。
 - **MCTS 搜索 (`MCTS`)**：使用 $c_{\text{puct}} = 0.6$ 与 $\epsilon = 0.20, \alpha = 0.15$ Dirichlet 探索噪声；历史重复计数已接入 NN/MCTS 根、叶与树内终局判断，并新增循环规避专项测试。
 - **训练闭环与门控（V2.3）**：candidate 与 best 已分离，检查点可恢复真实 Replay Buffer；Worker 已有多类对手分支，但实际对手占比日志、自动熔断和 Value 晋升否决条件仍待补齐。
-- **数据质量改造（2026-09-13）**：自对弈生成侧使用独立夹具（无吃子判和 70→120 步、循环判和 3→4 次），评测门控保持官方规则；认输机制（走子方根 Value ≤ −0.95 连续 8 回合、ply ≥ 40）按官方 code 21 语义提前终局并记 ±1 标签——和棋海变决胜局；和棋局 quiet ≥ 60 的尾部垃圾样本不入池；每轮打印决胜率与终局原因分布。详见 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) P3 节修订。
+- **数据质量改造（2026-09-13）**：自对弈生成侧使用独立夹具（无吃子判和 70→120 步、循环判和 3→4 次），评测门控保持官方规则；认输机制（走子方根 Value ≤ −0.95 连续 8 回合、ply ≥ 40）按官方 code 21 语义提前终局（认输局的 Value 样本不入训练池，仅保留 Policy——防止未校准 Value 的自证回路）；和棋局 quiet ≥ 60 的尾部垃圾样本不入池；每轮打印决胜率与终局原因分布。详见 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) P3 节修订。
 
 > **训练状态（2026-09-01）**：P4.4 长期挂机准入仍未通过。Epoch 6 已将重复和棋降至 0/32，但候选仍 `promoted=false`，Value MAE `0.5690`、准确率 `20.0%`、Win 预测为 0。启动训练和自动晋升采用两套独立门槛，详见 [P4 执行计划](docs/P4_EXECUTION_PLAN.md#p44-长期挂机准入复审与开启条件2026-09-01)。
 

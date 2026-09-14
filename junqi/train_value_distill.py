@@ -314,6 +314,176 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     }
 
 
+# ---------------------------------------------------------------- Value 健康度探针（P3 修订）
+
+def load_p1_arrays(p1_dir: str, split: str = "train") -> dict:
+    """加载 p1_v* npz 的一种划分，仅保留 has_values=True 的官方客观标签样本。
+
+    has_values=False（未终局/早期强退 code 20/断线 code 24）不赋 Value，与
+    AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §6 口径一致。
+    """
+    path = os.path.join(p1_dir, f"{split}.npz")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"缺少 {path}（p1 数据集划分 {split}）")
+    d = np.load(path)
+    hv = d["has_values"].astype(bool)
+    return {
+        "x": d["states"][hv],
+        "y": d["val_classes"][hv].astype(np.int64),
+        "v": d["values"][hv].astype(np.float32),
+        "n_total": int(len(hv)),
+        "n_labeled": int(hv.sum()),
+    }
+
+
+def value_health_metrics(pred_classes: np.ndarray, pred_values: np.ndarray,
+                         labels: np.ndarray, values: np.ndarray,
+                         collapse_threshold: float = 0.70) -> dict:
+    """由预测结果计算 Value 健康度指标（纯函数，可单测）。
+
+    指标设计依据（2026-09-14 实验）：p1_v* 标签分布约为 Win 23% / Draw 54% /
+    Loss 23%，"恒定预测单一类别"的塌缩模型 MAE 仅约 0.50 —— 单看 MAE 无法
+    识别塌缩，故本探针以**平衡准确率（宏平均召回）**为主指标，并显式给出
+    预测分布与塌缩告警。随机水平 = 0.333，健康参考值 ≈ 0.735。
+    """
+    labels = np.asarray(labels).astype(np.int64)
+    pred_classes = np.asarray(pred_classes).astype(np.int64)
+    n = len(labels)
+    pred_counts = np.bincount(pred_classes, minlength=3).astype(int) if n else np.zeros(3, int)
+    true_counts = np.bincount(labels, minlength=3).astype(int) if n else np.zeros(3, int)
+    recalls = []
+    for c in range(3):
+        m = labels == c
+        recalls.append(float((pred_classes[m] == c).mean()) if m.any() else 0.0)
+    max_pred_prop = float(pred_counts.max() / n) if n else 0.0
+    return {
+        "n": n,
+        "mae": float(np.abs(np.asarray(pred_values) - np.asarray(values)).mean()) if n else 0.0,
+        "class_acc": float((pred_classes == labels).mean()) if n else 0.0,
+        "balanced_acc": float(sum(recalls) / 3.0),
+        "per_class_recall": {c: round(recalls[c], 4) for c in range(3)},
+        "pred_counts": {"Win": int(pred_counts[0]), "Draw": int(pred_counts[1]),
+                        "Loss": int(pred_counts[2])},
+        "true_counts": {"Win": int(true_counts[0]), "Draw": int(true_counts[1]),
+                        "Loss": int(true_counts[2])},
+        "max_pred_prop": round(max_pred_prop, 4),
+        "collapse_warning": bool(max_pred_prop >= collapse_threshold),
+    }
+
+
+def evaluate_value_health(net: JunqiNet, x: np.ndarray, y: np.ndarray, v: np.ndarray,
+                          batch_size: int = 512, device: str | None = None,
+                          collapse_threshold: float = 0.70) -> dict:
+    """在官方客观标签样本集上评测 Value 头健康度（不更新任何参数）。"""
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    was_training = net.training
+    net.eval()
+    logits_all, pred_v_all = [], []
+    with torch.no_grad():
+        for b in range(0, len(y), batch_size):
+            xs = torch.from_numpy(x[b:b + batch_size]).float().to(device)
+            _, v_logits = net(xs)
+            probs = F.softmax(v_logits, dim=-1)
+            logits_all.append(probs.cpu().numpy())
+            pred_v_all.append((probs[:, 0] - probs[:, 2]).cpu().numpy())
+    probs = np.concatenate(logits_all) if logits_all else np.zeros((0, 3))
+    pred_v = np.concatenate(pred_v_all) if pred_v_all else np.zeros(0)
+    metrics = value_health_metrics(probs.argmax(axis=-1) if len(probs) else np.zeros(0, int),
+                                   pred_v, y, v, collapse_threshold)
+    if was_training:
+        net.train()
+    return metrics
+
+
+# ---------------------------------------------------------------- 仅训练 Value 头（P1 离线 + P3 轮内重锚）
+
+def train_value_head_only(net: JunqiNet, train: dict, val: dict, *,
+                          epochs: int = 8, batch_size: int = 128, lr: float = 5e-4,
+                          weight_decay: float = 1e-4, mse_weight: float = 0.5,
+                          seed: int = 2026, device: str | None = None,
+                          patience: int = 3, tag: str = "[Value头]",
+                          verbose: bool = True) -> dict:
+    """冻结主干与策略头，只用客观终局标签训练 Value 头（离线蒸馏与轮内重锚共用）。
+
+    训练集/验证集为 load_p1_arrays 口径的 dict（x/y/v）。模型选择依据 = 验证集
+    **平衡准确率**（并列时取更低 MAE），不是训练 loss；结束时恢复最优头权重。
+    退出前无条件恢复全部参数的 requires_grad=True —— 否则后续联合训练只会更新
+    Value 头（历史事故风险点，故在 finally 中恢复）。
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.manual_seed(seed)
+    rng = np.random.RandomState(seed)
+
+    saved_flags = {}
+    for name, p in net.named_parameters():
+        saved_flags[name] = p.requires_grad
+        p.requires_grad = name.startswith("value_head")
+    optimizer = torch.optim.AdamW(
+        [p for p in net.value_head.parameters() if p.requires_grad],
+        lr=lr, weight_decay=weight_decay)
+
+    x_tr, y_tr, v_tr = train["x"], train["y"], train["v"]
+    x_va, y_va, v_va = val["x"], val["y"], val["v"]
+
+    best = {"balanced_acc": -1.0, "mae": 9.9, "state": None, "epoch": 0}
+    history = []
+    stale = 0
+    try:
+        for epoch in range(1, epochs + 1):
+            net.train()
+            order = rng.permutation(len(y_tr))
+            for b in range(0, len(y_tr) - batch_size + 1, batch_size):
+                idx = order[b:b + batch_size]
+                xs = torch.from_numpy(x_tr[idx]).float().to(device)
+                ys = torch.from_numpy(y_tr[idx]).long().to(device)
+                vs = torch.from_numpy(v_tr[idx]).float().to(device)
+                _, v_logits = net(xs)
+                probs = F.softmax(v_logits, dim=-1)
+                loss = (F.cross_entropy(v_logits, ys)
+                        + mse_weight * F.mse_loss(probs[:, 0] - probs[:, 2], vs))
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            m = evaluate_value_health(net, x_va, y_va, v_va, batch_size=512, device=device)
+            history.append({"epoch": epoch, "balanced_acc": round(m["balanced_acc"], 4),
+                            "mae": round(m["mae"], 4)})
+            if verbose:
+                print(f"{tag} Epoch {epoch}: val 平衡acc={m['balanced_acc']:.3f} "
+                      f"MAE={m['mae']:.4f} 原始acc={m['class_acc']:.3f} "
+                      f"预测分布={m['pred_counts']}", flush=True)
+            improved = (m["balanced_acc"] > best["balanced_acc"] + 1e-9
+                        or (abs(m["balanced_acc"] - best["balanced_acc"]) < 1e-9
+                            and m["mae"] < best["mae"]))
+            if improved:
+                best = {"balanced_acc": m["balanced_acc"], "mae": m["mae"],
+                        "state": {k: t.detach().clone()
+                                  for k, t in net.value_head.state_dict().items()},
+                        "epoch": epoch}
+                stale = 0
+            else:
+                stale += 1
+                if stale >= patience:
+                    if verbose:
+                        print(f"{tag} 验证集连续 {patience} 轮无改善，提前停止", flush=True)
+                    break
+    finally:
+        for name, p in net.named_parameters():
+            p.requires_grad = saved_flags.get(name, True)
+
+    if best["state"] is not None:
+        net.value_head.load_state_dict(best["state"])
+    return {
+        "best_epoch": best["epoch"],
+        "val_balanced_acc": round(best["balanced_acc"], 4),
+        "val_mae": round(best["mae"], 4),
+        "train_samples": int(len(y_tr)),
+        "val_samples": int(len(y_va)),
+        "history": history,
+    }
+
+
 # ---------------------------------------------------------------- 真实终局标签训练 (P1)
 
 def train_value_from_p1_dataset(p1_dir: str = "datasets/p1_v2",
@@ -325,97 +495,38 @@ def train_value_from_p1_dataset(p1_dir: str = "datasets/p1_v2",
                                 device: str | None = None) -> dict:
     """P1：用官方 list.cfg 解密真实终局标签重训 Value 头。
 
-    数据源为 export_replay_dataset 导出的 p1_v2 npz（按对局切分、带哈希）：
+    数据源为 export_replay_dataset 导出的 p1_v* npz（按对局切分、带哈希）：
       - val_classes: 0=Win / 1=Draw / 2=Loss（按每手行动方视角，官方终局码真值）；
-      - has_values:  False 为无价值标签样本（早期强退 code 20 等），仅保留 Policy；
+      - has_values:  False 为无价值标签样本（早期强退 code 20/断线 code 24 等），仅保留 Policy；
     标签规则严格符合 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §6：
-      code 1/21/22/23 -> ±1；code 40/42/43 -> 0；code 20 -> 不赋值。
+    code 1/21/22/23 -> ±1；code 40/42/43 -> 0；code 20/24 -> 不赋值。
 
-    仅训练价值头（主干与策略头冻结，BC 策略能力不受影响）。
-    输出为独立候选权重，绝不覆盖 best.pt（AGENTS.md 硬约束）。
-    返回 Value 健康度指标 dict（三分类准确率 / RMSE / 预测分布）。
+    仅训练价值头（主干与策略头冻结，BC 策略能力不受影响），模型选择依据验证集
+    平衡准确率。输出为独立候选权重，绝不覆盖 best.pt（AGENTS.md 硬约束）。
+    2026-09-14 修订：本函数此前在首轮打印处引用未定义变量 mae 而必然崩溃
+    （NameError），且无测试覆盖；现已改为复用 train_value_head_only/evaluate_value_health。
     """
-    import json
-    import time
     from collections import Counter
 
-    import numpy as np
-    import torch
-    import torch.nn.functional as F
+    import time
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch.manual_seed(seed)
 
-    def _load_split(name: str):
-        d = np.load(os.path.join(p1_dir, name))
-        return (d["states"], d["val_classes"], d["values"], d["has_values"])
-
-    print(f"[P1-Value] 加载 {p1_dir} (train/val npz，官方终局码标签) ...")
-    x_tr, y_tr, v_tr, h_tr = _load_split("train.npz")
-    x_va, y_va, v_va, h_va = _load_split("val.npz")
-
-    # has_values=True 的样本才进入 Value 训练（AGENTS.md：未终局/早期逃跑不赋 Value）
-    m_tr, m_va = h_tr.astype(bool), h_va.astype(bool)
-    x_tr, y_tr, v_tr = x_tr[m_tr], y_tr[m_tr], v_tr[m_tr]
-    x_va, y_va, v_va = x_va[m_va], y_va[m_va], v_va[m_va]
-    dist = Counter(int(c) for c in y_tr)
-    print(f"[P1-Value] 训练样本 {len(y_tr)} (Win={dist.get(0, 0)} Draw={dist.get(1, 0)} "
-          f"Loss={dist.get(2, 0)})，验证样本 {len(y_va)}")
+    print(f"[P1-Value] 加载 {p1_dir} (train/val npz，官方终局码标签) ...", flush=True)
+    train = load_p1_arrays(p1_dir, "train")
+    val = load_p1_arrays(p1_dir, "val")
+    dist = Counter(int(c) for c in train["y"])
+    print(f"[P1-Value] 训练样本 {train['n_labeled']} (Win={dist.get(0, 0)} "
+          f"Draw={dist.get(1, 0)} Loss={dist.get(2, 0)})，验证样本 {val['n_labeled']}",
+          flush=True)
 
     net = JunqiNet.load_from_file(base_model, device=device)
-    for name, p in net.named_parameters():
-        p.requires_grad = name.startswith("value_head")
-    optimizer = torch.optim.AdamW([p for p in net.value_head.parameters()
-                                   if p.requires_grad], lr=lr, weight_decay=weight_decay)
+    res = train_value_head_only(net, train, val, epochs=epochs, batch_size=batch_size,
+                                lr=lr, weight_decay=weight_decay, seed=seed,
+                                device=device, tag="[P1-Value]")
+    health = evaluate_value_health(net, val["x"], val["y"], val["v"], device=device)
 
-    def _run(split_x, split_y, split_v, train_mode: bool):
-        net.train(mode=train_mode)
-        net.value_head.train(mode=train_mode)
-        agg = {"loss": 0.0, "correct": 0, "n": 0, "mse": 0.0}
-        pred_cnt = Counter()
-        order = np.random.RandomState(seed if not train_mode else seed + epoch).permutation(len(split_y)) \
-            if train_mode else range(len(split_y))
-        with torch.set_grad_enabled(train_mode):
-            for b in range(0, len(split_y), batch_size):
-                idx = order[b:b + batch_size]
-                xs = torch.from_numpy(split_x[idx]).float().to(device)
-                ys = torch.from_numpy(np.asarray(split_y[idx])).long().to(device)
-                vs = torch.from_numpy(np.asarray(split_v[idx])).float().to(device)
-                _, v_logits = net(xs)
-                probs = F.softmax(v_logits, dim=-1)
-                pred_v = probs[:, 0] - probs[:, 2]
-                loss = (F.cross_entropy(v_logits, ys)
-                        + 0.5 * F.mse_loss(pred_v, vs))
-                if train_mode:
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-                agg["loss"] += float(loss.item()) * ys.size(0)
-                agg["correct"] += int((probs.argmax(dim=-1) == ys).sum())
-                agg["mse"] += float(F.mse_loss(pred_v, vs).item()) * ys.size(0)
-                agg["n"] += int(ys.size(0))
-                if not train_mode:
-                    for c in probs.argmax(dim=-1).tolist():
-                        pred_cnt[int(c)] += 1
-        n = max(agg["n"], 1)
-        return (agg["loss"] / n, agg["correct"] / n, agg["mse"] / n, dict(pred_cnt))
-
-    best_acc, best_mae, best_sd = -1.0, 9.9, None
-    for epoch in range(1, epochs + 1):
-        tr_loss, tr_acc, _, _ = _run(x_tr, y_tr, v_tr, train_mode=True)
-        va_loss, va_acc, va_mse, va_pred = _run(x_va, y_va, v_va, train_mode=False)
-        rmse = va_mse ** 0.5
-        print(f"[P1-Value] Epoch {epoch}: train_loss={tr_loss:.4f} train_acc={tr_acc:.3f} "
-              f"val_loss={va_loss:.4f} val_acc={va_acc:.3f} val_MAE={mae:.4f} "
-              f"val_pred(0/1/2)={va_pred}")
-        # 晋级依据 = 验证集三分类准确率（并列时看更低 MAE），不是训练 loss
-        if va_acc > best_acc or (abs(va_acc - best_acc) < 1e-6 and rmse < best_mae):
-            best_acc, best_mae = va_acc, rmse
-            best_sd = {k: t.detach().clone() for k, t in net.value_head.state_dict().items()}
-
-    if best_sd is not None:
-        net.value_head.load_state_dict(best_sd)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     torch.save({
         "model_state": net.state_dict(),
@@ -424,16 +535,19 @@ def train_value_from_p1_dataset(p1_dir: str = "datasets/p1_v2",
         "channels": net.in_conv[0].out_channels,
         "base_model": base_model,
         "p1_dir": p1_dir,
-        "value_train_samples": int(len(y_tr)),
-        "val_acc": best_acc,
-        "val_rmse": best_mae,
-        "label_rule": "list.cfg terminal codes: 1/21/22/23=+-1, 40/42/43=0, 20=no-value",
+        "value_train_samples": res["train_samples"],
+        "val_acc": res["val_balanced_acc"],      # 口径：平衡准确率（宏平均召回）
+        "val_class_acc": health["class_acc"],
+        "val_rmse": res["val_mae"],
+        "val_metrics": health,
+        "label_rule": "list.cfg terminal codes: 1/21/22/23=+-1, 40/42/43=0, 20/24=no-value",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }, out_path)
-    print(f"[P1-Value] 完成：最佳验证三分类准确率 {best_acc:.3f} (MAE={best_mae:.4f})，"
-          f"候选已保存 {out_path}（未触碰 best.pt）")
-    return {"val_acc": best_acc, "val_rmse": best_mae,
-            "train_samples": int(len(y_tr)), "out_path": out_path}
+    print(f"[P1-Value] 完成：最佳验证平衡准确率 {res['val_balanced_acc']:.3f} "
+          f"(MAE={res['val_mae']:.4f})，候选已保存 {out_path}（未触碰 best.pt）", flush=True)
+    return {"val_acc": res["val_balanced_acc"], "val_rmse": res["val_mae"],
+            "val_class_acc": health["class_acc"],
+            "train_samples": res["train_samples"], "out_path": out_path}
 
 
 def main():

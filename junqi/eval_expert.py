@@ -71,7 +71,8 @@ def _get_alive_counts(state: GameState, my: Optional[str] = None) -> tuple[dict[
     return my_counts, opp_counts
 
 
-def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None) -> float:
+def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None,
+                    ignore_rule_draw: bool = False) -> float:
     """专家级公开信息估值函数（seat 视角）。
 
     严格遵守公共信息边界，综合子力动态制霸、机动力、行营、死区、威胁网络。
@@ -87,7 +88,7 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
 
     # 0. 结构性必和死锁前置断言 (Dead Draw Assertion)
     # 若满足双无工兵死锁、1v1 追逐死锁或拓扑断绝，终局胜负期望严格为 0.0，杜绝虚假分值
-    is_draw, _ = is_dead_draw(state)
+    is_draw, _ = is_dead_draw(state, ignore_quiet_limit=ignore_rule_draw)
     if is_draw:
         return 0.0
 

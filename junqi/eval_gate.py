@@ -131,6 +131,21 @@ def _score_from_perspective(rec: dict, spec: str) -> Tuple[float, str]:
     return (1.0 if w == seat else 0.0), rec.get("reason") or "unknown"
 
 
+def _score_at_seat(rec: dict, seat: int) -> Tuple[float, str]:
+    """按**显式座位**把对局记录换算成候选视角的 (得分, 终局原因)。
+
+    P0 审计修复（2026-09-14）：原实现靠 spec 名推断候选座位，当两侧 spec 同名
+    （如都用 `nn_mcts_20`、仅权重不同——这是所有正式门控的用法）时，
+    `rec["a"] == spec_a` 恒真 → 每对局中"候选执后手"的那一局被**反向计分**，
+    把真实差异系统性压回 0.5（历史报告 `as_second: 0 局` 即此征兆）。
+    座位由 `_run_pair` 的构造决定，必须显式传入。
+    """
+    w = rec.get("winner")
+    if w is None or w == -1:
+        return 0.5, rec.get("reason") or "unknown"
+    return (1.0 if w == seat else 0.0), rec.get("reason") or "unknown"
+
+
 def _run_pair(job) -> List[dict]:
     """子进程任务：同一 seed 跑一配对（A 先手 + B 先手），返回两条记录。"""
     spec_a, spec_b, seed, max_plies, model_a, model_b = job
@@ -147,7 +162,9 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
              workers: int = 1, max_plies: Optional[int] = None,
              model_a: Optional[str] = None, model_b: Optional[str] = None,
              elo0: float = 0.0, elo1: float = 65.0,
-             out_dir: Optional[str] = None) -> dict:
+             out_dir: Optional[str] = None,
+             out_name: Optional[str] = None,
+             adjudicate_margin: float = 0.0) -> dict:
     """执行配对门控评测并返回完整报告 dict。
 
     每个种子跑两局（候选 A 先手 / 后手各一局，同一副牌），
@@ -165,6 +182,9 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
         records = [r for j in jobs for r in _run_pair(j)]
 
     per_seed: List[float] = []
+    adj_per_seed: List[float] = []
+    adj_totals = {"wins": 0, "draws": 0, "losses": 0}
+    adj_margins: List[float] = []
     totals = {"wins": 0, "draws": 0, "losses": 0}
     reasons: Dict[str, Dict[str, int]] = {}
     seat_split = {"as_first": [0.0, 0], "as_second": [0.0, 0]}
@@ -173,11 +193,19 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
         pair = [r for r in records if r["seed"] == s]
         if len(pair) != 2:
             continue
-        s0, reason0 = _score_from_perspective(pair[0], spec_a)
-        s1, reason1 = _score_from_perspective(pair[1], spec_a)
+        # _run_pair 保证 pair[0] 为"候选执先"，pair[1] 为"候选执后"（同牌先后手互换）
+        s0, reason0 = _score_at_seat(pair[0], 0)
+        s1, reason1 = _score_at_seat(pair[1], 1)
         per_seed.append(s0 + s1)
+        a0 = adjudicate_record(pair[0], spec_a, margin=adjudicate_margin, seat_a=0)
+        a1 = adjudicate_record(pair[1], spec_a, margin=adjudicate_margin, seat_a=1)
+        adj_per_seed.append(a0 + a1)
+        if pair[0].get("final_eval0") is not None and pair[0].get("final_eval1") is not None:
+            adj_margins.append(abs(pair[0]["final_eval0"] - pair[0]["final_eval1"]))
+        for sc_a in (a0, a1):
+            adj_totals["wins" if sc_a == 1.0 else ("draws" if sc_a == 0.5 else "losses")] += 1
         for sc, rec, seat_idx in ((s0, pair[0], 0), (s1, pair[1], 1)):
-            key = "as_first" if rec["a"] == spec_a else "as_second"
+            key = "as_first" if seat_idx == 0 else "as_second"
             seat_split[key][0] += sc
             seat_split[key][1] += 1
             bucket = "wins" if sc == 1.0 else ("draws" if sc == 0.5 else "losses")
@@ -199,6 +227,22 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
     sprt = sprt_trinomial(totals["wins"], totals["draws"], totals["losses"],
                           elo0=elo0, elo1=elo1)
 
+    # 裁决式判分（测量用，不参与 promote 判定）：把和棋局按终局专家估值判出胜负，
+    # 使有效样本从"决胜负局"扩大到全部对局（高和棋率下唯一有分辨力的口径）。
+    adj_n = sum(adj_totals.values())
+    adj_sum = adj_totals["wins"] + 0.5 * adj_totals["draws"]
+    adj_rate = (adj_sum / adj_n) if adj_n else 0.0
+    adj_wil = wilson_ci(adj_sum, adj_n)
+    adj_paired = paired_z_test(adj_per_seed) if adj_per_seed else None
+    adjudicated = {
+        "totals": dict(adj_totals), "n_games": adj_n,
+        "score_rate": adj_rate, "score_rate_wilson": adj_wil,
+        "paired": adj_paired,
+        "median_abs_eval_gap": (sorted(adj_margins)[len(adj_margins) // 2]
+                                if adj_margins else None),
+        "margin": adjudicate_margin,
+    }
+
     # 晋级判据（基线 §7：整体显著改善 + SPRT 不接受 H0）
     promote = bool(n_games > 0 and wil[0] > 0.5 and sprt["decision"] != "accept_h0")
 
@@ -214,6 +258,7 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
         "decisive_only_wilson": dec_wil,
         "paired": paired,
         "sprt": sprt,
+        "adjudicated": adjudicated,
         "reason_breakdown": reasons,
         "seat_split": {k: {"score_rate": (v[0] / v[1] if v[1] else 0.0),
                            "games": v[1]} for k, v in seat_split.items()},
@@ -224,15 +269,75 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
 
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, f"gate_{spec_a}_vs_{spec_b}.json"),
+        # out_name：避免同 spec 的多次门控互相覆盖（例如 nn_mcts_20 对 nn_mcts_20）
+        fname = out_name or f"gate_{spec_a}_vs_{spec_b}"
+        with open(os.path.join(out_dir, f"{fname}.json"),
                   "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=1)
     return report
 
 
+def adjudicate_record(rec: dict, spec_a: str, margin: float = 0.0,
+                      seat_a: Optional[int] = None) -> float:
+    """A 视角的裁决得分（1/0.5/0）：有胜负按胜负；和棋按终局专家估值裁决。
+
+    背景（2026-09-14 诊断）：同源模型间 72-92% 对局判和，专家对专家也 88% 和棋；
+    官方得分率判据在如此高和棋率下分辨力极低（200 局仅 16-56 局胜负样本）。
+    裁决式判分把全部对局变为有信息的样本（n=200），用于**测量**强度差异。
+    margin：估值差小于该值算和棋（默认 0 = 任意差即判，估值为子力分数量纲）。
+    仅评测口径，不改变规则定义与训练奖励。
+    """
+    if seat_a is None:                    # 未显式给出时才回退到 spec 名推断（同名会歧义）
+        seat_a = 0 if rec.get("a") == spec_a else 1
+    w = rec.get("winner")
+    if w is not None and w != -1:
+        return 1.0 if w == seat_a else 0.0
+    ev0, ev1 = rec.get("final_eval0"), rec.get("final_eval1")
+    if ev0 is None or ev1 is None:
+        return 0.5
+    ev_a, ev_b = (ev0, ev1) if seat_a == 0 else (ev1, ev0)
+    if abs(ev_a - ev_b) <= margin:
+        return 0.5
+    return 1.0 if ev_a > ev_b else 0.0
+
+
+def promote_candidate(report: dict, model_a: Optional[str],
+                      best_path: str = os.path.join("models", "best.pt"),
+                      backup_dir: Optional[str] = None) -> Tuple[bool, str]:
+    """正式晋级协议：仅当门控报告 promote=True 时把候选写入 best_path。
+
+    这是**唯一**允许改动发布模型的入口（AGENTS.md：不得只因训练 loss 下降覆盖 best.pt）。
+    旧模型先带时间戳备份；未通过则完全不触碰 best.pt。
+    返回 (是否已更新, 说明文本)。
+    """
+    import shutil
+    import time as _time
+    if not report.get("promote") or not model_a:
+        return False, (f"未晋级（promote={report.get('promote')}，"
+                       f"得分率={report.get('score_rate', 0.0):.4f}），"
+                       f"best.pt 未变更")
+    if not os.path.exists(model_a):
+        return False, f"候选权重不存在: {model_a}"
+    backup_dir = backup_dir or os.path.dirname(best_path) or "."
+    os.makedirs(backup_dir, exist_ok=True)
+    if os.path.exists(best_path):
+        bak = os.path.join(backup_dir,
+                           f"best_legacy_{_time.strftime('%Y%m%d_%H%M%S')}.pt")
+        shutil.copyfile(best_path, bak)
+    else:
+        bak = None
+    shutil.copyfile(model_a, best_path)
+    msg = (f"✅ 正式门控通过（得分率={report.get('score_rate', 0.0):.4f}，"
+           f"SPRT={report.get('sprt', {}).get('decision')}）→ 已更新 {best_path}")
+    if bak:
+        msg += f"；旧模型备份: {bak}"
+    return True, msg
+
+
 def format_gate_report(rep: dict) -> str:
     """渲染人读文本报告（对齐 camp 系列报告风格）。"""
     t = rep["totals"]
+    adj = rep.get("adjudicated") or {}
     wil = rep["score_rate_wilson"]
     paired = rep["paired"]
     sprt = rep["sprt"]
@@ -265,6 +370,16 @@ def format_gate_report(rep: dict) -> str:
     for k, v in rep["seat_split"].items():
         lines.append(f"  座位拆分 {k}: 得分率 {v['score_rate']:.4f} ({v['games']} 局)")
     lines.append("")
+    if adj:
+        aw = adj["score_rate_wilson"]
+        lines.append("  裁决式判分（和棋局按终局专家估值判，测量用/不参与 promote）：")
+        lines.append(f"    战绩 胜 {adj['totals']['wins']} / 和 {adj['totals']['draws']} / "
+                     f"负 {adj['totals']['losses']}  （n={adj['n_games']}）")
+        lines.append(f"    裁决得分率 {adj['score_rate']:.4f}  Wilson 95%CI "
+                     f"[{aw[0]:.4f}, {aw[1]:.4f}]  半宽 ±{(aw[1]-aw[0])/2:.4f}")
+        if adj.get("median_abs_eval_gap") is not None:
+            lines.append(f"    终局估值差中位 {adj['median_abs_eval_gap']:.1f}"
+                         f"（margin={adj['margin']}）")
     lines.append(f"  晋级判定 promote = {rep['promote']} "
                  f"(判据: 得分率 Wilson 下界 > 0.5 且 SPRT 不接受 H0)")
     lines.append("=" * 78)

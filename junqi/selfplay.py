@@ -185,6 +185,10 @@ def flip_region(pos) -> str:
     return "inner"
 
 
+# 评测裁决用：对局期间采样专家估值的间隔（手）。理由见文件末 play_game 的估值记录说明。
+EVAL_SAMPLE_EVERY = 10
+
+
 def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
               weights0: EvalWeights | None = None,
               weights1: EvalWeights | None = None,
@@ -216,8 +220,18 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
 
     seen = Counter()
     first_flip = True
+    last_live_eval = None                  # 对局期间最后一次有效估值（评测裁决用）
 
     while not st.is_terminal():
+        if st.ply % EVAL_SAMPLE_EVERY == 0:
+            try:
+                from .eval_expert import evaluate_expert
+                e0 = float(evaluate_expert(st, seat=0, ignore_rule_draw=True))
+                e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
+                if abs(e0) + abs(e1) > 1e-9:
+                    last_live_eval = (e0, e1)
+            except Exception:
+                pass
         seen[position_key(st)] += 1
         if seen[position_key(st)] >= cfg.repetition_draw_count:
             rec.update(winner=-1, reason="repetition")
@@ -280,6 +294,32 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
     if st.winner is not None and rec["winner"] is None:
         rec["winner"] = st.winner
         rec["reason"] = st.win_reason
+
+    # 终局裁决估值（仅评测用，公开信息口径，不参与训练奖励）
+    #
+    # 动机（2026-09-14 诊断）：同源模型间 72-92% 对局判和，专家对专家也 88% 和棋，
+    # 门控的"得分率"判据在如此高和棋率下几乎没有分辨力（200 局只剩 16-56 局胜负样本）。
+    # 记录终局专家估值（evaluate_expert，仅用公共信息），使评测可在和棋局上做
+    # **裁决式判分**，把有效样本从"决胜负局"扩大到全部对局。
+    # 这属于评测口径扩展，不改变任何规则定义与训练奖励（z 仍为纯终局结果）。
+    try:
+        from .eval_expert import evaluate_expert
+        e0 = float(evaluate_expert(st, seat=0, ignore_rule_draw=True))
+        e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
+        if abs(e0) + abs(e1) <= 1e-9 and last_live_eval is not None:
+            # 终局为结构性死锁（估值恒 0）时，回退到对局中最后一次有效估值：
+            # 否则"和棋局按终局估值裁决"在恰好需要它的场合全部退化为 0.5
+            # （实测 40 组种子镜像 80 局中有 74 局如此）。
+            e0, e1 = last_live_eval
+        rec["final_eval0"] = round(e0, 3)
+        rec["final_eval1"] = round(e1, 3)
+        rec["last_live_eval_used"] = bool(abs(float(evaluate_expert(
+            st, seat=0, ignore_rule_draw=True))) + abs(float(evaluate_expert(
+            st, seat=1, ignore_rule_draw=True))) <= 1e-9)
+    except Exception:                                     # 估值不可用时不影响对局记录
+        rec["final_eval0"] = None
+        rec["final_eval1"] = None
+        rec["last_live_eval_used"] = None
     return rec
 
 

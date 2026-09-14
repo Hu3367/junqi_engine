@@ -200,13 +200,16 @@ def fortress_score(state: GameState, seat: int) -> float:
 
 # ------------------------------------------------------------- 理论必和死锁检测器
 
-def is_dead_draw(state: GameState) -> tuple[bool, str]:
+def is_dead_draw(state: GameState,
+                 ignore_quiet_limit: bool = False) -> tuple[bool, str]:
     """is_dead_draw 实例缓存包装：同一局面实例只实算一次。
 
     evaluate_expert 每次估值前置调用本函数（热路径单局 ~50 万次），
     结果仅取决于构造后不可变的 board/dead/quiet/cfg/seat_color，
     以 (座位色元组, quiet) 为守卫做实例缓存。
     """
+    if ignore_quiet_limit:                    # 评测裁决用：只看结构死锁，不看限步
+        return _is_dead_draw_impl(state, ignore_quiet_limit=True)
     seats = (state.seat_color.get(0), state.seat_color.get(1))
     cache = getattr(state, "_dead_draw_cache", None)
     if cache is not None and cache[0] == seats and cache[1] == state.quiet:
@@ -216,7 +219,8 @@ def is_dead_draw(state: GameState) -> tuple[bool, str]:
     return res
 
 
-def _is_dead_draw_impl(state: GameState) -> tuple[bool, str]:
+def _is_dead_draw_impl(state: GameState,
+                       ignore_quiet_limit: bool = False) -> tuple[bool, str]:
     """is_dead_draw 原始实现（作为实例缓存的计算源）。
 
     核心拓扑涵盖四大原型：
@@ -234,7 +238,7 @@ def _is_dead_draw_impl(state: GameState) -> tuple[bool, str]:
 
     # 0. 规则层无吃子限步优先检测（达到 40 步限步直接判和）
     max_quiet = getattr(state.cfg, "no_capture_draw_plies", 40)
-    if max_quiet > 0 and state.quiet >= max_quiet:
+    if not ignore_quiet_limit and max_quiet > 0 and state.quiet >= max_quiet:
         return True, "quiet_moves_limit_reached"
 
     # 若场上仍有未翻开暗子，绝不轻易判定结构性死锁（翻棋永远拥有破局可能）

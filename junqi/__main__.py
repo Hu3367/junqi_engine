@@ -74,11 +74,32 @@ def main(argv=None):
     tr.add_argument("--midgame-prob", type=float, default=0.1,
                     help="S2：中盘评测集起始局面注入概率（开局多样性）")
     tr.add_argument("--batch-size", type=int, default=128, help="批处理大小")
-    tr.add_argument("--lr", type=float, default=1e-3, help="学习率")
+    tr.add_argument("--lr", type=float, default=1e-4,
+                    help="学习率（P3 修订 2026-09-14，等于 train_rl.DEFAULT_LR：受控实验证实 "
+                         "1e-3 微调一轮即把 Value 平衡准确率 0.763→0.567 且策略学得更差）")
     tr.add_argument("--seed", type=int, default=42, help="随机种子")
     tr.add_argument("--out-dir", type=str, default="models", help="模型输出目录")
     tr.add_argument("--device", type=str, default=None, help="计算设备 (cuda/cpu)")
     tr.add_argument("--fresh", action="store_true", help="忽略已有检查点，从头训练")
+    tr.add_argument("--no-reanchor", action="store_true",
+                    help="P3 修订回滚开关：关闭每轮 Value 重锚（此时仅低学习率起作用）")
+    tr.add_argument("--anchor-p1-ratio", type=float, default=0.30,
+                    help="重锚数据集中 p1_v3 官方客观标签占比（默认 0.30）")
+    tr.add_argument("--pool-weights", type=str, default="fixed",
+                    choices=("fixed", "adaptive"),
+                    help="Policy 分桶权重：fixed=已验证基线；adaptive=√桶容量（修复池失衡）")
+    tr.add_argument("--lr-schedule", type=str, default="constant",
+                    choices=("constant", "cosine"),
+                    help="学习率调度：constant=已验证基线；cosine=余弦衰减到 base/5（1e-4→2e-5）")
+    tr.add_argument("--opp-preset", type=str, default="baseline",
+                    choices=("baseline", "diverse"),
+                    help="对手配比预置：baseline=mirror .5/expert .1（已验证基线）；"
+                         "diverse=mirror .3/expert .2（批次 3 对手结构）")
+    tr.add_argument("--inloop-gate-promote", action="store_true",
+                    help="回滚开关：恢复轮内 n=16 门控晋升判定（默认降级为只记录，"
+                         "晋升改由正式 SPRT 门控裁定）")
+    tr.add_argument("--no-resign", action="store_true",
+                    help="2026-09-13 回滚开关：关闭自博弈认输（Value 重校准模式）")
     tr.add_argument("--rebase-baseline", action="store_true",
                     help="S0：用 bc_best.pt 重建发布基线（旧 best 备份），并清空候选进度")
 
@@ -113,6 +134,11 @@ def main(argv=None):
     g.add_argument("--elo0", type=float, default=0.0, help="SPRT H0 Elo 差")
     g.add_argument("--elo1", type=float, default=65.0, help="SPRT H1 Elo 差")
     g.add_argument("--out", default="reports", help="报告输出目录")
+    g.add_argument("--out-name", default=None,
+                   help="报告文件名（不含扩展名）。默认由 spec 名派生，同名会互相覆盖")
+    g.add_argument("--promote-to-best", action="store_true",
+                   help="正式晋级协议：门控判定 promote=True 时把 --model-a 写入 models/best.pt"
+                        "（旧模型自动带时间戳备份）；未通过则不改动 best.pt")
 
     ds = sub.add_parser("distill_search", help="P2: 搜索蒸馏（QSearch 教师软分布 -> Policy 头）")
     ds.add_argument("--base", default="models/bc_best.pt", help="基座模型路径")
@@ -218,7 +244,14 @@ def main(argv=None):
                      midgame_prob=args.midgame_prob,
                      batch_size=args.batch_size, lr=args.lr,
                      seed=args.seed, out_dir=args.out_dir, device=args.device,
-                     fresh=args.fresh, rebase_baseline=args.rebase_baseline)
+                     fresh=args.fresh, rebase_baseline=args.rebase_baseline,
+                     resign_enabled=not args.no_resign,
+                     reanchor_enabled=not args.no_reanchor,
+                     anchor_p1_ratio=args.anchor_p1_ratio,
+                     pool_weights=args.pool_weights,
+                     opp_preset=args.opp_preset,
+                     inloop_gate_promote=args.inloop_gate_promote,
+                     lr_schedule=args.lr_schedule)
     elif args.cmd == "distill_value":
         if getattr(args, "p1_dir", None):
             from .train_value_distill import train_value_from_p1_dataset
@@ -241,9 +274,14 @@ def main(argv=None):
         rep = run_gate(args.a, args.b, seeds=seeds, workers=args.workers,
                        max_plies=args.max_plies, model_a=args.model_a,
                        model_b=args.model_b, elo0=args.elo0, elo1=args.elo1,
-                       out_dir=args.out)
+                       out_dir=args.out, out_name=args.out_name)
         print(format_gate_report(rep))
-        print(f"JSON 已保存: {os.path.join(args.out, f'gate_{args.a}_vs_{args.b}.json')}")
+        json_name = args.out_name or f"gate_{args.a}_vs_{args.b}"
+        print(f"JSON 已保存: {os.path.join(args.out, json_name + '.json')}")
+        if args.promote_to_best:
+            from .eval_gate import promote_candidate
+            _changed, _msg = promote_candidate(rep, args.model_a)
+            print(_msg)
     elif args.cmd == "distill_search":
         from .train_search_distill import train_search_distill
         train_search_distill(base_model=args.base, out_path=args.out,

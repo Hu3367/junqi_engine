@@ -1,5 +1,167 @@
 # CHANGELOG
 
+## [2026-09-14] — P3 修订：Value 对齐根因定位（学习率）+ 每轮 Value 重锚 + p1_v3/test 独立健康验收
+
+阶段归属：**P3（数据质量改造，基线计划 2026-09-13 修订版）**，依据 [AGENTS.md](../AGENTS.md) 与 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](../AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) §6。逐条落实 [SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md](SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md) §5 方案的验证修正版（该文档 §4 的"认输投毒"假设已被 §3 实验 B 推翻；本次进一步给出了根因的受控实验证据）。未修改 `RuleConfig` 定义与终局奖励语义；未触碰 `models/best.pt`。
+
+### 一、根因定位（受控实验，非推理）
+
+同一 6 块共享主干、同一 p1_v3 官方客观标签、联合策略+价值训练，仅改学习率：
+
+| lr | 起始 | 1 轮（711 步） | 2 轮 | 3 轮 | 策略模仿 top-1（3 轮后） |
+|---|---|---|---|---|---|
+| 1e-3（原默认） | 平衡acc 0.763 / MAE 0.266 | 0.567 / 0.454 | 0.544 / 0.491 | 0.546 / 0.486 | 0.218 |
+| **1e-4（新默认）** | 同上 | 0.713 / 0.320 | 0.716 / 0.313 | **0.713 / 0.319** | **0.261** |
+
+结论：**1e-3 对 6 块共享主干做微调过高**——一个 epoch 即砍掉约 20 个点 Value 平衡准确率，且策略学得更差。这解释了"实验 B 只训 1 轮 Value 三分类即崩回 16%"。
+
+同时证伪了"头-only 重锚可修复"的假设：对已漂移主干（`models/candidate_latest.pt`，实测 100% 单类塌缩）做头-only 重锚 2,372 步，平衡准确率上限仅 0.344（≈随机 0.333），用健康 v2 头初始化亦被拖回 0.350，解冻末块 2 轮无恢复。**故重锚是预防（每轮保险丝），不是修复；已漂移候选不可救，只能从健康基座重启。**
+
+### 二、代码变更
+
+1. **默认学习率 1e-3 → 1e-4**（`DEFAULT_LR`，`junqi/train_rl.py`），CLI `--lr` 帮助文本记录证据；
+2. **热启动优先 `models/value_distilled_v2.pt`**：原接线只认 `value_distilled.pt`（p1_v3/test 实测平衡acc 0.318 / MAE 0.599，84% 预测画和棋的塌缩头），而 v2 为 **0.735 / 0.288**（三类召回 0.69-0.77）；两者策略头权重逐位相同（最大差异 0.00000），换用是纯收益；
+3. **每轮 Value 重锚**（`reanchor_value_head` / `build_anchor_dataset`）：每轮联合训练后冻结主干、仅训 Value 头，锚定数据 = 回放池客观终局样本（每类 ≤12000，类均衡）+ p1_v3 官方客观标签（占比 0.30），验证集为 p1_v3/val；成本实测约 2-3 秒/轮（head-only 2.7ms/步 @4080S）。回滚开关 `--no-reanchor`；
+4. **Value 验收探针换口径**（`probe_value_health` / `value_acceptance`）：主指标改为 **p1_v3/test 独立留出集（9,381 条官方客观标签）的平衡准确率**（线 0.45）+ MAE（线 0.55）+ 塌缩告警。理由：该集和棋占 54%，"恒定预测单一类别"的塌缩模型 MAE 仅约 0.49-0.50，**单看 MAE 会误放行**（实测 `candidate_latest.pt` 即全 Loss 塌缩且 MAE 0.502）；原靶场仅 36 题（17/11/8），accuracy 粒度 2.8%、噪声带宽 ±13-16%，降级为固定回归探针；
+5. **修复 `train_value_from_p1_dataset` 必然崩溃**（`junqi/train_value_distill.py`）：首轮打印引用未定义变量 `mae` → `NameError`，CLI `distill_value --p1-dir` 路径此前不可用且零测试覆盖；同时抽出可复用助手 `load_p1_arrays`（has_values 过滤）/ `value_health_metrics`（纯函数）/ `evaluate_value_health` / `train_value_head_only`（离线蒸馏与轮内重锚共用，含验证集平衡准确率早停与 requires_grad 恢复保护）；
+6. **CLI 接线补齐**（`junqi/__main__.py`）：`train_rl` 子命令的 `--lr` 默认同步为 1e-4，新增 `--no-reanchor` 与 `--anchor-p1-ratio` 并传入 `run_training`（`train_rl.py` 内的 `main()` 非实际入口，此前新开关不会生效）；
+7. **README 同步**：修正失效入口（`cli.py` 为历史壳，其 `train/`/`eval/`/`ui/` 目录已不存在）为 `python -m junqi <子命令>`，更新测试计数（258 项 + 3 跳过）。
+
+### 三、测试与验收
+
+- 新增 `tests/test_value_reanchor.py`（11 项）：塌缩检测（含"低 MAE 高塌缩"反例）、仅 Value 头更新（冻结参数逐位不变）、requires_grad 恢复、打乱头部可恢复且恢复最优 epoch 权重、重锚数据集混合比例/类别覆盖、空池报错、验收判据、p1 训练器端到端回归（崩溃修复）、has_values 过滤；
+- 新增 `tests/test_pool_weights.py`（9 项）：分桶权重纯函数（fixed=旧基线 / adaptive=√容量）、曝光失衡比从 34.5 压到 4.5、小桶不饿死、空桶排除、端到端 batch 组成偏移；
+- 全量：**258 passed / 3 skipped**（含新增 20 项），无回归；
+- 回滚点：`--no-reanchor`（关闭重锚）、`--lr 1e-3`（恢复旧学习率）、`--pool-weights fixed`（默认即基线）；均为 CLI 开关，无需改代码。
+
+### 四、批次 1 验证运行结果（5 轮 × 100 局，与历史主运行严格对齐）
+
+配置：每轮 100 局、sims=20、10 workers、认输开启；受控变量仅三项（lr 1e-4 / 热启动 v2 / 每轮重锚）。
+
+| Epoch | v_loss | 重锚 val 平衡acc | 探针 p1_v3/test 平衡acc | 探针 MAE | 验收 | 耗时 | Elo |
+|---|---|---|---|---|---|---|---|
+| 1 | 7.895 | 0.662 | 0.595 | 0.456 | ✅ 连续1 | 1466s | 1499 |
+| 2 | 1.480 | 0.662 | 0.603 | 0.442 | ✅ 连续2 | 1513s | 1497 |
+| 3 | 1.768 | 0.626 | 0.605 | 0.452 | ✅ 连续3 | 1250s | 1496 |
+| 4 | 1.532 | 0.653 | 0.616 | 0.443 | ✅ 连续4 | 1189s | 1497 |
+| 5 | 1.616 | 0.637 | **0.639** | **0.408** | ✅ 连续5 | 1249s | 1495 |
+
+**验收线（连续 2 轮 平衡acc ≥0.45 / MAE <0.55 / 无塌缩）达成，实际连续 5 轮**；探针指标缓升、预测分布贴近真值分布。对比历史：同口径指标（靶场三分类）曾剧烈震荡 60%→12%→58%→40%→16%→28%，实验 B 单轮即崩回 16%。认输率 1-7%（历史 2-27%）、局长 296-318 手、决胜率 63-70%——对局形态不变，只有 Value 校准被修复。日志：`reports/trainrl_p3_20260914.log`。
+
+### 五、批次 3 首项（Policy 池失衡修复，opt-in）
+
+`--pool-weights adaptive`：按 √桶容量 归一化分桶采样权重。实测池（opening 8,589 / midgame 3,208 / endgame 66,409）下，单样本曝光率最大/最小比由约 **34.5** 压到约 **4.5**，消除"50% batch 抽自 3,208 条 midgame"的过度曝光。**默认仍为 `fixed`**（本轮已验证基线），待下一轮单独验证其效果。
+
+### 六、批次 2：形式化 SPRT 门控（n=200）判定 **不重定 best.pt**
+
+候选（批次 1 第 5 轮）vs `models/best.pt`（09-01），200 局配对同牌：**胜 25 / 和 144 / 负 31，得分率 0.4850（Wilson [0.4167, 0.5539]），仅计胜负局胜率 0.4464（n=56），配对 z=-0.973（p=0.331），SPRT LLR=-20.809 → accept_h0，promote=False**。依 AGENTS.md 硬约束不覆盖 `best.pt`。报告：`reports/gate_nn_mcts_20_vs_nn_mcts_20.json`。
+
+**关键判读**：批次 1 修复的是 Value 校准（必要），但**未带来可测的棋力提升**——强度瓶颈在信号质量（sims=20 自我蒸馏、50% mirror 对手、缺外部梯度），属批次 3/4 范畴。门控同时暴露 72% 和棋率（144/200，其中 no_capture 141），使仅有 28% 对局携带胜负信息。
+
+### 七、批次 3 首项验证（adaptive 池权重）：**无显著差异**
+
+5 轮训练（唯一变量 `--pool-weights adaptive`）：探针平衡acc 0.595/0.605/0.625/0.624/0.623 全程达标；p_loss 一致更低（3.37-3.52 vs 3.62-3.80，按纪律不作为变强证据）。对比门控（adaptive vs fixed，200 局）：**胜 10 / 和 183 / 负 7，得分率 0.5075（Wilson [0.4387, 0.5760]），SPRT LLR=-73.322 → accept_h0，promote=False**；和棋率 91.5%，仅 17 局分出胜负。
+
+**结论与下一步**：池失衡修复不改变棋力。批次 1-3 的改动共同确认——Value 校准已修好，但**下一个瓶颈是"区分度"本身**：同源模型间 72-91.5% 对局以 no_capture 判和，门控只剩 17-56 局胜负样本，而训练端 z=0 样本又被裁掉。故下一步优先级为：**① 批次 4 提高搜索质量/有效 sims（C++ nn_mcts 或 GPU 批量推理）；② 对手结构（mirror 0.5→0.3、expert 0.1→0.2）**，而非继续调整数据配比。
+
+**证据归档**：`run_gate` 的 JSON 名仅由 spec 派生，两次 `nn_mcts_20` 门控互相覆盖；批次 2 文本报告已归档 `reports/archive_gate_b2_candidate_vs_best_n200.log`，批次 3 为 `reports/gate_b3_adaptive_vs_b1_fixed.{log,json}`（后续宜加 out_name 参数）。
+
+### 八、批次 1b 补齐：轮内门控降级为「只记录、不判定」+ 正式晋级协议
+
+- `junqi/train_rl.py` 新增纯函数 `inloop_gate_decision(stage_stats, inloop_gate_promote=False, ...)`：**默认返回 `promote=False`**（即使记录是 16/16 全胜），理由——n=16 时 Wilson 判据需得分率 ≥0.75（约 +191 Elo）才显著，对每轮 +10~30 Elo 的真实进步无功效，据此晋升等于用噪声改发布模型；回滚开关 `--inloop-gate-promote`（CLI）恢复旧行为。
+- 正式晋级协议（唯一的发布模型改动入口）：`junqi/eval_gate.py` 新增 `promote_candidate(report, model_a, best_path, backup_dir)`——仅当 `report["promote"] is True` 才把候选写入 `models/best.pt`，旧模型带时间戳备份，否则完全不触碰。CLI：`python -m junqi gate --model-a <候选> --model-b models/best.pt --seeds 100 --promote-to-best`；另加 `--out-name` 修复同 spec 门控报告互相覆盖的问题。
+- 测试：`tests/test_batch3_opp_and_gate.py` 中 5 项覆盖（完美战绩仍不晋升、回滚开关恢复旧行为、平庸战绩仍拒绝、通过与拒绝两条晋级路径、候选缺失拒绝）。
+
+### 九、批次 3 第二项：对手配比预置（mirror 0.5→0.3、expert 0.1→0.2）
+
+- `OPP_MIX_PRESETS` 新增 `diverse = {mirror .30, best .30, expert .20, greedy .15, random .05}`；`opponent_type_for` 与 worker 任务参数支持传入配比；CLI `--opp-preset {baseline,diverse}`（默认 baseline=已验证基线）。动机：mirror 自对弈对抗梯度近零，而 expert 对局同时提供真实对抗压力与客观终局 Value 样本的最廉价来源；两次 n=200 门控显示同源模型间 72-91.5% 对局以 no_capture 判和、区分度枯竭。
+- 测试 7 项：预置分布合法性（和为 1、键一致）、baseline 等于既有常量、diverse 数值符合方案、抽样分布与预置一致（±2%）、无对手网络时 best 降级 expert、expert 占比从 10%→20% 的对照。
+- 首轮实测（`reports/trainrl_b3opp_diverse.log`）：实际对手占比 mirror 0.26 / best 0.35 / expert 0.20 / greedy 0.13 / random 0.06（与预置一致）；**拔旗终局占比 4%→9%**、决胜率 63%、探针 0.592/0.472 达标；单轮耗时 1183.1s（未因 expert 占比翻倍而变慢）。
+- **5 轮训练结果**：探针 0.592 / 0.632 / 0.613 / 0.611 / 0.608（MAE 0.472→0.431）全部达标；拔旗占比最高 11%、第 2 轮零认输；每轮耗时 1158-1318s 与基线持平。
+- **对比门控（n=200，`reports/gate_b3opp_vs_b1.{log,json}`）**：胜 8 / 和 184 / 负 8，**得分率 0.5000**，Wilson [0.4314, 0.5686]，仅计胜负局 0.5000（n=16），配对 z=0.000，**SPRT LLR=-85.998 → accept_h0**，promote=False。即**对手结构显著改善决胜局质量（拔旗 4%→9-11%），但棋力无可测变化**。
+
+### 九bis、三次形式化门控的合并判读：瓶颈是「区分度」而非配比
+
+| # | 对比 | 战绩 | 得分率 | 决胜局 | SPRT |
+|---|---|---|---|---|---|
+| 1 | 批次1候选 vs 旧 best(09-01) | 25/144/31 | 0.4850 | 56（28%） | accept_h0 |
+| 2 | adaptive 池权重 vs 批次1 | 10/183/7 | 0.5075 | 17（8.5%） | accept_h0 |
+| 3 | diverse 对手结构 vs 批次1 | 8/184/8 | 0.5000 | 16（8%） | accept_h0 |
+
+三次一致 `accept_h0`，和棋率依次 72% → 91.5% → 92%。**自博弈数据里几乎没有胜负信号**（92% 的 no_capture 和棋在生成端已稀薄，训练端又裁掉和棋尾部样本），故批次 1-3 的改动（Value 校准 / 池权重 / 对手结构）都无法转化为可测棋力。**下一优先项**：① 诊断 no_capture 和棋成因（策略是否系统性回避进攻）；② 用批次 4 的推理提速把 sims 提上去；③ 其余超参（lr 余弦、池权重）暂缓。
+
+### 九ter、和棋成因诊断（`scratch/diagnose_draws.py` + 专家对照，报告 §8.10）
+
+- **和棋不是不战斗**：182 局 no_capture 和棋局长中位 320 手、被吃子力中位 924 分（≈一整军）；净子力差中位仅 75（决胜局 168），65/182 局净差恰为 0。
+- **NN 系统性回避交火**：有攻击机会时仅 5.6-6.6% 选择进攻；每局攻击 13.5 次、被吃 868 分、净差≈0、拔旗 1.5%。**专家对照**（expert2 镜像）：有机会时 18.1% 进攻、每局攻击 25.8 次、被吃 1416 分、净差 184、拔旗 12.5%——专家用不对等交换制造优势，NN 只做对等交换。
+- **判定**：和棋倾向部分为博弈固有（专家对专家也 75% 和棋，分胜负空间上限约 25%），但 NN 把它压到 8% 且方式退化为困毙——**瓶颈在网络与搜索，非规则目标**。规则层攻击稀缺（暗子不可攻/禁自杀攻击/行营保护）是共同背景，每手合法攻击选项仅 0.9-2.0 个。
+- 下一步指向：提高 sims（看穿进攻-反杀线）+ 批次 4 提速；数据侧可研究对"进攻后取胜"片段的采样加权（不引入中间奖励）。
+
+### 九quater、搜索深度扫描与裁决式判分（测量口径修复，2026-09-14）
+
+**(a) 搜索深度扫描**（`reports/diagnose_sims_sweep.log`，12 局/档，官方规则，max_plies=1000）：
+
+| 指标 | sims=20 | sims=40 | sims=80 | 专家对照 |
+|---|---|---|---|---|
+| 决胜率 | 8% | **17%** | 17% | 12.5% |
+| 每局攻击次数 | 15.5 | **25.0** | 25.9 | 25.8 |
+| 被吃子力中位 | 911 | **1540** | 1501 | 1416 |
+| 有机会时选择攻击 | 5.6% | 8.5% | 7.9% | 18.1% |
+
+sims 20→40 显著提升交战质量（攻击 +61%、交换 +69%），**40→80 已饱和**；且 sims=20 档的 92% 和棋率与 200 局门控完全一致（插桩方法学自证）。同时专家自己在官方规则下也 88% 和棋 → **高和棋率主要是博弈+规则集固有属性**。
+
+**(b) 测量口径修复：裁决式判分**。既然 8-12% 的决胜负率把真实强度差在"得分率"上稀释约 12 倍（+65 Elo 仅表现为 0.50→0.525，被 Wilson 半宽 ±0.069 淹没），则所有后续验证都会因测量而死：
+
+- `junqi/selfplay.py::play_game` 在记录中写入 `final_eval0/final_eval1`（`evaluate_expert` 的公共信息估值，0.1ms/次，不参与训练奖励）；
+- `junqi/eval_gate.py::adjudicate_record`：有胜负按胜负，和棋按终局估值判胜负（`margin` 可配默认为 0），把全部对局变为有效样本；
+- `run_gate` 报告新增 `adjudicated` 段（战绩/得分率/Wilson/配对检验/估值差中位），**不改动官方 `promote` 判据**（AGENTS.md：评测夹具保持官方规则）；
+- 测试 `tests/test_gate_adjudication.py` 6 项（胜负映射含座位互换、margin 语义、估值缺失回退、play_game 记录零和一致性、门控报告段），全量 **294 passed / 3 skipped**。
+- 标定实验（镜像噪声底线 + sims20-vs-sims5 敏感性）结果见下一节。
+
+#### 标定第一轮暴露的实现缺陷（已修）
+
+- **镜像标定（40 组种子 = 80 局，`reports/gate_calib_mirror.{log,json}`）**：官方得分率 0.5000、裁决得分率也 0.5000，且 74 局和棋里**每一局的 `final_eval0` 都恰好是 0.0**。
+- **根因**（读码定位）：`analysis._is_dead_draw_impl` 的**第一分支**是规则限步——`quiet >= no_capture_draw_plies` 即判死；而 `eval_expert.evaluate_expert` 对判死局面直接 `return 0.0`。于是"终局估值裁决"在恰好需要它的场合（限步判和的死锁终局）必然退化为 0，与结构无关。
+- **修复**：(1) `_is_dead_draw_impl` / `is_dead_draw` 新增 `ignore_quiet_limit`（默认 False，专家引擎热路径语义与缓存路径不变）；(2) `evaluate_expert` 新增 `ignore_rule_draw` 透传；(3) `play_game` 每 10 手采样一次"有效估值"（`ignore_rule_draw=True`），终局若仍为结构性死锁（估值恒 0）则回退到对局中最后一次有效采样，并在记录中标注 `last_live_eval_used`。
+- **敏感性对照（`reports/gate_calib_sims.{log,json}`，A=sims20 vs B=sims5，80 局）**：官方得分率 0.5062（Wilson [0.3989, 0.6130]），**80 局仅 3 局分出胜负（3.75%）**，SPRT accept_h0——搜索深度差 4 倍都无法在官方口径上表达。这是裁决判分的目标场景，修复后已重跑（结果见下节）。
+- 注意：`evaluate_expert` **不是严格零和**（同一局面 seat0/seat1 视角值之和可为非零，实测例 6.98 / −21.72），故裁决比较"各自视角谁更高"仅作为一致的排序信号，报告同时给出终局估值差中位供诊断。
+
+#### 标定第二轮：裁决指标**未通过**偏差校准；同时发现门控打分器的座位归属 bug（已修）
+
+**(1) 裁决指标现状：不可用（诚实结论）**
+
+| 对照（80 局，修复后裁决） | 官方得分率 | 裁决得分率 | 裁决 Wilson 95%CI |
+|---|---|---|---|
+| A=sims20 vs B=sims5（**已知 A 更强**） | 0.5125 | 0.5750 | [0.4657, 0.6774] |
+| 镜像（**同一模型**，应≈0.5） | 0.5125 | **0.6000** | [0.4905, 0.7004] |
+
+镜像的裁决得分（0.600）反而**高于**已知更强方的 0.575，两者 CI 几乎完全重叠 → 在 n=80 下裁决被噪声/座位偏差主导，**无法分辨真实强度差**。可能的偏差来源：`evaluate_expert` 非严格零和 + 座位/颜色的系统性偏好。结论：该指标需重新设计（例如按 pair-sum 配对统计、或构造对称化 arbiter）后再评估，当前**不用于任何判定**。
+
+**(2) 门控打分器的座位归属 bug（严重，已修复）**
+
+- `run_gate` 原用 spec 名推断"候选坐哪一桌"：`if rec["a"] == spec_a: seat = 0`。而**所有正式门控都使用同名 spec**（`--a nn_mcts_20 --b nn_mcts_20`，仅 `--model-a/--model-b` 不同），此时该判断恒真 → 每一对局中"候选执后手"的那一局被**反向计分**（胜记负、负记胜）→ 真实差异被系统性压回 0.5。
+- **历史证据**：所有正式门控报告里 `seat_split.as_second` 恒为 `0 局`（应为一半），`as_first` 独揽全部局数。
+- **影响**：批次 2（候选 vs 旧 best，报 0.4850）、批次 3-adaptive（0.5075）、批次 3-diverse（0.5000）三次"一致 accept_h0、棋力无可测差异"的结论**建立在被反向计分的半数样本上，不可信**，需用修复后的打分器重测。
+- **修复**：新增 `_score_at_seat(rec, seat)`，座位由 `_run_pair` 的构造显式决定（pair[0]=候选执先、pair[1]=候选执后）；`seat_split` 改用座位索引；`adjudicate_record` 新增 `seat_a` 显式参数（未给出时才回退旧推断）。
+- **测试**：`tests/test_gate_adjudication.py` 新增"同名 spec 必须正确归属两个座位方向"（修复前 `as_second` 恒 0）与 `_score_at_seat` 语义断言；门控相关测试 16 项通过。
+- **下一步（需重测）**：用修复后的打分器重跑批次 2/批次 3 的模型对比与 sims 敏感性（n≥200），再据此判断 Value 校准、池权重、对手结构各自是否真有棋力影响；之后再谈批次 3 剩余的 sims 20→40 训练周期。
+
+### 十、批次 3 第三项：学习率余弦衰减（opt-in）
+
+- `lr_for_epoch(base_lr, ep, start_epoch, end_epoch, schedule)` 纯函数 + CLI `--lr-schedule {constant,cosine}`（默认 constant=已验证基线）；cosine 从 base_lr 余弦衰减到 base_lr/5。
+- **与方案原文的偏离及理由**：方案写"1e-3 恒定 → 余弦衰减到 3e-4"，但批次 1 已据受控实验把 base_lr 从 1e-3 下调到 1e-4（1e-3 会毁 Value 校准）；在 base=1e-4 时"衰减到 3e-4"是**升** lr，与证据矛盾。故按同一意图改为"衰减到 base 的 1/5"（1e-4 → 2e-5）。
+- 测试 4 项：constant 恒定、cosine 端点与单调不增、超范围轮次被 clamp、floor 比例可配。
+
+### 十一、批次 4 第一步：推理热路径 `eval()` 短路（已验证逐位一致）
+
+**先测后改**。cProfile 单局（301 手、sims=20、CPU）：墙钟 123.7s / 每手 411ms，其中 **NN 前向 63.3s（51%）**、`legal_actions` 15.7s（13%）、`encode_state_np` 8.1s（7%）；前向次数 6,268 = 每手 20.8 次（与 sims=20 吻合，**无冗余前向**）。但每次单状态推理都调用 `self.eval()`，而 `nn.Module.train/eval` 递归遍历全部子模块：实测 **369,812 次子模块遍历、约 8.7s 累计**（另叠加 `module.__setattr__` 4.8s），约占总墙钟 7-10%。
+
+- 修复：`JunqiNet.train(mode)` 在 `self.training == mode` 时直接返回（`eval()` 转发到 `train(False)`），语义与 `nn.Module.train` 一致，仅跳过冗余遍历。
+- **等价性证据**：新增 `scratch/nn_predict_baseline.py`（capture/verify，覆盖 24 个固定局面 + 6 组批量推理，含采样世界与重复计数通道）→ **24 单状态 + 6 批量组逐位一致 ✓**（比旧工具 `perf_baseline.py` 更贴近自博弈推理路径）。
+- **提速证据**（同机同负载下前后对比）：单状态 16.236 → **12.494 ms/次（−23%）**；批量 4 条 28.305 → **22.848 ms/次（−19%）**。
+- 测试：`tests/test_net_inference_mode.py` 5 项（重复 eval 只遍历一次并断言增量、train/eval 语义、直接切换子模块后仍可恢复、predict_* 仍强制 eval、eval/train 返回 self）。
+- **下一步结构性提速（已量化头寸）**：批量 4 条推理折算 7.1 ms/条 vs 单条 16.2 ms/条 → **每状态快 2.3 倍**，而 MCTS 模拟主循环目前是「每模拟一次单状态前向」（`mcts.py` 选择/扩展阶段）。故下一步为叶节点批量推理（虚拟损失并行），预期自博弈吞吐 2 倍以上，从而把 sims 20→40~100。
+
 ## [2026-09-13] — P0/P1/P2 阶段：评测门控落地、hybrid_engine 定价重构（废除加性硬打分）、真实终局标签 Value 重训与搜索蒸馏管线
 
 阶段归属：**P0（正确性与可复现性）**、**P1（复盘数据集和传统基线）** 与 **P2（行为克隆和搜索蒸馏）**，依据 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](../AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) 与 [AGENTS.md](../AGENTS.md)。未修改 `RuleConfig` 类定义与 APK 对齐常量；未触碰 `models/best.pt`（所有训练产物均为独立候选权重）。
@@ -61,8 +223,10 @@
 - **0. 生成/评测夹具分离**：`train_rl.GENERATION_CFG`（no_capture_draw_plies=120、repetition_draw_count=4）仅用于自对弈生成，**评测门控/靶场保持官方 70/1000/循环 3 规则**；和棋局 quiet ≥ 60 的尾部样本段不入回放池（`_drop_draw_tail`，决胜局全保留）；课程采样（残局生成 + 中盘注入）沿用既有挂钩；
 - **1. 自博弈认输机制**：`MCTS.search` 新增第 5 返回值 root_value（根走子方视角期望，子节点访问量加权）；`ResignTracker` 判定走子方根 Value ≤ −0.95 连续 8 次己方回合（ply ≥ 40）认输，按官方 **code 21 语义**记 ±1 终局标签——终局奖励定义不变，非中间奖励；回滚 = resign_enabled=False。基线计划 P3 节与 §6 Value 规则已同步修订（原因/影响/验证/回滚齐备）；
 - **训练主循环新增对局质量观测**：每轮打印决胜率、平均局长、终局原因分布（`对局质量 | 决胜率: ...`），作为 P4.4 健康度证据链的一部分；
-- **2. 蒸馏规模化**：`distill_search --states 20000 --workers 8`（教师打标与策略头蒸馏，见第三节管线）；
-- 验收测试：`tests/test_resign_fixture.py`（ResignTracker 计满/清零/min_ply/分座位/None 处理、GENERATION_CFG 与官方规则隔离、尾部过滤、stub 网络认输集成、mcts 根 Value 返回）；`mcts.search` 返回值升级为 5 元组，全部调用方（ai.py/train_rl/各测试）已同步。
+- **2. 蒸馏规模化**：`distill_search --states 20000 --workers 8`（教师打标与策略头蒸馏，见第三节管线）；实测 val_KL 0.60（600 局时 2.03），候选 `models/search_distilled_20k.pt`；
+- **首轮 500 局复盘（Epoch 2-6）与回滚**：决胜率稳定 60-69%、认输自增强 2%→27%；但 Value 三分类准确率 12%→58%→16%→28% 剧烈失稳，且 Epoch 2（认输仅 2%）已崩——主因判定为 buffer 新旧标签分布冲突（旧和棋标签 vs 新决胜标签），认输为加剧因素；门控 5 轮 0.406-0.531 无趋势，未晋级。**已执行回滚开关**：`--no-resign`（CLI 旋钮，穿线 run_training→worker→play_selfplay_game）+ `--fresh` 清空受污染 buffer，从 value_distilled 热启动点重校准；验收线 MAE<0.5 / 三分类>50%，恢复后再以更严口径（对方视角互证）重开认输；
+- 验收测试：`tests/test_resign_fixture.py`（ResignTracker 计满/清零/min_ply/分座位/None 处理、GENERATION_CFG 与官方规则隔离、尾部过滤、stub 网络认输集成、mcts 根 Value 返回）；`mcts.search` 返回值升级为 5 元组，全部调用方（ai.py/train_rl/各测试）已同步；
+- **实验链完整记录与修正后诊断（2026-09-14）**：首轮 500 局（决胜率稳定 60-69%、Value 校准崩坏、门控无趋势）→ 对照实验 A（关认输 + fresh 重校准达标）→ 验证实验 B（认输开启 + 认输局样本只进 Policy 池，Value 仍崩、认输率仅 2%）→ **"认输投毒是主因"假设被推翻**：高认输率本身是 Value 头过自信且错误的病症（该验收标准已撤回），真因判定为联合 RL 训练下主干特征漂移摧毁 Value 校准（buffer 内低 loss vs 靶场 16% 的过拟合特征）。认输局样本只进 Policy 池的隔离措施正确且保留。**待执行修复**：每轮 Value 重锚（冻结主干短微调，验收线 MAE<0.55/三分类≥45% 连续 2 轮）。全部数据表、被推翻的假设与经验教训见 [SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md](SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md)。
 
 ### 八、冲突与风险记录（AGENTS.md §9 合规）
 

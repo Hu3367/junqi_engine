@@ -114,10 +114,10 @@ class TestResignIntegration(unittest.TestCase):
         self.assertEqual(record["winner"], 1)          # 座位 0 认输，座位 1 胜
         self.assertTrue(record["resigned_seat"] == 0)
         self.assertLess(record["plies"], 60)           # 远早于拖和长度
-        classes = {cls for _, cls, _, _ in v} | {cls for _, cls, _, _ in pv}
-        self.assertIn(2, classes, "认输方 Value 样本必须包含 Loss 类别")
-        self.assertIn(0, classes, "胜方 Value 样本必须包含 Win 类别")
-        self.assertGreater(len(p), 0)
+        # 样本路由限制：认输局的 ±1 标签来自模型自身判断，不得进 Value 训练
+        self.assertGreater(len(p), 0, "认输局的 Policy 样本必须保留")
+        self.assertEqual(len(v), 0, "认输局不得产生 Value（世界模式）样本")
+        self.assertEqual(len(pv), 0, "认输局不得产生 Value（公共模式）样本")
 
     def test_mcts_search_returns_root_value(self):
         """mcts.search 第 5 返回值为根走子方视角期望值（认输判定的输入）。"""

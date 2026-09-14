@@ -60,6 +60,16 @@ AUX_LOSS_WEIGHT = 0.1
 OPP_MIX = {"mirror": 0.50, "best": 0.25, "expert": 0.10,
            "greedy": 0.10, "random": 0.05}
 
+# P3 批次 3（2026-09-14）：对手结构预置。动机——mirror 自对弈对抗梯度接近零，
+# 而 expert 对局是**客观终局 Value 样本的最廉价来源**且提供真实对抗压力；
+# 门控实测同源模型间 72-91.5% 对局以 no_capture 判和（区分度枯竭），
+# 故降低 mirror 占比、提高 expert 占比。一次只改这一个变量。
+OPP_MIX_PRESETS: Dict[str, Dict[str, float]] = {
+    "baseline": dict(OPP_MIX),
+    "diverse": {"mirror": 0.30, "best": 0.30, "expert": 0.20,
+                "greedy": 0.15, "random": 0.05},
+}
+
 # 生成/评测夹具分离（2026-09-13 计划修订）：自对弈"生成侧"调稀平局触发器
 # （70→120 步无吃子、循环判和 3→4 次），迫使对局必须分出胜负或真死锁，
 # 大幅压缩 z=0 垃圾样本占比；"评测侧"（gate/靶场）仍严格使用官方
@@ -71,6 +81,45 @@ GENERATION_CFG = RuleConfig(no_capture_draw_plies=120, repetition_draw_count=4)
 # 该段的 z 恒为 0（生成夹具下必达 120 步判和），策略头无从学习；
 # 决胜局的尾部样本保留（z=±1 有信号）。
 QUIET_TAIL_CUTOFF = 60
+
+# 每轮 Value 重锚（P3 修订 2026-09-14，见 docs/SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md）
+#
+# 受控实验证据（同一 6 块共享主干、同一 p1_v3 客观标签数据、联合策略+价值训练）：
+#   lr=1e-3 微调 1 轮（711 步）即把 Value 平衡准确率 0.763 → 0.567，3 轮稳定 0.546，
+#           且策略模仿 top-1 反而更低（0.218 < 0.261）；
+#   lr=1e-4 保持 0.713，策略 top-1 更高（0.261）。
+# 结论：1e-3 对 6 块共享主干做微调过高（既毁校准又不利于策略），故
+#   ① DEFAULT_LR 下调至 1e-4（根因修复）；
+#   ② 每轮联合训练后追加一次"冻结主干、仅训 Value 头"的重锚（保险丝），
+#      锚定数据 = 回放池客观终局样本 + p1_v3 官方客观标签。
+# 另需知：一旦主干已漂移，头-only 重锚无法恢复 OOD 校准（实测上限 ≈ 0.35 平衡准确率，
+# 即随机水平），故重锚是预防而非修复——已漂移的候选不可救，只能从健康基座重启。
+DEFAULT_LR = 1e-4
+ANCHOR_P1_RATIO = 0.30            # 锚定集中 p1_v3 官方客观标签的样本占比
+ANCHOR_POOL_PER_CLASS = 12000     # 每类回放池样本上限（Win/Draw/Loss 各取）
+ANCHOR_EPOCHS = 3
+ANCHOR_LR = 5e-4
+ANCHOR_VAL_DIR = "datasets/p1_v3"  # 官方客观标签数据集目录（train/val/test 三划分）
+# lr 调度（P3 批次 3 第三项）：constant = 已验证基线；cosine = 从 base_lr 余弦衰减到
+# base_lr*LR_FLOOR_RATIO。方案原文写"1e-3 恒定 → 余弦衰减到 3e-4"，但批次 1 已据受控
+# 实验把 base_lr 下调到 1e-4（1e-3 会毁 Value 校准），此时"衰减到 3e-4"反而是升 lr、
+# 与证据矛盾，故按同一意图改为"衰减到 base 的 1/5"（1e-4 → 2e-5）。
+LR_FLOOR_RATIO = 0.2
+
+
+def lr_for_epoch(base_lr: float, ep: int, start_epoch: int, end_epoch: int,
+                 schedule: str = "constant", floor_ratio: float = LR_FLOOR_RATIO) -> float:
+    """按轮次计算学习率（纯函数，可单测）。cosine 从 base_lr 衰减到 base_lr*floor_ratio。"""
+    if schedule != "cosine":
+        return float(base_lr)
+    total = max(1, end_epoch - start_epoch)
+    t = min(1.0, max(0.0, (ep - start_epoch) / total))
+    return float(base_lr) * (floor_ratio + (1.0 - floor_ratio) * 0.5 * (1 + math.cos(math.pi * t)))
+
+
+# Value 验收线（在 p1_v3/test 独立留出集上，指标 = 平衡准确率）
+VALUE_ACCEPT_MAE = 0.55
+VALUE_ACCEPT_BALANCED_ACC = 0.45
 
 
 class ResignTracker:
@@ -114,16 +163,19 @@ def _drop_draw_tail(items: list, final_winner, quiet_idx: int,
     return [it for it in items if it[quiet_idx] < cutoff]
 
 
-def opponent_type_for(r: float, net1_available: bool = True) -> str:
-    """按 OPP_MIX 配比把均匀随机数映射为对手类型（纯函数，可单测）。
-    net1_available=False 时 'best' 区间降级为 'expert'（防御分支，主循环已无条件注入）。"""
-    if r < OPP_MIX["mirror"]:
+def opponent_type_for(r: float, net1_available: bool = True,
+                      mix: Optional[Dict[str, float]] = None) -> str:
+    """按对手配比把均匀随机数映射为对手类型（纯函数，可单测）。
+    net1_available=False 时 'best' 区间降级为 'expert'（防御分支，主循环已无条件注入）。
+    默认使用 OPP_MIX；P3 批次 3 起可传入预置配比（见 OPP_MIX_PRESETS）。"""
+    mix = OPP_MIX if mix is None else mix
+    if r < mix["mirror"]:
         return "mirror"
-    if r < OPP_MIX["mirror"] + OPP_MIX["best"]:
+    if r < mix["mirror"] + mix["best"]:
         return "best" if net1_available else "expert"
-    if r < OPP_MIX["mirror"] + OPP_MIX["best"] + OPP_MIX["expert"]:
+    if r < mix["mirror"] + mix["best"] + mix["expert"]:
         return "expert"
-    if r < 1.0 - OPP_MIX["random"]:
+    if r < 1.0 - mix["random"]:
         return "greedy"
     return "random"
 
@@ -161,12 +213,40 @@ class ValueDataset(Dataset):
         )
 
 
+def effective_policy_weights(counts, base_weights=(0.2, 0.5, 0.3),
+                             mode: str = "fixed") -> np.ndarray:
+    """计算 Policy 分桶采样权重（纯函数，可单测）。
+
+    `fixed`（默认，已验证基线）= 固定 (0.2, 0.5, 0.3)；
+    `adaptive` = 按 √桶容量 归一化。动机（2026-09-14 实测）：实战池严重失衡
+    （opening 8,589 / midgame 3,208 / endgame 66,409），固定权重下 50% 的 batch
+    从仅 3,208 条 midgame 样本里抽，单样本每轮被重复曝光约 12 次，而 endgame
+    （占池 85%）只过 0.35 遍——既过拟合 midgame 又浪费多数数据。√容量权重把
+    曝光比压缩到约 3-4 倍以内，同时不饿死小桶。
+    """
+    counts = np.asarray(counts, dtype=np.float64)
+    nz = counts > 0
+    if not nz.any():
+        return np.zeros(3, dtype=np.float64)
+    if mode == "adaptive":
+        w = np.sqrt(counts)
+        w[~nz] = 0.0
+        return w / w.sum()
+    w = np.asarray(base_weights, dtype=np.float64).copy()
+    w[~nz] = 0.0
+    if w.sum() <= 0:
+        w = nz.astype(np.float64)
+    return w / w.sum()
+
+
 class StratifiedReplayBuffer:
     """按阶段与胜负类别分桶的经验回放池（解决 Draw 样本淹没与类别塌缩）。"""
 
     def __init__(self, capacity: int = 200000, rng: random.Random | None = None):
         self.capacity = capacity
         self.rng = rng or random.Random()
+        # P3 批次 3：Policy 分桶权重模式（"fixed" = 已验证基线；"adaptive" = 池失衡修复）
+        self.policy_weight_mode = "fixed"
         # Policy 流按阶段分桶: 0=opening, 1=midgame, 2=endgame
         self.policy_buckets: Dict[int, deque] = {
             PHASE_OPENING: deque(maxlen=capacity // 3),
@@ -208,6 +288,8 @@ class StratifiedReplayBuffer:
         if w.sum() == 0:
             w = np.ones(3, dtype=np.float32)
         w = w / w.sum()
+        # 分桶权重模式（P3 批次 3）：fixed = 已验证基线；adaptive = 按 √桶容量（池失衡修复）
+        w = effective_policy_weights(counts, tuple(w), mode=self.policy_weight_mode)
 
         samples = []
         for p in (0, 1, 2):
@@ -309,13 +391,118 @@ class StratifiedReplayBuffer:
             pass
 
 
+# ------------------------------------------------------------- 每轮 Value 重锚（P3 修订）
+
+_ANCHOR_P1_CACHE: Dict[str, dict] = {}
+
+
+def _load_anchor_p1(p1_dir: str, split: str) -> dict:
+    """缓存加载 p1 客观标签划分（train 约 690MB，只加载一次）。"""
+    key = f"{p1_dir}:{split}"
+    if key not in _ANCHOR_P1_CACHE:
+        from .train_value_distill import load_p1_arrays
+        _ANCHOR_P1_CACHE[key] = load_p1_arrays(p1_dir, split)
+    return _ANCHOR_P1_CACHE[key]
+
+
+def build_anchor_dataset(buffer: StratifiedReplayBuffer, *,
+                         p1_dir: str = ANCHOR_VAL_DIR,
+                         per_class: int = ANCHOR_POOL_PER_CLASS,
+                         p1_ratio: float = ANCHOR_P1_RATIO,
+                         seed: int = 42) -> dict:
+    """组装重锚数据集：回放池客观终局样本（类均衡抽取）+ p1_v3 官方客观标签。
+
+    两类样本都是**客观终局**标签：池样本来自困毙/拔旗/真死锁/规则和棋（认输局样本
+    在生成侧已丢弃），p1 样本来自官方 list.cfg 终局码。不引入任何中间奖励，
+    也不读取真实暗子身份（池样本编码与训练同口径）。
+    返回 {"train": {x,y,v}, "val": {x,y,v}, "sources": {...}}；val 固定为 p1 验证划分。
+    """
+    rng = random.Random(seed)
+    xs, ys, per_cls = [], [], {}
+    for c, bucket in buffer.value_buckets.items():
+        items = list(bucket)
+        if not items:
+            continue
+        k = min(per_class, len(items))
+        pick = rng.sample(items, k)
+        xs.extend(it[0] for it in pick)
+        ys.extend(int(it[1]) for it in pick)
+        per_cls[int(c)] = k
+    n_pool = len(ys)
+    if n_pool == 0:
+        raise RuntimeError("回放池无 Value 样本，无法重锚")
+
+    p1_tr = _load_anchor_p1(p1_dir, "train")
+    n_p1 = int(round(n_pool * p1_ratio / max(1e-6, 1.0 - p1_ratio)))
+    n_p1 = min(n_p1, len(p1_tr["y"]))
+    idx = rng.sample(range(len(p1_tr["y"])), n_p1)
+    x_pool = np.stack(xs) if xs else np.zeros((0, NUM_CHANNELS, 12, 5), dtype=np.float32)
+    tr = {
+        "x": np.concatenate([x_pool, p1_tr["x"][idx]], axis=0),
+        "y": np.concatenate([np.asarray(ys, dtype=np.int64),
+                             p1_tr["y"][idx]], axis=0),
+        "v": np.concatenate([np.asarray([1.0 if c == 0 else (0.0 if c == 1 else -1.0)
+                                         for c in ys], dtype=np.float32),
+                             p1_tr["v"][idx]], axis=0),
+    }
+    order = np.random.RandomState(seed).permutation(len(tr["y"]))
+    tr = {k: v[order] for k, v in tr.items()}
+    return {"train": tr, "val": _load_anchor_p1(p1_dir, "val"),
+            "sources": {"pool_per_class": per_cls, "pool_total": n_pool,
+                        "p1_total": int(n_p1), "p1_ratio_actual":
+                            round(n_p1 / max(1, n_p1 + n_pool), 4)}}
+
+
+def reanchor_value_head(net: JunqiNet, buffer: StratifiedReplayBuffer, device: str, *,
+                        epochs: int = ANCHOR_EPOCHS, lr: float = ANCHOR_LR,
+                        batch_size: int = 128, seed: int = 42,
+                        p1_dir: str = ANCHOR_VAL_DIR,
+                        p1_ratio: float = ANCHOR_P1_RATIO,
+                        verbose: bool = True) -> dict:
+    """冻结主干、仅训 Value 头（重锚），对抗联合训练造成的主干特征漂移。
+
+    机制与 value_distilled 离线蒸馏同源（train_value_head_only），数据为
+    池内客观终局样本 + p1_v3 官方标签；返回验证指标供日志与验收使用。
+    """
+    from .train_value_distill import train_value_head_only
+    data = build_anchor_dataset(buffer, p1_dir=p1_dir, p1_ratio=p1_ratio, seed=seed)
+    res = train_value_head_only(net, data["train"], data["val"], epochs=epochs, lr=lr,
+                                batch_size=batch_size, seed=seed, device=device,
+                                tag="[重锚]", verbose=verbose)
+    res["sources"] = data["sources"]
+    return res
+
+
+def probe_value_health(net: JunqiNet, device: str, p1_dir: str = ANCHOR_VAL_DIR,
+                       split: str = "test") -> dict:
+    """Value 健康度探针：p1_v3/test 独立留出集（9,381 条官方客观标签）。
+
+    指标口径 = 平衡准确率（主）+ MAE + 预测分布 + 塌缩告警。理由：该集和棋占 54%，
+    恒定预测单一类别的 MAE 仅约 0.50，单看 MAE 无法识别塌缩（实测全 Loss 塌缩模型
+    MAE=0.502 < 0.55 阈值）。
+    """
+    from .train_value_distill import evaluate_value_health
+    d = _load_anchor_p1(p1_dir, split)
+    return evaluate_value_health(net, d["x"], d["y"], d["v"], device=device)
+
+
+def value_acceptance(health: dict) -> Tuple[bool, str]:
+    """Value 验收判定：平衡准确率 + MAE 双达标（设计依据见探针注释）。"""
+    ok = (health["balanced_acc"] >= VALUE_ACCEPT_BALANCED_ACC
+          and health["mae"] < VALUE_ACCEPT_MAE and not health["collapse_warning"])
+    detail = (f"平衡acc={health['balanced_acc']:.3f} (线 {VALUE_ACCEPT_BALANCED_ACC})，"
+              f"MAE={health['mae']:.3f} (线 {VALUE_ACCEPT_MAE})，"
+              f"塌缩={health['collapse_warning']}")
+    return ok, detail
+
+
 # ------------------------------------------------------------- 模块级多进程 Worker
 
 def _selfplay_worker_chunk(job_args):
     """子进程任务：执行 n_games 局自对弈（支持残局课程采样、中盘注入与多样化对手池）。
     P0 修复（§3.1.5）：子进程内所有随机源由 base_seed 统一派生。"""
     (net_dict, opp_net_dict, n_games, sims, c_puct, device_str,
-     base_seed, cur_prob, mid_prob) = job_args
+     base_seed, cur_prob, mid_prob, resign_enabled, opp_mix) = job_args
     random.seed(base_seed)
     np.random.seed(base_seed % (2 ** 32))
     torch.manual_seed(base_seed % (2 ** 31))
@@ -361,7 +548,8 @@ def _selfplay_worker_chunk(job_args):
         # S1 修复：按 OPP_MIX 显式配比选择对手；net1（已发布模型权重）由主循环无条件注入，
         # 不再依赖池内快照数（打破“晋升→扩池→多样性”死锁）
         rng_game = random.Random(seed * 10007 + 7)
-        opp_type = opponent_type_for(rng_game.random(), net1_available=net1 is not None)
+        opp_type = opponent_type_for(rng_game.random(), net1_available=net1 is not None,
+                                     mix=opp_mix)
         opp_strat = None
         target_net1 = None
         if opp_type == "best":
@@ -381,7 +569,8 @@ def _selfplay_worker_chunk(job_args):
             net0, net1=target_net1, opp_strategy=opp_strat,
             sims=sims, c_puct=c_puct, device=device_str,
             cfg=GENERATION_CFG,
-            seed=seed, curriculum_prob=cur_prob, midgame_prob=mid_prob
+            seed=seed, curriculum_prob=cur_prob, midgame_prob=mid_prob,
+            resign_enabled=resign_enabled
         )
         all_p_samples.extend(p_samples)
         all_v_samples.extend(v_samples)
@@ -473,6 +662,27 @@ def decide_promotion(stage_stats: Dict[str, dict],
     if ref_score is not None:
         detail += f"，ref_vs_search2={ref_score:.3f}"
     return True, detail
+
+
+def inloop_gate_decision(stage_stats: Dict[str, dict],
+                         inloop_gate_promote: bool = False,
+                         ref_score: Optional[float] = None,
+                         prev_ref_score: Optional[float] = None) -> Tuple[bool, str]:
+    """轮内门控晋级判定（纯函数，可单测）。
+
+    批次 1b（2026-09-14）默认行为：**只记录、不判定**。理由——轮内门控 n=16 时
+    "整体得分 Wilson 下界 > 0.5" 需要得分率 ≥0.75（约 +191 Elo）才有显著性，
+    对每轮 +10~30 Elo 的真实进步完全无功效，据此晋升等于用噪声改发布模型。
+    正式晋级协议：`python -m junqi gate --model-a <候选> --model-b models/best.pt     --seeds 100 --promote-to-best`（配对同牌 + Wilson + 三元 SPRT，n=200）。
+    回滚：inloop_gate_promote=True 恢复旧行为。
+    """
+    if not inloop_gate_promote:
+        ov = stage_stats.get("overall") or {}
+        n = ov.get("wins", 0) + ov.get("draws", 0) + ov.get("losses", 0)
+        return False, (f"轮内门控仅记录（n={n}，无统计功效）；"
+                       f"晋升须经正式 SPRT 门控 --promote-to-best")
+    return decide_promotion(stage_stats, ref_score=ref_score,
+                            prev_ref_score=prev_ref_score)
 
 
 def _gate_game_job(job):
@@ -653,6 +863,7 @@ def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
       resign_consecutive 次己方回合（ply >= resign_min_ply）判该方认输，
       对局按官方 code 21 语义记 ±1 终局标签——终局奖励定义不变，回滚 = resign_enabled=False。
     - 和棋局的 quiet >= QUIET_TAIL_CUTOFF 尾部样本段在返回前丢弃（生成夹具下该段必达判和，z 恒 0）。
+    - 认输局的 Value 样本一律丢弃（标签来自模型自身判断，仅保留 Policy 样本）。
     - game_record: {"winner", "reason", "plies", "resigned_seat"} 供决胜率统计。
     """
     from .encoder import action_to_index
@@ -762,10 +973,18 @@ def play_selfplay_game(net0: JunqiNet, net1: Optional[JunqiNet] = None,
             return 1
         return 0 if final_winner == leaf_turn else 2
 
-    value_samples = [(arr, _label(leaf_turn), phase, 1)
-                     for arr, leaf_turn, phase, _q in _tail(leaf_records, 3)]
-    public_value_samples = [(arr, _label(seat), phase, 0)
-                            for arr, seat, phase, _q in _tail(root_value_records, 3)]
+    # 认输局的样本只进 Policy 回放池：其 ±1 标签来自模型自身 Value 判断而非
+    # 客观终局，喂给 Value 头会形成"误判->认输->强化误判"的自证回路
+    # （2026-09-13 首轮 500 局实证：认输开启时三分类准确率 60%->16%）。
+    # Value 头只吃客观终局（困毙/拔旗/真死锁/规则和棋）标签。
+    if resigned_seat is not None:
+        value_samples = []
+        public_value_samples = []
+    else:
+        value_samples = [(arr, _label(leaf_turn), phase, 1)
+                         for arr, leaf_turn, phase, _q in _tail(leaf_records, 3)]
+        public_value_samples = [(arr, _label(seat), phase, 0)
+                                for arr, seat, phase, _q in _tail(root_value_records, 3)]
 
     return policy_samples, value_samples, public_value_samples, game_record
 
@@ -837,11 +1056,18 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
                  ref_games: int = 6,
                  workers: int = 4, curriculum_prob: float = 0.3,
                  midgame_prob: float = 0.1,
-                 batch_size: int = 128, lr: float = 1e-3,
+                 batch_size: int = 128, lr: float = DEFAULT_LR,
                  buffer_size: int = 200000, out_dir: str = "models",
                  seed: int = 42, device: str | None = None,
                  fresh: bool = False,
-                 rebase_baseline: bool = False) -> JunqiNet:
+                 rebase_baseline: bool = False,
+                 resign_enabled: bool = True,
+                 reanchor_enabled: bool = True,
+                 anchor_p1_ratio: float = ANCHOR_P1_RATIO,
+                 pool_weights: str = "fixed",
+                 opp_preset: str = "baseline",
+                 inloop_gate_promote: bool = False,
+                 lr_schedule: str = "constant") -> JunqiNet:
     """深度强化学习自对弈训练主闭环（V2.3 + S0/S1/S2 整改）。
 
     candidate/best 分离（§3.1.3）：net 是持续训练的候选模型，门控失败不回滚；
@@ -850,11 +1076,25 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
     S1：对手池无条件注入；逐轮记录实际对手占比；晋升判据整体 Wilson + ref 硬条件；Elo 解耦。
     S2：公共模式 Value 样本与世界模式叶子约 1:1 混合；决胜课程与中盘注入；
     温度表上调；辅助回归头监督 material_diff；热启动优先 value_distilled.pt（若存在）。
+    P3 修订（2026-09-14，据 docs/SELFPLAY_DATA_QUALITY_EXPERIMENTS_20260914.md 及其验证）：
+    默认学习率降至 1e-4；热启动优先 value_distilled_v2.pt；每轮联合训练后追加
+    "冻结主干、仅训 Value 头"的重锚；Value 验收改用 p1_v3/test 独立留出集的平衡准确率。
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"=== 军棋深度强化学习系统 V2.3（P3.3 门控增强版）启动 ===")
     print(f"计算设备: {device.upper()} | 并发 Workers: {workers} | 随机种子: {seed}")
+    print(f"自博弈认输: {'开启 (threshold=-0.95 x8 回合)' if resign_enabled else '关闭（回滚开关，Value 重校准模式）'}")
+    print(f"学习率: {lr} | 每轮 Value 重锚: {'开启' if reanchor_enabled else '关闭（--no-reanchor）'}"
+          f" | Value 验收探针: p1_v3/test 平衡准确率 ≥{VALUE_ACCEPT_BALANCED_ACC}")
+    if opp_preset not in OPP_MIX_PRESETS:
+        raise ValueError(f"未知对手配比预置: {opp_preset}（可选 {sorted(OPP_MIX_PRESETS)}）")
+    opp_mix = OPP_MIX_PRESETS[opp_preset]
+    print(f"对手配比预置: {opp_preset} -> {opp_mix}")
+    print(f"学习率调度: {lr_schedule}" + ("" if lr_schedule == "constant"
+          else f"（{lr} -> {lr * LR_FLOOR_RATIO:.2e} 余弦衰减）"))
+    print(f"Policy 分桶权重模式: {pool_weights}"
+          + ("（√桶容量自适应，修复池失衡）" if pool_weights == "adaptive" else "（已验证基线 0.2/0.5/0.3）"))
     if device == "cuda":
         print(f"GPU 型号: {torch.cuda.get_device_name(0)}")
 
@@ -875,6 +1115,7 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
 
     buffer = StratifiedReplayBuffer(capacity=buffer_size,
                                     rng=random.Random(seed + 777))
+    buffer.policy_weight_mode = pool_weights
     start_epoch = 1
     current_elo = 1500.0
     if fresh and os.path.exists(ckpt_path):
@@ -910,9 +1151,13 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         except (KeyError, TypeError):
             pass
         print(f"已从检查点续训: epoch {start_epoch} 起，Elo={current_elo:.1f}，恢复经验池: {buffer.stats()}")
-    elif os.path.exists(os.path.join("models", "value_distilled.pt")):
+    elif (vd_path := next((p for p in ("models/value_distilled_v2.pt",
+                                        "models/value_distilled.pt")
+                           if os.path.exists(p)), None)) is not None:
         # S2：专家价值蒸馏预热产物优先（价值头已有锚定，避免冷启动塌缩）
-        vd_path = os.path.join("models", "value_distilled.pt")
+        # P3 修订（2026-09-14）：优先 value_distilled_v2.pt —— 独立留出集（p1_v3/test）
+        # 实测平衡准确率 0.735 / MAE 0.288，而 value_distilled.pt 为 0.318 / 0.599
+        # （84% 预测画和棋的塌缩头）。旧接线只认 value_distilled.pt。
         print(f"无检查点，从价值蒸馏模型热启动候选: {vd_path}")
         net = JunqiNet.load_from_file(vd_path, device=device)
         if not os.path.exists(best_path):
@@ -940,6 +1185,7 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
     pool_models: List[str] = [best_path]
     gate_seed = seed * 90000 + 7                       # 门控固定种子，跨轮可比（§7）
     end_epoch = start_epoch + epochs
+    accept_streak = 0                                  # Value 验收连续达标轮数（P3 修订）
 
     def _prev_ref_score() -> Optional[float]:
         """从 elo_history.jsonl 读取上一轮 ref_vs_search2（用于晋升不退化硬条件）。"""
@@ -973,7 +1219,7 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
                 w_seed = seed * 1_000_000 + ep * 10_000 + w * 500
                 jobs.append((
                     net.state_dict(), opp_dict, n_g, sims, 0.6, "cpu", w_seed,
-                    curriculum_prob, midgame_prob
+                    curriculum_prob, midgame_prob, resign_enabled, opp_mix
                 ))
 
         if workers > 1:
@@ -1011,7 +1257,11 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
               f"平均局长: {total_plies / max(n_finished, 1):.0f} 手 | 终局原因分布: {reason_mix}", flush=True)
 
         # 网络参数优化（GPU 训练）
-        print(f"优化神经网络参数 (Policy + Value + Aux on {device.upper()})...", flush=True)
+        cur_lr = lr_for_epoch(lr, ep, start_epoch, end_epoch, schedule=lr_schedule)
+        for _g in optimizer.param_groups:
+            _g["lr"] = cur_lr
+        print(f"优化神经网络参数 (Policy + Value + Aux on {device.upper()}, lr={cur_lr:.2e})...",
+              flush=True)
         loss, p_loss, v_loss, aux_loss = train_epoch(
             net, buffer, optimizer, batch_size=batch_size,
             steps_per_epoch=max(20, buffer.total_policy_samples() // batch_size),
@@ -1019,10 +1269,35 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         )
         print(f"优化完成 | 总 Loss: {loss:.4f} (Policy: {p_loss:.4f}, Value: {v_loss:.4f}, Aux: {aux_loss:.4f})", flush=True)
 
-        # 运行靶场基准评测
+        # 每轮 Value 重锚（P3 修订 2026-09-14）：联合训练漂移主干特征 → Value 头失准。
+        # 冻结主干、仅训 Value 头（池客观终局样本 + p1_v3 官方客观标签），成本约 2-3s/轮。
+        anchor_res = None
+        if reanchor_enabled:
+            try:
+                anchor_res = reanchor_value_head(net, buffer, device,
+                                                 seed=seed * 31 + ep,
+                                                 p1_dir=ANCHOR_VAL_DIR,
+                                                 p1_ratio=anchor_p1_ratio)
+                print(f"每轮 Value 重锚 | 验证平衡acc={anchor_res['val_balanced_acc']:.3f} "
+                      f"MAE={anchor_res['val_mae']:.4f} | 数据源 {anchor_res['sources']}",
+                      flush=True)
+            except (RuntimeError, FileNotFoundError) as exc:
+                print(f"⚠️ Value 重锚跳过：{type(exc).__name__}: {exc}", flush=True)
+
+        # Value 健康度探针：p1_v3/test 独立留出集（9,381 条官方客观标签，未参与早停）
+        health = probe_value_health(net, device)
+        health_ok, health_detail = value_acceptance(health)
+        accept_streak = accept_streak + 1 if health_ok else 0
+        print(f"Value 健康探针(p1_v3/test) | 平衡acc={health['balanced_acc']:.3f} "
+              f"MAE={health['mae']:.3f} 原始acc={health['class_acc']:.3f} "
+              f"预测分布={health['pred_counts']} 塌缩={health['collapse_warning']} | "
+              f"验收 {'✅达标' if health_ok else '❌未达标'} 连续 {accept_streak} 轮（{health_detail}）",
+              flush=True)
+
+        # 运行靶场基准评测（降级为固定回归探针，仅 36 题，不作为 Value 验收依据）
         from .benchmark import evaluate_net_benchmark, save_metrics_report
         bm_res = evaluate_net_benchmark(net, device=device)
-        print(f"靶场评测 | Value MAE: {bm_res['value_mae_overall']:.4f}, 三分类准确率: {bm_res['value_class_acc']*100:.1f}%", flush=True)
+        print(f"靶场回归探针 | Value MAE: {bm_res['value_mae_overall']:.4f}, 三分类准确率: {bm_res['value_class_acc']*100:.1f}%", flush=True)
         save_metrics_report({
             "value_mae": bm_res,
             "training_status": {"epoch": ep, "loss": loss, "p_loss": p_loss, "v_loss": v_loss, "elo": current_elo}
@@ -1045,9 +1320,11 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         if ref_score is not None:
             print(f"  参考 vs search2: 得分 {ref_score:.3f}（仅记录）", flush=True)
 
-        prev_ref = _prev_ref_score()
-        promote, reason = decide_promotion(stage_stats, ref_score=ref_score,
-                                          prev_ref_score=prev_ref)
+        promote, reason = inloop_gate_decision(
+            stage_stats, inloop_gate_promote=inloop_gate_promote,
+            ref_score=ref_score, prev_ref_score=_prev_ref_score())
+        if not inloop_gate_promote:
+            print(f"轮内门控：{reason}", flush=True)
         if promote:
             print(f"🎉 晋升成功：{reason} → 更新 best.pt", flush=True)
             net.save(best_path)
@@ -1072,6 +1349,30 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
             "p_loss": round(p_loss, 4),
             "v_loss": round(v_loss, 4),
             "aux_loss": round(aux_loss, 4),
+            "lr": round(cur_lr, 8),
+            "lr_schedule": lr_schedule,
+            "opp_preset": opp_preset,
+            "inloop_gate_promote": inloop_gate_promote,
+            "value_health": {
+                "balanced_acc": round(health["balanced_acc"], 4),
+                "mae": round(health["mae"], 4),
+                "class_acc": round(health["class_acc"], 4),
+                "pred_counts": health["pred_counts"],
+                "per_class_recall": health["per_class_recall"],
+                "collapse_warning": health["collapse_warning"],
+            },
+            "value_accepted": health_ok,
+            "value_accept_streak": accept_streak,
+            "reanchor": None if anchor_res is None else {
+                "val_balanced_acc": anchor_res["val_balanced_acc"],
+                "val_mae": anchor_res["val_mae"],
+                "best_epoch": anchor_res["best_epoch"],
+                "sources": anchor_res["sources"],
+            },
+            "benchmark_regression": {
+                "value_mae": round(bm_res["value_mae_overall"], 4),
+                "value_class_acc": round(bm_res["value_class_acc"], 4),
+            },
             "gate_score": round(ov_score, 3),
             "gate_wins": ov["wins"], "gate_draws": ov["draws"], "gate_losses": ov["losses"],
             "stage_scores": {k: round(_stage_score(v)[0], 3)
@@ -1106,11 +1407,30 @@ def main():
     parser.add_argument("--midgame-prob", type=float, default=0.1,
                         help="S2：中盘评测集起始局面注入概率（开局多样性）")
     parser.add_argument("--batch-size", type=int, default=128, help="批处理大小")
-    parser.add_argument("--lr", type=float, default=1e-3, help="学习率")
+    parser.add_argument("--lr", type=float, default=DEFAULT_LR,
+                        help="学习率（P3 修订：默认 1e-4。受控实验证据——1e-3 微调一轮即把 "
+                             "Value 平衡准确率 0.763→0.567 且策略学得更差；1e-4 保持 0.713）")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--out-dir", type=str, default="models", help="模型输出目录")
     parser.add_argument("--device", type=str, default=None, help="计算设备 (cuda/cpu)")
     parser.add_argument("--fresh", action="store_true", help="忽略已有检查点，从头训练")
+    parser.add_argument("--no-reanchor", action="store_true",
+                        help="P3 修订回滚开关：关闭每轮 Value 重锚（此时仅低学习率起作用）")
+    parser.add_argument("--anchor-p1-ratio", type=float, default=ANCHOR_P1_RATIO,
+                        help="重锚数据集中 p1_v3 官方客观标签占比（默认 0.30）")
+    parser.add_argument("--pool-weights", type=str, default="fixed",
+                        choices=("fixed", "adaptive"),
+                        help="Policy 分桶权重模式：fixed=已验证基线；adaptive=√桶容量（修复池失衡）")
+    parser.add_argument("--lr-schedule", type=str, default="constant",
+                        choices=("constant", "cosine"),
+                        help="学习率调度：constant=已验证基线；cosine=余弦衰减到 base/5")
+    parser.add_argument("--opp-preset", type=str, default="baseline",
+                        choices=tuple(OPP_MIX_PRESETS),
+                        help="对手配比预置：baseline=已验证基线（mirror .5/expert .1）；"
+                             "diverse=mirror .3/expert .2（批次 3 对手结构）")
+    parser.add_argument("--inloop-gate-promote", action="store_true",
+                        help="回滚开关：恢复轮内 n=16 门控的晋升判定（默认已降级为只记录，"
+                             "晋升改由正式 SPRT 门控裁定）")
     parser.add_argument("--rebase-baseline", action="store_true",
                         help="S0：用 bc_best.pt 重建发布基线（旧 best 备份），并清空候选进度")
 
@@ -1131,6 +1451,12 @@ def main():
         device=args.device,
         fresh=args.fresh,
         rebase_baseline=args.rebase_baseline,
+        reanchor_enabled=not args.no_reanchor,
+        anchor_p1_ratio=args.anchor_p1_ratio,
+        pool_weights=args.pool_weights,
+        opp_preset=args.opp_preset,
+        inloop_gate_promote=args.inloop_gate_promote,
+        lr_schedule=args.lr_schedule,
     )
 
 

@@ -135,6 +135,21 @@ class JunqiNet(nn.Module):
         aux = self.aux_head(feat).squeeze(-1)
         return logits, value_logits, aux
 
+    # ------------------------------------------------------------- 模式切换短路
+    #
+    # 批次 4（2026-09-14）：自博弈热路径每次单状态推理都调用 self.eval()，而
+    # nn.Module.train/eval 会**递归遍历全部子模块**并逐个 __setattr__ 改 training 标志。
+    # 实测代价（cProfile，1 局 301 手 / sims=20）：369,812 次子模块遍历、约 8.7s 累计
+    # （占单局墙钟 123.7s 的约 7%，另叠加 module.__setattr__ 4.8s）。
+    # 模式未变时直接返回；语义与 nn.Module.train 一致（仅在已是目标模式时跳过遍历）。
+    def train(self, mode: bool = True):
+        if self.training == mode:
+            return self
+        return super().train(mode)
+
+    def eval(self):
+        return self.train(False)
+
     # ------------------------------------------------------------- 实用推理方法
 
     @torch.no_grad()
