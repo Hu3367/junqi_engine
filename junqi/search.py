@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .analysis import fortress_score
 from .config import EvalWeights, RuleConfig, SearchConfig
+from .core_bridge import (eval_expert_auto, make_cpp_qsearch, make_cpp_weights,
+                          qsearch_auto)
 from .eval_expert import evaluate_expert
 from .rules import (ATTACKER_WINS, BOTH_DIE, CAMPS, COMPOSITION, HQS,
                     NEIGHBORS, PLAY_POSITIONS, RANK_CN, Rank, battle,
@@ -31,6 +33,18 @@ MAX_KILLERS = 2
 MAX_HISTORY = 100_000
 MAX_SEARCH_DEPTH = 64
 DEFAULT_QSEARCH_DEPTH = 16
+
+# 切片 1（C++ 移植）：evaluate_expert 是否走 C++ 快路径。
+# 默认值由等价性验收结果决定 —— 见
+# docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md 第五节"切片 1"。
+# 验收判据：scratch/perf_baseline.py 的 280 状态估值 + 30 次 depth=2 搜索
+# 逐位一致（阈值 1e-9）。未通过将本常量置回 False，C++ 侧即被完全旁路。
+DEFAULT_USE_CPP_EVAL = True
+
+# 切片 2：QSearch 是否走 C++ 快路径。验收判据同切片 1
+# （perf_baseline 逐位一致 + 决策不变），未通过将本常量置回 False。
+# C++ 侧未实现 QTT（纯缓存），故开启后 stats.qnodes 会**高于** Python 路径。
+DEFAULT_USE_CPP_QSEARCH = True
 
 
 @dataclass
@@ -100,11 +114,24 @@ class ExpertSearchEngine:
     def __init__(self, weights: Optional[EvalWeights] = None,
                  tt_size_power: int = 18, seed: Optional[int] = None,
                  qsearch_depth: int = DEFAULT_QSEARCH_DEPTH,
-                 use_qtt: bool = True, qtt_size_power: int = 16):
+                 use_qtt: bool = True, qtt_size_power: int = 16,
+                 use_cpp_eval: Optional[bool] = None,
+                 use_cpp_qsearch: Optional[bool] = None):
         self.w = weights or EvalWeights()
         self.tt = TranspositionTable(size_power=tt_size_power)
         self.rng = random.Random(seed)
         self.qsearch_depth = qsearch_depth
+
+        # 切片 1：C++ evaluate_expert 快路径开关（None = 取模块默认）。
+        # 权重对象需转成 C++ 结构，构造成本数微秒，故按 self.w 身份缓存。
+        self.use_cpp_eval = DEFAULT_USE_CPP_EVAL if use_cpp_eval is None else use_cpp_eval
+        self._cpp_w = None
+        self._cpp_w_src = None
+
+        # 切片 2：C++ QSearch 快路径开关。
+        self.use_cpp_qsearch = (DEFAULT_USE_CPP_QSEARCH if use_cpp_qsearch is None
+                                else use_cpp_qsearch)
+        self._cpp_qs = None
 
         # QSearch 专用置换表（P1，2026-09-15）。
         # **必须与主表分离**：主表 TTEntry.depth 是"剩余搜索深度"，qsearch 的
@@ -132,6 +159,31 @@ class ExpertSearchEngine:
         self.killers = [[] for _ in range(MAX_SEARCH_DEPTH)]
         self.history.clear()
         self.qtt.clear()
+
+    # ------------------------------------------------------------- 估值派发
+
+    def _cpp_weights(self):
+        """返回 self.w 对应的 C++ 权重对象（按身份缓存）；不可用时关闭快路径。"""
+        if self._cpp_w is None or self._cpp_w_src is not self.w:
+            try:
+                self._cpp_w = make_cpp_weights(self.w)
+                self._cpp_w_src = self.w
+            except Exception:  # noqa: BLE001 - 构建失败即永久退回 Python
+                self.use_cpp_eval = False
+                self._cpp_w = None
+                self._cpp_w_src = None
+        return self._cpp_w
+
+    def _eval(self, state: GameState, seat: int) -> float:
+        """叶子/机会节点估值：按 use_cpp_eval 在 C++ 与 Python 间派发。
+
+        等价于 ``evaluate_expert(state, seat, self.w)``。C++ 侧不可用时
+        ``eval_expert_auto`` 会自行透明降级，无需调用方处理。
+        """
+        if self.use_cpp_eval:
+            return eval_expert_auto(state, seat, self.w,
+                                    cpp_w=self._cpp_weights())
+        return evaluate_expert(state, seat, self.w)
 
     # ------------------------------------------------------------- 走法排序
 
@@ -412,6 +464,23 @@ class ExpertSearchEngine:
         2. Delta Pruning 剪枝加速；
         3. 延伸至更深交火线（默认 16 ply），彻底消除地平线反杀盲区。
         """
+        # 切片 2：整棵静态搜索子树交给 C++（一次序列化，零每节点桥接开销）。
+        # C++ 侧不实现 QTT（纯缓存，不改变返回值），故 qnodes 会比 Python 路径高。
+        if self.use_cpp_qsearch:
+            if self._cpp_qs is None:
+                try:
+                    self._cpp_qs = make_cpp_qsearch(self.w, self.qsearch_depth)
+                except Exception:  # noqa: BLE001
+                    self.use_cpp_qsearch = False
+                    self._cpp_qs = None
+            if self._cpp_qs is not None:
+                val, qn = qsearch_auto(state, alpha, beta, depth_left,
+                                       cpp_qs=self._cpp_qs)
+                if val is not None:
+                    self.stats.qnodes += qn
+                    return val
+                self.use_cpp_qsearch = False  # C++ 失败即永久退回 Python
+
         self.stats.qnodes += 1
 
         # 终局检查
@@ -432,7 +501,7 @@ class ExpertSearchEngine:
                 return tt_val
 
         # Stand-Pat 评估剪枝
-        stand_pat = evaluate_expert(state, state.turn, self.w)
+        stand_pat = self._eval(state, state.turn)
         if stand_pat >= beta:
             if zkey is not None:
                 self.qtt.store(zkey, depth_left, beta, FLAG_LOWER_BOUND)
@@ -546,7 +615,7 @@ class ExpertSearchEngine:
                         win = WIN_SCORE - child.ply
                         child_val = win if child.winner == child.turn else -win
                 else:
-                    child_val = evaluate_expert(child, child.turn, self.w)
+                    child_val = self._eval(child, child.turn)
 
                 expected += prob * (-child_val)
             return expected

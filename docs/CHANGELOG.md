@@ -1,5 +1,166 @@
 # CHANGELOG
 
+## [2026-09-15] 第十二批 — 切片 1：`evaluate_expert` C++ 移植（P4 / P1）
+
+阶段归属：**P4（工程基础设施）/ P1（传统搜索性能）**。
+依据 `docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md` 第五节"切片 1"。
+
+### 一、做了什么
+
+把 `junqi/eval_expert.py::evaluate_expert`（含其依赖的 `analysis.py::fortress_score`
+与 `is_dead_draw`）移植为 C++，通过 pybind11 暴露，Python 侧经 `core_bridge`
+统一调度并透明降级。
+
+| 文件 | 说明 |
+|---|---|
+| `src_cpp/include/eval_expert.h`、`src_cpp/src/eval_expert.cpp` | C++ 实现（新增） |
+| `src_cpp/src/eval_expert_tables.cpp` | **顺序敏感**常量表，由 `scripts/gen_expert_tables.py` 从 Python 真源生成（新增） |
+| `src_cpp/bindings/python_bindings.cpp` | `ExpertWeights` 类 + `eval_expert_cpp` / `fortress_score_cpp` / `is_dead_draw_cpp` + 两个自检入口 |
+| `junqi/core_bridge.py` | `encode_board` / `encode_dead` / `make_cpp_weights` / `eval_expert_auto` |
+| `junqi/search.py` | `ExpertSearchEngine(use_cpp_eval=...)`，`_eval()` 派发；默认 `DEFAULT_USE_CPP_EVAL = True` |
+| `scripts/build_cpp.py` | 重建脚本（绕过被拦截的 `reg.exe`，见下） |
+
+### 二、两个必须记住的坑（都已固化成测试）
+
+**1. C++ 邻接表顺序 ≠ Python NEIGHBORS 顺序 —— 这是语义问题不是浮点问题。**
+Python 的 `NEIGHBORS` 由 `set` 迭代序决定，C++ `get_road_neighbors()` 按 (上,左,下,右)
+构造，两者不同（如 (0,1)：Python `[0,2,6]` vs C++ `[0,6,2]`）。而 `evaluate_expert`
+里 `my_reach[0]` 直接取邻居列表首元素。故**不能**复用 C++ 既有表，改由
+`scripts/gen_expert_tables.py` 生成，并有 `tests/` 用例逐格比对 + `--check` 防漂移。
+`sorted(CAMPS, key=中营优先)` 同理。
+
+**2. 阵亡子**不可**由棋盘反推。**
+曾考虑省掉 `encode_dead`（省 2.8 µs/次），用 `dead = COMPOSITION − board_counts`
+在 C++ 侧推导。实测该不变式在 `_evaluate_chance_flip` 的子状态上**不成立**
+（派生阵亡数出现 12 次为负）—— 因为该路径把某暗子位置替换成采样身份但 `dead` 不变。
+已放弃该优化，并留下 `test_dead_counts_are_not_derivable_from_board` 固定此事实。
+
+### 三、浮点等价性：先量化，再决定要不要传顺序
+
+`scratch/probe_eval_order_sensitivity.py` 实测：C++ 按 idx 升序 vs Python 按 dict
+插入序，估值差 **max_abs = 5.684e-14**（default 标度）/ 2.274e-13（apk 标度），
+比验收阈值 1e-9 低 **4 个数量级**。⇒ 无需传输 board 迭代序，用固定 60 字节布局。
+
+### 四、验证
+
+- **估值**：`scratch/perf_baseline.py verify --cpp` → `EQUIVALENT`；
+  560 次比对 worst_abs_diff = **5.684e-14**。
+- **搜索决策**：30 次 `depth=2` 搜索，动作 + 分值全部一致（Python 路径同样 EQUIVALENT）。
+- **测试**：`tests/test_p4_cpp_eval_expert.py`（14 项，新增）；全量 **519 passed, 3 skipped**。
+- **限时路径**（`scratch/bench_cpp_timed.py`，800 ms 预算，`max_depth=8`）：
+  更深 2 / 一致 2 / **更浅 0**，**四个局面决策全部一致** ⇒ 无回归。
+  中盘两个局面 C++ 多搜一层（depth 2→3）后仍选同一动作，只是分值更准。
+
+  ⚠ 判读时易被一个数字误导：残局显示 `nodes=28(py) vs 513(cpp)` 而 `max_depth` 同为 1。
+  这不是估值差异 —— **不限时下两者 nodes/qnodes 完全相同**（depth=1：28/3767；
+  depth=2：759/25780）。真相是 C++ 用 185 ms 就跑完 depth 1，IDS 于是**开始了 depth 2**，
+  在 512 节点超时检查处被截断；按 `self.stopped` 既有语义该层整层作废、
+  `degraded` 保持 False、`max_depth` 仍记 1。属预期行为，非 C++ 引入。
+
+⚠ **已知差异（非阻塞）**：C++ 与 Python 的**节点数**可能有 <2% 的差异
+（实测 854 vs 860）。5.7e-14 的量级足以翻转根节点并列比较
+（`score > current_d_best_score`），进而改变剪枝时机；但**最终决策不变**。
+测试用 2% 宽松界防止量级性发散，决策一致性仍为严格断言。
+
+### 五、性能（`scratch/bench_cpp_eval.py` / `scratch/profile_cpp_eval.py`）
+
+| 局面 | Python | C++ | 加速 |
+|---|---|---|---|
+| opening (ply=0) | 1514 ms | 417 ms | **3.63×** |
+| midgame (ply=30) | 673 ms | 181 ms | **3.73×** |
+| midgame2 (ply=30) | 389 ms | 95 ms | **4.09×** |
+| **endgame (ply=90)** | **4236 ms** | **1225 ms** | **3.46×** |
+
+四个局面决策 + 分值 + nodes + qnodes 全部一致。
+
+**估值函数本身**：99.64 µs → 8.4~10.2 µs（**5.8~9.0×**）。拆解后发现与计划预估相反：
+
+| 段 | 实测 | 计划预估 |
+|---|---|---|
+| C++ 计算 | **2.38~3.80 µs** | ~5 µs（**比预估更快**） |
+| 序列化 + pybind 编组 | **6.06~6.44 µs** | 1~2 µs（**比预估慢 3×**） |
+
+⇒ **结论：继续优化桥接层收益有限，且切片 2/3 会整棵子树搬进 C++、
+让每节点序列化彻底消失，届时这段开销自然归零。故不在本切片继续做序列化微优化。**
+
+### 六、构建环境（重要）
+
+本机 `reg.exe` 被安全策略拦截，而 setuptools 依赖注册表定位 Windows SDK，
+直接 `pip install -e .` 会先后报 `fatal error C1083: 无法打开包括文件 'io.h'`
+与 `LINK : fatal error LNK1158: cannot run 'rc.exe'`。
+已加 `scripts/build_cpp.py` 自动探测 SDK/MSVC/rc.exe 并注入 `INCLUDE`/`LIB`/`PATH`：
+
+```bash
+python scripts/build_cpp.py            # 增量
+python scripts/build_cpp.py --clean    # 全量
+```
+
+---
+
+## [2026-09-15] 第十三批 — 切片 2：`QSearch` + `legal_actions` → C++（P4 / P1）
+
+阶段归属：**P4（工程基础设施）/ P1（传统搜索性能）**。
+依据 `docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md` 第五节"切片 2"。
+
+### 一、做了什么
+
+把 `ExpertSearchEngine._qsearch` 的**整棵递归子树**搬进 C++，Python 只在根节点
+跨语言一次（单个紧凑 blob），子树内零桥接开销。
+
+| 文件 | 说明 |
+|---|---|
+| `src_cpp/include/expert_qsearch.h`、`src_cpp/src/expert_qsearch.cpp` | QSearch + `apply_expert` + `_score_action`（新增 ~570 行） |
+| `src_cpp/bindings/python_bindings.cpp` | `ExpertQSearch` 类（`qsearch` / `qsearch_blob`） |
+| `junqi/core_bridge.py` | `encode_state_blob` / `make_cpp_qsearch` / `qsearch_auto` |
+| `junqi/search.py` | `ExpertSearchEngine(use_cpp_qsearch=...)`，默认 `DEFAULT_USE_CPP_QSEARCH = True` |
+
+### 二、性能（`scratch/bench_cpp_slice2.py`，depth=2，三档决策全部一致）
+
+| 局面 | 纯 Python | 切片 1（仅 C++ 估值） | **切片 2（完整）** | 加速 |
+|---|---|---|---|---|
+| opening (ply=0) | 1527 ms | 413 ms | 424 ms | 3.60× |
+| midgame (ply=30) | 671 ms | 191 ms | **68 ms** | **9.84×** |
+| midgame2 (ply=30) | 402 ms | 101 ms | **52 ms** | **7.74×** |
+| **endgame (ply=90)** | **4250 ms** | 1228 ms | **245 ms** | **17.36×** |
+
+开局无吃子（qnodes=0）故切片 2 无增益，其 424 ms 全在机会节点/`_negamax` ——
+**这正是切片 3 的目标**。
+
+### 三、三个关键设计决策
+
+**1. 走法顺序不必对齐 —— 这是本切片最重要的简化。**
+探针实测（`scratch/probe_legal_actions_equiv.py`，300 局面）：
+**集合不一致 0**，**顺序不一致 269**。顺序不同的根源是 Python 的铁路滑行/工兵飞行
+返回 `set`（迭代序由 tuple 哈希决定），C++ 天然无法低成本复刻。
+但 `_qsearch` 只取"吃明子"的 move 并按 `_score_action` **稳定排序**遍历，
+而 **alpha-beta 的返回值与遍历顺序无关**（顺序只影响剪枝效率 ⇒ 只影响节点数）。
+故只需保证集合一致，省掉了改动 Python 侧 `legal_actions` 的麻烦。
+
+**2. C++ 侧刻意不实现 QTT（QSearch 置换表）。**
+C++ 单节点已降到 µs 级，QTT 的收益抵不过 zobrist + 查表成本，且它是**纯缓存**、
+去掉不改变返回值。代价：`stats.qnodes` 会**高于** Python 路径（残局 36721 vs 25780）。
+已加测试 `test_cpp_qsearch_increases_qnodes_without_changing_decision` 固定该事实，
+防止后人误判为回归。`tests/test_p1_qsearch_tt.py` 改为显式
+`use_cpp_qsearch=False`，继续覆盖 Python 侧 QTT 实现。
+
+**3. 单独实现 `apply_expert`，不复用 `JunqiBoard::apply`。**
+后者与 Python `GameState.apply` 有一处语义差异：**BOTH_DIE 撞军旗时 Python 判攻方胜**
+（`winner=turn,"flag"`），C++ 未判。改 `board.cpp` 会影响 APK 引擎，故在
+`expert_qsearch.cpp` 内独立实现逐行对齐的版本。
+
+### 四、验证
+
+- **走法集合**：探针 300 局面 0 不一致；测试 `test_action_set_matches` 覆盖。
+- **qsearch 值**：`scratch/probe_qsearch_equiv.py` 40 局面 × qd=6，
+  **0 不一致，worst abs diff = 0.000e+00**（全窗口）。测试另覆盖窄窗口。
+- **基线**：`scratch/perf_baseline.py verify` → `EQUIVALENT`。
+- **测试**：`tests/test_p4_cpp_qsearch.py`（8 项，新增）；全量 **526 passed / 3 skipped**。
+- **限时路径**（`scratch/bench_cpp_timed.py`，800 ms）：更深 3 / 一致 1 / **更浅 0**。
+  残局决策**变化**：C++ 在同样预算内跑到 depth 3，Python 只到 depth 1（仅 28 节点）。
+  ⇒ 属**预期改善**（预算利用更充分、决策更 informed），与第十一批 QTT 情形一致。
+
+---
+
 ## [2026-09-15] 第十一批 — QSearch 置换表（建议顺序第 3 项，P1）
 
 阶段归属：**P1（传统搜索性能）**。用户决策：跳过第 2 项（内层翻棋部分展开，高风险、

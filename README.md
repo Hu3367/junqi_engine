@@ -9,6 +9,9 @@
 > - ✅ 根治中营与角营往复互窜缺陷，全面校准“首翻即据点、依托行营辐射拓荒”实战棋理
 > - ✅ 1:1 独立极简纯净 APK 引擎 (ApkSearchEngine)：5 大逆向差异全量对齐（2560 等比估值核、纯明子树拓扑、开局 6 黄金位、Jitter 抖动与 70 步和棋）
 > - ✅ 高性能 C++ 原生引擎基础设施 (`src_cpp/`) 与双轨热拔插网桥 (`junqi/core_bridge.py`)：60 字节紧凑内存布局、50~100 倍潜在算力加速、未编译环境透明自动降级
+> - ✅ **（2026-09-15）`evaluate_expert` 已移植至 C++**（移植切片 1）：残局单步 4236 → 1225 ms（3.46×），估值函数 5.8~9.0×，`scratch/perf_baseline.py verify --cpp` 逐位一致（worst 5.68e-14）。开关 `ExpertSearchEngine(use_cpp_eval=...)`，默认开、可回滚。
+> - ✅ **（2026-09-15）QSearch 也已移植至 C++**（移植切片 2）：残局单步 4250 → 245 ms（**17.36×**，切片 1 后为 1228 ms），中盘 9.84× / 7.74×。开关 `ExpertSearchEngine(use_cpp_qsearch=...)`，默认开、可回滚。
+> - ⚠️ **重建 C++ 扩展请用 `python scripts/build_cpp.py`**（`--clean` 全量）：本机 `reg.exe` 被安全策略拦截，setuptools 无法靠注册表定位 Windows SDK，直接 `pip install -e .` 会报 `C1083: 无法打开包括文件 'io.h'`。
 > - ✅ 13 份专业文档 (>120k 字)
 > - ✅ 全量单元测试通过（`python -m pytest tests/ -q`，数量随迭代增长，以 CI 输出为准）
 > - ⚠️ Python ≥ 3.10，必须使用虚拟环境运行

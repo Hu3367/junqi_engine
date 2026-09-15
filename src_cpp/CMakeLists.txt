@@ -18,6 +18,9 @@ set(CORE_SOURCES
     src/rules.cpp
     src/zobrist.cpp
     src/eval_apk.cpp
+    src/eval_expert.cpp
+    src/eval_expert_tables.cpp
+    src/expert_qsearch.cpp
     src/apk_engine.cpp
 )
 

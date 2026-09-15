@@ -1,5 +1,12 @@
 """QSearch 置换表（P1，2026-09-15）。
 
+> ⚠ **2026-09-15 切片 2 之后**：本文件测试的是 **Python 侧** `_qsearch` 的 QTT 机制。
+> C++ 移植（切片 2）把整棵静态搜索子树搬进 C++ 后，默认路径不再经过 Python `_qsearch`，
+> QTT 也就不会被写入 —— C++ 单节点成本已降到 µs 级，QTT 的收益抵不过 zobrist + 查表成本，
+> 故 C++ 侧**刻意不实现** QTT。
+> 因此本文件所有引擎都显式传 `use_cpp_qsearch=False`，继续覆盖 Python 实现。
+> 开/关 C++ 后**决策一致**由 `tests/test_p4_cpp_qsearch.py` 守卫。
+
 背景：残局 qnodes / nodes = 43~47×，depth=2 单步 4.6~6.0s、depth=3 达 33.3s。
 实测定位（`scratch/diag_qsearch_bottleneck.py`，残局 ply=90）：
 
@@ -57,14 +64,14 @@ def make_state(seed: int = 43, plies: int = 30):
 class TestQttIsolation(unittest.TestCase):
 
     def test_qtt_is_a_separate_table(self):
-        eng = ExpertSearchEngine(seed=7)
+        eng = ExpertSearchEngine(seed=7, use_cpp_qsearch=False)
         self.assertTrue(hasattr(eng, "qtt"),
                         "QSearch 必须有独立的置换表（不能复用 self.tt）")
         self.assertIsNot(eng.qtt, eng.tt)
 
     def test_both_tables_are_used_and_counted_separately(self):
         st = make_state()
-        eng = ExpertSearchEngine(seed=7)
+        eng = ExpertSearchEngine(seed=7, use_cpp_qsearch=False)
         eng.search(st, max_depth=2)
         self.assertGreater(eng.qtt.stores, 0, "qsearch 应写入自己的表")
         # 主表由 _negamax 使用；两者计数互不影响
@@ -72,7 +79,7 @@ class TestQttIsolation(unittest.TestCase):
 
     def test_clear_heuristics_clears_qtt_too(self):
         st = make_state()
-        eng = ExpertSearchEngine(seed=7)
+        eng = ExpertSearchEngine(seed=7, use_cpp_qsearch=False)
         eng.search(st, max_depth=2)
         self.assertGreater(eng.qtt.stores, 0)
         eng.clear_heuristics()
@@ -87,8 +94,8 @@ class TestQttEquivalentDecision(unittest.TestCase):
     """
 
     def _both(self, st, depth=2, qd=4):
-        on = ExpertSearchEngine(seed=7, use_qtt=True)
-        off = ExpertSearchEngine(seed=7, use_qtt=False)
+        on = ExpertSearchEngine(seed=7, use_qtt=True, use_cpp_qsearch=False)
+        off = ExpertSearchEngine(seed=7, use_qtt=False, use_cpp_qsearch=False)
         a_on, s_on, st_on = on.search(st, max_depth=depth, qsearch_depth=qd)
         a_off, s_off, st_off = off.search(st, max_depth=depth, qsearch_depth=qd)
         return (a_on, s_on, st_on), (a_off, s_off, st_off)
@@ -118,8 +125,8 @@ class TestQttEfficiency(unittest.TestCase):
 
     def test_qtt_does_not_increase_qnodes(self):
         st = make_state(44, 60)
-        on = ExpertSearchEngine(seed=7, use_qtt=True)
-        off = ExpertSearchEngine(seed=7, use_qtt=False)
+        on = ExpertSearchEngine(seed=7, use_qtt=True, use_cpp_qsearch=False)
+        off = ExpertSearchEngine(seed=7, use_qtt=False, use_cpp_qsearch=False)
         _, _, s_on = on.search(st, max_depth=2, qsearch_depth=4)
         _, _, s_off = off.search(st, max_depth=2, qsearch_depth=4)
         self.assertLessEqual(s_on.qnodes, s_off.qnodes,
@@ -128,7 +135,7 @@ class TestQttEfficiency(unittest.TestCase):
     def test_qtt_hit_ratio_is_positive(self):
         """真实残局里应出现正向命中（这是 54.3% 重复率的直接体现）。"""
         st = make_state(44, 90)
-        eng = ExpertSearchEngine(seed=7, use_qtt=True)
+        eng = ExpertSearchEngine(seed=7, use_qtt=True, use_cpp_qsearch=False)
         _, _, stats = eng.search(st, max_depth=2, qsearch_depth=2)
         self.assertGreater(eng.qtt.hits, 0, "残局 qsearch 应出现置换表命中")
         self.assertGreater(stats.qnodes, 0)
@@ -139,7 +146,7 @@ class TestQttFlagSemantics(unittest.TestCase):
 
     def test_cutoff_entry_is_lower_bound(self):
         st = make_state(44, 90)
-        eng = ExpertSearchEngine(seed=7, use_qtt=True)
+        eng = ExpertSearchEngine(seed=7, use_qtt=True, use_cpp_qsearch=False)
         eng.search(st, max_depth=2, qsearch_depth=2)
         flags = [e.flag for e in eng.qtt.table if e is not None]
         self.assertTrue(flags, "应有条目写入")
@@ -152,8 +159,8 @@ class TestQttFlagSemantics(unittest.TestCase):
         用 qsearch_depth=1 强制大量 depth_left==0 的截断，验证不会崩且仍等价。
         """
         st = make_state(43, 30)
-        on = ExpertSearchEngine(seed=7, use_qtt=True)
-        off = ExpertSearchEngine(seed=7, use_qtt=False)
+        on = ExpertSearchEngine(seed=7, use_qtt=True, use_cpp_qsearch=False)
+        off = ExpertSearchEngine(seed=7, use_qtt=False, use_cpp_qsearch=False)
         a1, s1, _ = on.search(st, max_depth=2, qsearch_depth=1)
         a0, s0, _ = off.search(st, max_depth=2, qsearch_depth=1)
         self.assertEqual(str(a1), str(a0))

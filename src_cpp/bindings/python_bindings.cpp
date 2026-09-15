@@ -6,6 +6,8 @@
 #include "board.h"
 #include "rules.h"
 #include "eval_apk.h"
+#include "eval_expert.h"
+#include "expert_qsearch.h"
 #include "apk_engine.h"
 
 namespace py = pybind11;
@@ -134,6 +136,106 @@ PYBIND11_MODULE(junqi_core, m) {
     // Evaluation functions
     m.def("eval_apk_pure", &eval_apk_pure, py::arg("board"), py::arg("my_color"));
     m.def("eval_apk_flip_root", &eval_apk_flip_root, py::arg("board"), py::arg("flip_act"), py::arg("my_color"));
+
+    // ---------------------------------------------------------------- 专家评估（切片 1）
+    py::class_<ExpertWeights>(m, "ExpertWeights")
+        .def(py::init<>())
+        .def_readwrite("camp_occ", &ExpertWeights::camp_occ)
+        .def_readwrite("hq_locked", &ExpertWeights::hq_locked)
+        .def_readwrite("flag_exposed", &ExpertWeights::flag_exposed)
+        .def_readwrite("threat", &ExpertWeights::threat)
+        .def_readwrite("attack", &ExpertWeights::attack)
+        .def_readwrite("attack_camp", &ExpertWeights::attack_camp)
+        .def_readwrite("camp_siege", &ExpertWeights::camp_siege)
+        .def_readwrite("camp_zone", &ExpertWeights::camp_zone)
+        .def_readwrite("fortress", &ExpertWeights::fortress)
+        .def_readwrite("hidden_tempo", &ExpertWeights::hidden_tempo)
+        .def_readwrite("echelon_si_compensation", &ExpertWeights::echelon_si_compensation)
+        .def_readwrite("camp_matrix_weight", &ExpertWeights::camp_matrix_weight)
+        .def_readwrite("mine_flag_guard_bonus", &ExpertWeights::mine_flag_guard_bonus)
+        .def_readwrite("bomb_ratio", &ExpertWeights::bomb_ratio)
+        .def_readwrite("use_dynamic_bomb", &ExpertWeights::use_dynamic_bomb)
+        .def_readwrite("bomb_suicide_exchange", &ExpertWeights::bomb_suicide_exchange)
+        .def_readwrite("camp_outstrike_bias", &ExpertWeights::camp_outstrike_bias)
+        .def("set_piece", [](ExpertWeights& w, int rank_value, double v) {
+            if (rank_value < 0 || rank_value >= 32) throw std::out_of_range("rank_value");
+            w.piece[rank_value] = v;
+        })
+        .def("get_piece", [](const ExpertWeights& w, int rank_value) {
+            if (rank_value < 0 || rank_value >= 32) throw std::out_of_range("rank_value");
+            return w.piece[rank_value];
+        });
+
+    m.def("eval_expert_cpp",
+          [](const std::string& board_bytes, const std::string& dead_bytes,
+             int turn, int ply, int quiet, int seat0, int seat1,
+             bool flag_needs_mines_cleared, bool flag_gong_only,
+             bool hq_locks_pieces, int no_capture_draw_plies,
+             int seat, const ExpertWeights& w, bool ignore_rule_draw) {
+              ExpertState st = make_expert_state(
+                  board_bytes, dead_bytes, turn, ply, quiet, seat0, seat1,
+                  flag_needs_mines_cleared, flag_gong_only, hq_locks_pieces,
+                  no_capture_draw_plies);
+              return eval_expert_cpp(st, seat, w, ignore_rule_draw);
+          },
+          py::arg("board_bytes"), py::arg("dead_bytes"), py::arg("turn"),
+          py::arg("ply"), py::arg("quiet"), py::arg("seat0"), py::arg("seat1"),
+          py::arg("flag_needs_mines_cleared"), py::arg("flag_gong_only"),
+          py::arg("hq_locks_pieces"), py::arg("no_capture_draw_plies"),
+          py::arg("seat"), py::arg("weights"), py::arg("ignore_rule_draw") = false);
+
+    m.def("fortress_score_cpp",
+          [](const std::string& board_bytes, const std::string& dead_bytes,
+             int turn, int ply, int quiet, int seat0, int seat1,
+             bool flag_needs_mines_cleared, bool flag_gong_only,
+             bool hq_locks_pieces, int no_capture_draw_plies, int seat) {
+              ExpertState st = make_expert_state(
+                  board_bytes, dead_bytes, turn, ply, quiet, seat0, seat1,
+                  flag_needs_mines_cleared, flag_gong_only, hq_locks_pieces,
+                  no_capture_draw_plies);
+              return fortress_score_cpp(st, seat);
+          });
+
+    m.def("is_dead_draw_cpp",
+          [](const std::string& board_bytes, const std::string& dead_bytes,
+             int turn, int ply, int quiet, int seat0, int seat1,
+             bool flag_needs_mines_cleared, bool flag_gong_only,
+             bool hq_locks_pieces, int no_capture_draw_plies,
+             bool ignore_quiet_limit) {
+              ExpertState st = make_expert_state(
+                  board_bytes, dead_bytes, turn, ply, quiet, seat0, seat1,
+                  flag_needs_mines_cleared, flag_gong_only, hq_locks_pieces,
+                  no_capture_draw_plies);
+              return is_dead_draw_cpp(st, ignore_quiet_limit);
+          });
+
+    // ---------------------------------------------------------------- 切片 2：QSearch
+    py::class_<ExpertQSearch>(m, "ExpertQSearch")
+        .def(py::init<>())
+        .def_readwrite("weights", &ExpertQSearch::w)
+        .def_readwrite("qsearch_depth", &ExpertQSearch::qsearch_depth)
+        .def("qsearch", &ExpertQSearch::qsearch,
+             py::arg("board"), py::arg("alpha"), py::arg("beta"), py::arg("depth_left"))
+        .def("qsearch_blob", &ExpertQSearch::qsearch_blob,
+             py::arg("blob"), py::arg("alpha"), py::arg("beta"), py::arg("depth_left"))
+        .def("reset_stats", [](ExpertQSearch& e) { e.stats = ExpertQSearchStats{}; })
+        .def_property_readonly("qnodes", [](const ExpertQSearch& e) { return e.stats.qnodes; });
+
+    // 顺序敏感表的一致性自检入口（供 Python 测试比对，防 C++/Python 漂移）
+    m.def("expert_road_neighbors", []() {
+        std::vector<std::vector<int>> out;
+        const auto& tab = get_expert_road_neighbors();
+        for (int i = 0; i < NUM_CELLS; ++i) {
+            std::vector<int> row;
+            for (int k = 0; k < tab[i].count; ++k) row.push_back(tab[i].neighbors[k]);
+            out.push_back(row);
+        }
+        return out;
+    });
+    m.def("expert_camp_order", []() {
+        const auto& c = get_expert_camp_order();
+        return std::vector<int>(c.begin(), c.end());
+    });
 
     // Search Engine
     py::class_<ApkSearchEngine>(m, "ApkSearchEngine")

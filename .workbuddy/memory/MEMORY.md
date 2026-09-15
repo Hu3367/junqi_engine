@@ -30,6 +30,54 @@
   仍会"匹配成功"，然后把整段按**错的**缩进写回 → `IndentationError`。
   → **每次 Edit 后读回确认缩进**，尤其复用旧代码块当锚点时。
   → 改 `junqi/selfplay.py::play_game` 时注意 `s0`/`s1` 已是**策略对象**，局部变量别重名。
+- **⚠️ 重建 C++ 扩展一律用 `python scripts/build_cpp.py`**（`--clean` 全量），
+  **不要用 `pip install -e .`**：本机 `reg.exe` 被安全策略拦截，setuptools 靠注册表
+  定位 Windows SDK 会失败 → 先报 `C1083: 无法打开包括文件 'io.h'`（缺 ucrt 头），
+  再报 `LNK1158: cannot run 'rc.exe'`。build_cpp.py 自动探测 SDK/MSVC/rc.exe
+  并注入 `INCLUDE`/`LIB`/`PATH`（distutils 会读这两个环境变量）。
+
+## C++ 移植（切片 1 已交付，2026-09-15）
+
+- 计划与验收见 `docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md`；
+  CHANGELOG「第十二批」有完整实测数据。状态：切片 1 完成，切片 2/3 待决策。
+- `evaluate_expert` + `fortress_score` + `is_dead_draw` 已移植到
+  `src_cpp/src/eval_expert.cpp`；残局单步 4236→1225ms（3.46×），估值 5.8~9.0×。
+  开关 `ExpertSearchEngine(use_cpp_eval=...)`，默认开，异常自动永久降级回 Python。
+- **顺序敏感常量表是生成物**：`src_cpp/src/eval_expert_tables.cpp` 由
+  `scripts/gen_expert_tables.py` 从 Python 真源生成（NEIGHBORS 的 set 迭代序、
+  `sorted(CAMPS, key=中营优先)` 的 frozenset 迭代序）。**改了 Python 端几何常量必须重跑
+  生成器**，`--check` 会校验是否过期（有测试守卫）。
+  ⚠️ 别复用 `src_cpp` 里既有的 `get_road_neighbors()` —— 它按 (上,左,下,右) 构造，
+  **顺序与 Python NEIGHBORS 不同**（(0,1)：C++ [0,6,2] vs Python [0,2,6]），
+  而 `my_reach[0]` 取首元素 ⇒ 是语义差异不是浮点误差。
+- **阵亡子必须显式序列化，不可由棋盘反推**：`_evaluate_chance_flip` 的子状态会替换
+  暗子身份但 dead 不变，`board ∪ dead = 完整编制` 不变式**不成立**（实测 12 次派生为负）。
+  有测试 `test_dead_counts_are_not_derivable_from_board` 固定此事实。
+- **桥接成本实测（修正了原计划预估）**：C++ 计算 2.4~3.8 µs（优于原估 5 µs），
+  序列化 + pybind 编组 6.0~6.4 µs（原估 1~2 µs，慢 3 倍）。
+  ⇒ 别再花力气做序列化微优化，收益在切片 2/3（整棵子树搬进 C++ 后该开销归零）。
+- 浮点顺序敏感度已量化：idx 升序 vs board dict 序，max_abs 差 **5.684e-14**
+  （default）/ 2.274e-13（apk），比 1e-9 阈值低 4 个量级 ⇒ 无需传迭代序。
+  残留：节点数可能差 <2%（并列比较翻转），决策不变。
+
+## C++ 移植（切片 2 已交付，2026-09-15）
+
+- 残局 4250 → 245ms（**17.36×**，切片 1 后为 1228ms）；中盘 9.84×/7.74×；开局 3.60×
+  （qnodes=0，其 424ms 全在机会节点/`_negamax` ⇒ 切片 3 目标）。
+  开关 `ExpertSearchEngine(use_cpp_qsearch=...)`，默认开。
+- **走法顺序不必对齐**（重要简化）：探针 300 局面 → 集合不一致 **0**、顺序不一致 269
+  （Python 铁路走法返回 `set`，迭代序由 tuple 哈希决定）。alpha-beta **返回值与遍历
+  顺序无关**，只需集合一致 ⇒ 不必改 Python 侧 `legal_actions`。
+- **C++ 侧刻意不实现 QTT**：纯缓存，µs 级节点下收益为负。代价 `qnodes` 更高
+  （36721 vs 25780），有测试固定该事实防误判回归。`tests/test_p1_qsearch_tt.py`
+  已改为显式 `use_cpp_qsearch=False` 继续覆盖 Python 侧 QTT。
+- **`JunqiBoard::apply` 与 Python `GameState.apply` 有差异**：BOTH_DIE 撞军旗时 Python
+  判攻方胜，C++ 未判。切片 2 用独立的 `apply_expert()` 对齐，**没改 board.cpp**（会影响 APK 引擎）。
+- **热路径跨语言必须用单个紧凑 blob**（`core_bridge.encode_state_blob`：
+  60B 棋盘 + 阵亡子 + 18B 头 `<7hi`）。`state_to_cpp` 要 50 次 set_piece ≈ 50µs，
+  **绝不能用在热路径**。
+- **工作量校准**：计划估 150 行、实际 ~570 行（还依赖 `apply` 与 235 行的
+  `_score_action`）。**后续切片按 3~4× 倍率估算。**
 
 ## 现有训练产物的真实状态（2026-09-15 清理后，决定重训范围时必看）
 
