@@ -256,16 +256,56 @@ class ApkSearchStats:
 class ApkSearchEngine:
     """官方 APK (libjunqi.so) 1:1 原生搜索引擎实现。"""
 
-    def __init__(self, tt_size_power: int = 18, seed: Optional[int] = None):
-        self.tt_mask = (1 << tt_size_power) - 1
-        # 置换表条目: key -> (depth, flag, score, best_move)
+    def __init__(self, tt_size_power: int = 18, seed: Optional[int] = None,
+                 tt_max_entries: Optional[int] = None):
+        self.tt_size_power = int(tt_size_power)
+        self.tt_mask = (1 << self.tt_size_power) - 1
+        # 置换表槽位: masked_index -> (full_key, depth, flag, score, best_move)
         # flag: 1=EXACT, 2=LOWER_BOUND, 3=UPPER_BOUND
-        self.tt: Dict[int, Tuple[int, int, float, Optional[Action]]] = {}
+        #
+        # P6 修复（2026-09-15 审查）：
+        #   ① 原实现把截断后的 18 位哈希**直接当键**，读取时从不校验完整 Zobrist，
+        #      跨局面碰撞会静默返回错误分数与错误 PV（对比 junqi/tt.py 有 key 校验）；
+        #   ② 原 `self.tt` 是无界 dict，长程自对弈随局面数线性膨胀（内存泄漏）。
+        #   现在存完整键并在命中时比对，同时给出显式容量上界。
+        self.tt_max_entries = int(tt_max_entries) if tt_max_entries else (1 << self.tt_size_power)
+        self.tt: Dict[int, Tuple[int, int, int, float, Optional[Action]]] = {}
         self.rng = random.Random(seed)
         self.stats = ApkSearchStats()
+        self.tt_collisions = 0          # 可观测：命中槽位但完整键不符的次数
 
     def _get_hash(self, state: GameState) -> int:
-        return compute_zobrist(state) & self.tt_mask
+        """完整 Zobrist（未截断）。槽位索引由 `_tt_slot` 负责。"""
+        return compute_zobrist(state)
+
+    def _tt_slot(self, full_key: int) -> int:
+        return full_key & self.tt_mask
+
+    def _tt_lookup(self, full_key: int):
+        """按完整键查表；槽位相同但完整键不符一律视为未命中。"""
+        entry = self.tt.get(self._tt_slot(full_key))
+        if entry is None:
+            return None
+        if entry[0] != full_key:
+            self.tt_collisions += 1
+            return None
+        return entry[1:]
+
+    def _tt_store(self, full_key: int, depth: int, flag: int, score: float,
+                  move: Optional[Action]) -> None:
+        slot = self._tt_slot(full_key)
+        old = self.tt.get(slot)
+        if old is not None and old[0] == full_key and old[1] > depth:
+            return                      # 不得用更浅的条目覆盖更深的结果
+        if old is None and len(self.tt) >= self.tt_max_entries:
+            self._tt_evict()
+        self.tt[slot] = (full_key, depth, flag, score, move)
+
+    def _tt_evict(self) -> None:
+        """超出容量时按插入序淘汰最旧的四分之一（dict 保持插入序，O(1) 均摊）。"""
+        target = max(1, self.tt_max_entries // 4)
+        for _ in range(min(target, len(self.tt))):
+            self.tt.pop(next(iter(self.tt)), None)
 
     def search(
         self,
@@ -441,9 +481,9 @@ class ApkSearchEngine:
             if elapsed_ms >= time_limit_ms:
                 return eval_apk_pure(state, state.my_color())
 
-        # 4. 置换表 (TT) 探测
-        h = self._get_hash(state)
-        tt_entry = self.tt.get(h)
+        # 4. 置换表 (TT) 探测（P6：按完整 Zobrist 校验，拒绝跨局面碰撞命中）
+        full_key = self._get_hash(state)
+        tt_entry = self._tt_lookup(full_key)
         tt_move = None
         if tt_entry is not None:
             t_depth, t_flag, t_score, t_move = tt_entry
@@ -518,7 +558,7 @@ class ApkSearchEngine:
             flag = 2  # LOWER_BOUND
         else:
             flag = 1  # EXACT
-        self.tt[h] = (depth, flag, best_score, best_act)
+        self._tt_store(full_key, depth, flag, best_score, best_act)
 
         return best_score
 

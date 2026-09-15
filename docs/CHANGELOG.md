@@ -1,6 +1,103 @@
 # CHANGELOG
 
-## [2026-09-15] — P0 修复：训练闭环两处致命缺陷 + 门控统一 + 经验池瘦身（代码审查落地）
+## [2026-09-15] 第二批 — 搜索/数据/健壮性/性能全量收口（审查 C1–C12、P2–P6 修复完毕）
+
+阶段归属：**P0（正确性）+ P1（数据口径）+ P3（运营/性能）**。承接同日第一批
+（R1/R2/R3/P1/R4，见下条）。至此 `reviews/CODE_REVIEW_2026-09-15.md` 中的
+全部条目均已处置。**未改动** `RuleConfig` 规则定义、终局奖励语义（胜 +1 / 和 0 / 负 −1）、
+公共 Policy 信息边界；未触碰 `models/best.pt`。
+
+### 一、搜索正确性（C1–C5）
+
+| 编号 | 问题 | 修复 |
+|---|---|---|
+| C1 | IDS 早停判据写成"当轮总耗时 > 预算 25%"，与"下一深度预计超时才停"的语义完全不符——1000ms 预算下 depth-1 用掉 260ms 就退出，剩余 740ms 全浪费 | 新增纯函数 `should_stop_ids` / `ids_growth_estimate`：按"已用 + 本层耗时×实测增长因子(夹在 2~12) > 预算"判定 |
+| C2 | 首层未完成即超时时返回 `(acts[0], -inf)`；该 `-inf` 经 `hybrid_engine` 取负成 `+inf` 参与排序，并被 `train_search_distill` 全量 softmax 蒸馏 | 超时降级返回 `(兜底动作, 0.0)` 且置 `stats.degraded=True`，**永不返回 ±inf** |
+| C3 | 根节点后续动作在收窄的 `[alpha, beta)` 窗口内搜索，fail-low 返回的是**上界**，却被当精确分写进 `root_scores` 供 top-N 展示与蒸馏 | 新增 `search(exact_root_scores=True)`：根节点全窗口搜索；同时新增 `stats.root_scores_bounded` 标记非精确分（PVS 模式）。`ai.ExpertAgent.choose_actions` 在 `topn>1` 时自动启用 |
+| C4 | `ai.py` 的 topn 回退分支把 1e5 量级的 move-ordering 分当估值分返回（还 `+= 100_000`） | 回退只诚实地返回 `[(best_act, 0.0)]`，不再伪造候选与分值 |
+| C5 | `hybrid_engine.select_action` 兜底 `Action("pass")` 缺必填 `frm`，触发即 TypeError | 返回 `None`；签名改为 `Optional[Action]` |
+
+### 二、MCTS 与推理热路径（C6、P2、P3）
+
+- **C6**：树内重复判和阈值原硬编码 `>= 3`，与生成夹具 `GENERATION_CFG`（4）不一致。新增
+  `tree_repetition_limit(state)` 跟随 `cfg.repetition_draw_count`（下限夹到 2）。
+- **P2**：`net.predict_state` 新增 `acts` / `mask` 可选参数，消除每次推理内**两遍**
+  `legal_actions()`；MCTS 叶子评估复用已算好的动作列表（用 `inspect.signature` 做能力探测，
+  不破坏旧签名/测试替身）。MCTS 根节点 `avoid` 命中判定从算两遍改为算一遍复用。
+- **P3**：`hybrid_engine._price_actions` 复用已构造的 `nxt` 计算重复局面键，去掉多余的
+  `state.apply(a)`。
+- **P5**：`_negamax` 中 `depth <= 0` 的 QSearch 提前到 Zobrist 计算之前（叶子不再白算全盘哈希）；
+  `_is_tactical` 闭包从"每动作每深度重建"提升到方法级定义一次。
+
+### 三、数据口径与方案文档（C7、R5、R6、C12）
+
+- **C7**：`dataset.py` 的 outcome 统计另写了一遍终局码判定并把 code 24（断线）计入
+  `decided_win`，与标签函数判其为 `none` 冲突，导致 `metadata.json` 的 `decided_win` 虚高
+  （p1_v3 记 488）。新增 `outcome_bucket_from_meta()`，统计与标签**共用同一张码表**。
+- **R6**：新增 `DEFAULT_P1_DIR = "datasets/p1_v3"` 与 `MIN_P1_VERSION = (3,0,0)`；
+  `dataset` / `train_bc` / `eval_bc` / `train_value_distill` / `__main__` 的默认数据集路径
+  全部统一到 p1_v3（此前散落 p1_v1/p1_v2，而 v2 生成于 code 24 修正之前、口径不同）；
+  `load_p1_arrays` 新增版本守卫 `check_p1_version`，低于 3.0.0 直接拒绝加载；
+  `--version` 默认值改为 3.0.0。
+- **R5**：基线文档 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` §6「Value」原先写"认输局双方按 ±1
+  计入 Value"，与 §5 P3 及 `train_rl.py`（认输局只进 Policy）自相矛盾。**代码是对的**
+  （防 Value 自证回路：实证开启认输时三分类准确率 60%→16%），已回写方案并补齐
+  「修订原因 / 影响范围 / 验证方法 / 回滚方案」四项（AGENTS.md 第 10 条要求）。
+- **C12**：`train_bc` / `eval_bc` / `fit_weights` / `load_p1_arrays` 首次获得测试覆盖。
+
+### 四、健壮性与指标口径（C8、C9）
+
+- **C8**：`selfplay.play_game` 的专家估值失败从 `except Exception: pass` 改为计数 +
+  显式告警，并把 `eval_failures` 写进对局记录（否则门控"裁决式判分"静默退化为 0.5 而无从察觉）；
+  顺带修掉"为算一个布尔标志又重复调用两次 `evaluate_expert`"的浪费（4 次 → 2 次）。
+  `StratifiedReplayBuffer.load` 失败不再静默，改为打印可诊断告警。
+- **C9**：`train_rl` 的 Elo 更新原为 `current_elo += 16*(score-0.5)*2`（与对手无关的线性
+  随机游走，却被写入 `elo_history.jsonl` 当实力曲线）。新增 `elo_update_from_score`，
+  按标准公式 `r_opp + 400*log10(s/(1-s))` 换算，得分率按样本量夹紧保证数值有限；每轮打印
+  前后等级分。
+
+### 五、性能收尾（P4、P6）
+
+- **P4**：新增 `ai.load_net_cached`（按 绝对路径+mtime+device 缓存，容量 8，仅供推理的
+  eval 副本）。门控/评测默认 256 局/轮、每局都会重建策略，原先每次都要从磁盘反序列化
+  ~34MB 权重（约 512 次/轮）。`NNAgent` 与 `HybridDecisionEngine` 均改走缓存。
+- **P6**：`apk_engine` 置换表原把**截断后的 18 位哈希直接当键**且读取时不校验完整
+  Zobrist（跨局面碰撞会静默返回错误分数与错误 PV，对比 `junqi/tt.py` 有 key 校验），
+  且 `self.tt` 无界增长。现改为存完整键 + 命中校验（`tt_collisions` 可观测）、
+  显式容量上界与插入序淘汰、且浅条目不得覆盖深条目。
+- **C10（部分）**：删除 `train_rl` 中从未被引用的 `PolicyDataset` / `ValueDataset` 两个
+  DataLoader 数据集类（训练实际直采 `StratifiedReplayBuffer`）。
+
+### 六、附带发现并修复：`scripts/cleanup_models.py` 会删掉热启动基线
+
+原删除模式含 `*_distilled.pt`，会连带删除 `models/value_distilled_v2.pt`——P3 修订后
+`train_rl` 热启动链**首选**的健康 Value 头（平衡准确率 0.735）。删掉后训练会静默退回
+`bc_best.pt`（价值头未校准），候选初期反而更弱。现改为：显式 `PROTECTED_EXACT` 保护
+热启动/发布链、**默认 dry-run**（必须 `--yes` 才执行）、并报告 pool/ 与 evidence_*/ 等
+子目录占用。
+
+### 七、测试
+
+新增 6 个测试文件（本批 66 项）：
+`test_p1_search_time_and_scores.py`(16)、`test_p1_mcts_repetition_and_batching.py`(9)、
+`test_p1_dataset_label_consistency.py`(21)、`test_p1_robustness_and_elo.py`(10)、
+`test_p3_apk_tt.py`(8)、`test_p4_net_cache.py`(6)、`test_p4_model_cleanup_script.py`(7)。
+
+全量：**298 passed / 3 skipped（审查前基线）→ 396 passed / 3 skipped**，无回归。
+
+### 八、仍未处置 / 需人工决策
+
+- `junqi/expert/` 11 个模块：选"标记废弃 + 守卫测试"（见 `junqi/expert/DEPRECATED.md`），
+  **未删除**；若要彻底删除请显式确认（`git rm -r junqi/expert/`，文件已在版本控制内可回滚）。
+- `models/` 现约 8.0 GB、`venv/` 约 4.7 GB：属运营清理，**未自动执行**。
+  清理中间产物可用 `python scripts/cleanup_models.py`（默认 dry-run）；
+  `venv/` 建议移出工程目录或加入忽略。
+- C10 的"超长函数拆分"（21 个 >120 行函数，如 `run_training` 339 行）属结构性重构，
+  收益低于回归风险，未在本批执行。
+
+---
+
+## [2026-09-15] 第一批 — P0 修复：训练闭环两处致命缺陷 + 门控统一 + 经验池瘦身（代码审查落地）
 
 阶段归属：**P0（正确性与可复现性）为主，含 P3 运营修正**。依据 [AGENTS.md](../AGENTS.md) 与
 [AI_TRAINING_AND_HUMAN_PLAY_PLAN.md](../AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) §5 P0 / §7。

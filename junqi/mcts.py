@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import math
 import random
 from collections import Counter
@@ -47,6 +48,25 @@ class MCTSNode:
         return self.q_value + u
 
 
+def tree_repetition_limit(state: GameState, default: int = 3) -> int:
+    """树内重复判和阈值：跟随对局规则 `cfg.repetition_draw_count`。
+
+    C6 修复（2026-09-15）：原实现在 MCTS 树内把阈值写死为 `>= 3`，而对局层
+    （含自博弈生成夹具 GENERATION_CFG）已经把它放宽到 4。两侧口径不一致会让
+    "搜索主动规避的循环"与"对局真正判和的循环"对不上：搜索可能在第 3 次就
+    把一条其实还能走的线判死，也可能反过来漏掉即将触发的判和。
+
+    阈值下限夹到 2（阈值为 1 意味着任何回访立刻判和，搜索无法展开）。
+    """
+    cfg = getattr(state, "cfg", None)
+    n = getattr(cfg, "repetition_draw_count", None) if cfg is not None else None
+    try:
+        n = int(n) if n else int(default)
+    except (TypeError, ValueError):
+        n = int(default)
+    return max(2, n)
+
+
 def _terminal_value(state: GameState) -> float:
     """终局价值：走子者（叶子轮次方）视角，+1 胜 / -1 负 / 0 和。
 
@@ -72,6 +92,17 @@ class MCTS:
         self.c_puct = c_puct
         self.dirichlet_eps = dirichlet_eps
         self.device = device
+        # P2：能力探测——只有网络暴露 `acts` 形参（或 **kwargs）时，叶子评估
+        # 才复用 MCTS 已算好的合法动作列表，避免破坏旧的 predict_state 契约
+        # （测试替身/第三方网络可能仍是原签名）。
+        try:
+            params = inspect.signature(net.predict_state).parameters
+            self._predict_accepts_acts = (
+                "acts" in params
+                or any(p.kind == inspect.Parameter.VAR_KEYWORD
+                       for p in params.values()))
+        except (TypeError, ValueError):
+            self._predict_accepts_acts = False
 
     def search(self, root_state: GameState, temperature: float = 1.0,
                add_noise: bool = False, rng: Optional[random.Random] = None,
@@ -98,6 +129,8 @@ class MCTS:
             return acts[0], pi_vec, pi_dict, [], None
 
         has_hidden = bool(root_state.hidden_positions())
+        # C6：树内重复判和阈值跟随对局规则（自博弈生成夹具会放宽到 4）
+        rep_limit = tree_repetition_limit(root_state)
 
         # 1. 根节点展开：采用 K=4 个采样世界平均先验
         if has_hidden:
@@ -116,10 +149,18 @@ class MCTS:
             for a in acts:
                 acc_priors[a] += policy_map.get(a, 1e-4)
 
+        # P3 性能：avoid 命中判定原先在"先验压制"和"严格过滤"两处各算一次，
+        # 每次都要 `position_key(root_state.apply(a))`（apply 复制全盘 + 排序 50 子）。
+        # 这里只算一遍并复用。
+        avoid_hit: Set[Action] = set()
+        if avoid:
+            avoid_hit = {a for a in acts
+                         if position_key(root_state.apply(a)) in avoid}
+
         for a in acts:
             prior_val = acc_priors[a] / sample_k
             # 若动作导致命中 avoid 集合，大幅压低先验促使搜索其它路径
-            if avoid and position_key(root_state.apply(a)) in avoid:
+            if a in avoid_hit:
                 prior_val = 1e-6
             root.children[a] = MCTSNode(prior=prior_val)
         root.is_expanded = True
@@ -181,7 +222,7 @@ class MCTS:
                 state = state.apply(best_act)
                 pk = position_key(state)
                 sim_history[pk] += 1
-                if sim_history[pk] >= 3:
+                if sim_history[pk] >= rep_limit:      # C6：跟随 cfg，不再写死 3
                     state.winner, state.win_reason = -1, "repetition"
                 node = best_child
 
@@ -193,8 +234,17 @@ class MCTS:
             else:
                 acts_curr = state.legal_actions()
                 if acts_curr:
-                    policy_map, v = self.net.predict_state(state, seat=state.turn, world=world,
-                                                           history_counts=sim_history, device=self.device)
+                    # P2：把已经算好的合法动作传进去，避免 predict_state 内部
+                    # 再遍历一次棋盘（legal_actions 是热路径上的主要开销之一）
+                    if self._predict_accepts_acts:
+                        policy_map, v = self.net.predict_state(
+                            state, seat=state.turn, world=world,
+                            history_counts=sim_history, device=self.device,
+                            acts=acts_curr)
+                    else:
+                        policy_map, v = self.net.predict_state(
+                            state, seat=state.turn, world=world,
+                            history_counts=sim_history, device=self.device)
                     # P0 修复：子节点取跨世界并集——已存在的子节点保留统计量与先验，
                     # 仅补充当前世界新增的合法动作；禁止覆盖（会丢弃其他世界的访问统计）。
                     for a in acts_curr:
@@ -222,9 +272,10 @@ class MCTS:
         visits = np.array([root.children[a].visit_count for a in acts_list], dtype=np.float32)
         q_vals = np.array([root.children[a].q_value for a in acts_list], dtype=np.float32)
 
-        # 严格 avoid 过滤：当存在非 avoid 动作时，彻底封锁导致第 3 次重复的走法
+        # 严格 avoid 过滤：当存在非 avoid 动作时，彻底封锁导致重复判和的走法
+        # （复用上面已算好的 avoid_hit，不再重复 apply + position_key）
         if avoid:
-            avoid_indices = [i for i, a in enumerate(acts_list) if position_key(root_state.apply(a)) in avoid]
+            avoid_indices = [i for i, a in enumerate(acts_list) if a in avoid_hit]
             if len(avoid_indices) < len(acts_list):
                 for idx in avoid_indices:
                     visits[idx] = 0.0

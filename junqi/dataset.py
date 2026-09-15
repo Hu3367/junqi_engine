@@ -5,6 +5,10 @@
 2. 公共 Policy 样本：公共 36 通道状态、3650 维合法动作掩码、人类动作、游戏阶段标签；
 3. 终局 Value 样本：仅使用明确胜负 (+1/-1) 与规则和棋 (0)，未终局与特殊中止局标记 has_value=False；
 4. 数据集可重复生成，附带版本号、SHA256 哈希与分阶段覆盖率统计。
+
+数据集版本约定（R6 修复，2026-09-15 审查）：
+  v1/v2 生成于 2026-09-06，早于 2026-09-13 的 "code 24 断线不得赋 Value" 修正，
+  口径不同、**不可与新代码混用**。所有默认路径统一指向 `DEFAULT_P1_DIR`。
 """
 from __future__ import annotations
 
@@ -22,6 +26,11 @@ import numpy as np
 
 import torch
 from torch.utils.data import Dataset
+
+# R6：唯一权威数据集目录与最低可接受版本。
+# v3.0.0 = 2026-09-13 修正 code 24 标签口径后重新生成（760/95/96 局切分）。
+DEFAULT_P1_DIR = "datasets/p1_v3"
+MIN_P1_VERSION = (3, 0, 0)
 
 import sys
 if __package__ is None or not __package__:
@@ -189,6 +198,21 @@ def terminal_label_from_meta(reason_code: int, winner_code: int) -> tuple[str, i
     return "none", -1
 
 
+def outcome_bucket_from_meta(meta: dict) -> str:
+    """把官方终局元数据映射到 outcome_distribution 的桶名。
+
+    C7 修复（2026-09-15）：原实现在统计循环里**另写一遍**终局码判定，并把
+    code 24（断线）算进 `decided_win`，与 `terminal_label_from_meta` 判其为
+    "none"（不赋 Value）直接冲突，使 metadata.json 的 decided_win 虚高。
+    现在统计与标签共用同一张码表，避免再次漂移。
+    """
+    rc = int(meta.get("reason_code", 0) or 0)
+    wc = int(meta.get("winner", 3) if meta.get("winner") is not None else 3)
+    kind, _seat = terminal_label_from_meta(rc, wc)
+    return {"decided": "decided_win", "draw": "rule_draw"}.get(
+        kind, "special_or_unfinished")
+
+
 def process_single_game(game: SavGame, cfg: RuleConfig,
                          meta_record: Optional[dict] = None) -> list[dict]:
     """重演单局并提取每个 ply 的训练样本。
@@ -288,7 +312,7 @@ def process_single_game(game: SavGame, cfg: RuleConfig,
     return samples
 
 
-def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v2",
+def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
                           split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
                           seed: int = 2026, version: str = "2.0.0",
                           max_games: Optional[int] = None,
@@ -416,14 +440,8 @@ def export_replay_dataset(sav_dir: str, out_dir: str = "datasets/p1_v2",
 
         for fpath, meta, game_samples in entries:
             if meta is not None:
-                rc = meta.get("reason_code", 0)
-                wc = meta.get("winner", 3)
-                if rc in (1, 21, 22, 23, 24) and wc in (1, 2):
-                    stats.outcome_distribution["decided_win"] += 1
-                elif rc in (40, 42, 43) or (wc == 3 and rc != 20):
-                    stats.outcome_distribution["rule_draw"] += 1
-                else:
-                    stats.outcome_distribution["special_or_unfinished"] += 1
+                # C7 修复：与 terminal_label_from_meta 同源，不再各写一遍码表
+                stats.outcome_distribution[outcome_bucket_from_meta(meta)] += 1
             else:
                 has_win = any(s["has_value"] and s["val_class"] in (0, 2) for s in game_samples)
                 has_draw = any(s["has_value"] and s["val_class"] == 1 for s in game_samples)
@@ -543,13 +561,15 @@ if __name__ == "__main__":
 
     p_export = sub.add_parser("export", help="从复盘数据导出标准行为克隆数据集 (npz)")
     p_export.add_argument("--sav-dir", default="军旗复盘", help=".sav 复盘文件目录")
-    p_export.add_argument("--out-dir", default="datasets/p1_v2", help="输出 npz 目录")
+    p_export.add_argument("--out-dir", default=DEFAULT_P1_DIR, help="输出 npz 目录")
     p_export.add_argument("--min-plies", type=int, default=20, help="异常短局过滤最小步数阈值 (默认 20)")
     p_export.add_argument("--seed", type=int, default=2026, help="随机种子")
-    p_export.add_argument("--version", default="2.0.0", help="数据集版本号")
+    p_export.add_argument("--version", default=".".join(map(str, MIN_P1_VERSION)),
+                          help="数据集版本号（低于 3.0.0 的数据集会被训练侧拒绝加载）")
 
     p_eval = sub.add_parser("eval", help="评估数据集 Policy 基准指标")
-    p_eval.add_argument("--dataset", default="datasets/p1_v2/val.npz", help="npz 数据集文件路径")
+    p_eval.add_argument("--dataset", default=f"{DEFAULT_P1_DIR}/val.npz",
+                        help="npz 数据集文件路径")
     p_eval.add_argument("--samples", type=int, default=1000, help="评估样本量")
 
     args = parser.parse_args()

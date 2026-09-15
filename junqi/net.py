@@ -20,6 +20,14 @@ from .encoder import (ACTION_SPACE_SIZE, NUM_CHANNELS, action_to_index,
 from .state import Action, GameState
 
 
+def _mask_from_actions(acts) -> "np.ndarray":
+    """由已算出的合法动作列表直接生成掩码，省掉一次 legal_actions() 遍历。"""
+    mask = np.zeros(ACTION_SPACE_SIZE, dtype=bool)
+    for a in acts:
+        mask[action_to_index(a)] = True
+    return mask
+
+
 class ResBlock(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
@@ -156,15 +164,26 @@ class JunqiNet(nn.Module):
     def predict_state(self, state: GameState, seat: int | None = None,
                       world: Optional[dict] = None,
                       history_counts: Optional[dict] = None,
-                      device: torch.device | str = "cpu") -> Tuple[dict[Action, float], float]:
-        """单状态便捷推理：输出合法走法概率字典及当前局面的标量期望估值 (-1.0 ~ +1.0)。"""
+                      device: torch.device | str = "cpu",
+                      acts: Optional[list] = None,
+                      mask: Optional["torch.Tensor"] = None) -> Tuple[dict[Action, float], float]:
+        """单状态便捷推理：输出合法走法概率字典及当前局面的标量期望估值 (-1.0 ~ +1.0)。
+
+        P2 优化（审查 P2，2026-09-15）：原本内部调用两次 `state.legal_actions()`
+        （一次生成掩码、一次组装 policy 字典）。MCTS 叶子评估这条热路径上，
+        调用方通常已经算过合法动作，可通过 `acts` / `mask` 传入避免重复遍历棋盘。
+        """
         self.eval()
         tensor = encode_state(state, seat=seat, world=world,
                               history_counts=history_counts, device=device)
-        mask_np = legal_action_mask(state)
-        mask_t = torch.from_numpy(mask_np).unsqueeze(0).to(device)
+        if mask is None:
+            if acts is None:
+                acts = state.legal_actions()
+            mask_np = _mask_from_actions(acts)
+            mask = torch.from_numpy(mask_np).unsqueeze(0).to(device)
+        acts = acts if acts is not None else state.legal_actions()
 
-        logits, val_out = self.forward(tensor, legal_mask=mask_t)
+        logits, val_out = self.forward(tensor, legal_mask=mask)
         probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
 
         if val_out.shape[-1] == 3:
@@ -174,7 +193,7 @@ class JunqiNet(nn.Module):
             v = float(torch.tanh(val_out).item()) if not hasattr(self.value_head[-1], 'tanh') else float(val_out.item())
 
         policy = {}
-        for act in state.legal_actions():
+        for act in acts:
             idx = action_to_index(act)
             policy[act] = float(probs[idx])
         return policy, v

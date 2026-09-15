@@ -44,6 +44,45 @@ class SearchStats:
     max_depth: int = 0
     time_elapsed_ms: float = 0.0
     root_scores: list[tuple[Action, float]] = field(default_factory=list)
+    # P0 修复（审查 C2/C3，2026-09-15）
+    degraded: bool = False             # 首层未完成即超时 / 兜底选招
+    root_scores_bounded: list[bool] = field(default_factory=list)
+    # True 表示该根节点分数只是**上界**（被 alpha 窗口截断），不是精确值。
+    # 排序仍然有效（上界低于另一动作的精确分 ⇒ 确实更差），但不可当绝对分展示。
+
+
+# ----------------------------------------------------------------- 迭代加深时限判据
+
+IDS_MIN_GROWTH = 2.0      # 下一层至少比本层慢 2 倍（分支因子下限）
+IDS_MAX_GROWTH = 12.0     # 增长因子上限，防止历史比值把预估吹爆
+
+
+def ids_growth_estimate(last_depth_ms: float, prev_depth_ms: float) -> float:
+    """由实测的两层耗时外推下一层的增长因子，夹在 [2, 12]。
+
+    上一轮不存在时（首次迭代）退化为下限 2.0。
+    """
+    if prev_depth_ms <= 1e-9:
+        return IDS_MIN_GROWTH
+    ratio = last_depth_ms / prev_depth_ms
+    return min(IDS_MAX_GROWTH, max(IDS_MIN_GROWTH, ratio))
+
+
+def should_stop_ids(elapsed_ms: float, budget_ms: float,
+                    last_depth_ms: float, prev_depth_ms: float = 0.0) -> bool:
+    """是否应在开始下一层迭代加深前停止（纯函数，可单测）。
+
+    判据：**已用时间 + 下一层预估耗时 > 预算**，其中下一层耗时按
+    `last_depth_ms × growth` 估算。
+
+    旧实现写成 `elapsed > budget * 0.25`（总耗时超过预算四分之一就停），
+    与"下一深度预计超时"的语义完全不符：1000ms 预算下 depth-1 只要用掉
+    260ms 就退出，剩余 740ms 全部浪费（审查 C1）。
+    """
+    if budget_ms <= 0:
+        return False
+    growth = ids_growth_estimate(last_depth_ms, prev_depth_ms)
+    return elapsed_ms + last_depth_ms * growth > budget_ms
 
 
 class ExpertSearchEngine:
@@ -548,21 +587,24 @@ class ExpertSearchEngine:
             win = WIN_SCORE - state.ply
             return win if state.winner == state.turn else -win
 
-        # 2. 树内重复局面检测 (Repetition Detection)
+        # 2. 叶子节点转入静态搜索 (QSearch)
+        # P3 性能（审查 P5）：原实现在 depth<=0 判定**之前**无条件算 Zobrist，
+        # 而叶子节点既不需要重复检测也不需要置换表，等于每个叶子白算一次
+        # （compute_zobrist 内部遍历全盘 + 剩余子力池指纹）。
+        if depth <= 0:
+            return self._qsearch(state, alpha, beta, self.qsearch_depth)
+
+        # 3. 树内重复局面检测 (Repetition Detection)
         zobrist_key = compute_zobrist(state)
         if zobrist_key in path_history:
             # 重复走子判和（0 分）
             return 0.0
 
-        # 3. 置换表查询 (TT Lookup)
+        # 4. 置换表查询 (TT Lookup)
         orig_alpha = alpha
         tt_val, tt_move = self.tt.lookup(zobrist_key, depth, alpha, beta)
         if tt_val is not None and ply_depth > 0:
             return tt_val
-
-        # 4. 叶子节点转入静态搜索 (QSearch)
-        if depth <= 0:
-            return self._qsearch(state, alpha, beta, self.qsearch_depth)
 
         acts = state.legal_actions()
         if not acts:
@@ -638,7 +680,8 @@ class ExpertSearchEngine:
     def search(self, state: GameState, max_depth: int = 3,
                time_limit_ms: int = 0, avoid: Optional[set] = None,
                qsearch_depth: Optional[int] = None,
-               as_evaluator: bool = False
+               as_evaluator: bool = False,
+               exact_root_scores: bool = False
                ) -> tuple[Optional[Action], float, SearchStats]:
         """迭代加深搜索 (Iterative Deepening Search)。
 
@@ -651,9 +694,14 @@ class ExpertSearchEngine:
             as_evaluator: 估值器模式。作为子节点估值 oracle 调用时必须为 True：
                 跳过"唯一合法走法直接返回 0 分"的决策捷径，返回该强制走法
                 的真实搜索分（否则定化子局的必胜/必败线会被误估为 0）。
+            exact_root_stats: 根节点每个动作都用**全窗口**搜索，得到可互相比较的
+                精确分（C3 修复）。默认 False（PVS 收窄窗口，score 可能是上界，
+                见 stats.root_scores_bounded）。需要 top-N 候选或做蒸馏教师
+                软分布时必须设为 True，否则 fail-low 动作的上界会被误当精确分。
 
         返回:
-            (best_action, score, stats)
+            (best_action, score, stats)。超时降级时 score 为 0.0 且
+            stats.degraded=True，**永不返回 ±inf**（C2 修复）。
         """
         self.stats = SearchStats()
         self.stopped = False
@@ -677,12 +725,31 @@ class ExpertSearchEngine:
 
             best_action: Optional[Action] = None
             best_score: float = -math.inf
+            ordered_acts: list[Action] = list(acts)   # 兜底路径的可用引用
 
             path_history: set[int] = set()
+
+            # 战术确定性优先准则 (用户核心原则：杜绝盲目翻暗棋赌概率)
+            # 仅当移动走法属于【实质性吃子/战术制胜】或【进驻空行营】时，享有 0.5 分
+            # 确定性优先特权；普通静步闲走严禁压制翻开邻营暗子开拓据点的行动！
+            # P3 性能（审查 P5）：原本定义在动作循环体内，每动作每深度重建一次闭包。
+            def _is_tactical(act: Action) -> bool:
+                if act.kind != "move":
+                    return False
+                tgt = state.board.get(act.to)
+                if tgt is not None and tgt.revealed:
+                    return True
+                if not is_camp(act.frm) and is_camp(act.to):
+                    return True
+                return False
+
+            # 每层实测耗时（毫秒），用于外推下一层是否超预算
+            depth_ms: list[float] = []
 
             for d in range(1, max_depth + 1):
                 if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
                     break
+                d_start = time.perf_counter()
 
                 # 根节点搜索
                 zobrist_key = compute_zobrist(state)
@@ -694,16 +761,35 @@ class ExpertSearchEngine:
                 alpha = -math.inf
                 beta = math.inf
                 d_scores: list[tuple[Action, float]] = []
+                d_bounded: list[bool] = []
 
                 for a in ordered_acts:
                     if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
                         break
 
-                    if a.kind == "flip":
-                        score = self._evaluate_chance_flip(state, a, d, 0, alpha, beta, path_history)
+                    if exact_root_scores:
+                        # C3 修复：多候选展示/蒸馏需要**可互相比较的精确分**。
+                        # 默认路径用收窄后的 [alpha, beta) 窗口，fail-low 时返回的
+                        # 只是上界；这里对每个根动作都用全窗口搜索。
+                        if a.kind == "flip":
+                            score = self._evaluate_chance_flip(
+                                state, a, d, 0, -math.inf, math.inf, path_history)
+                        else:
+                            child = state.apply(a)
+                            score = -self._negamax(child, d - 1, 1, -math.inf,
+                                                   math.inf, path_history)
+                        bounded = False
                     else:
-                        child = state.apply(a)
-                        score = -self._negamax(child, d - 1, 1, -beta, -alpha, path_history)
+                        if a.kind == "flip":
+                            score = self._evaluate_chance_flip(
+                                state, a, d, 0, alpha, beta, path_history)
+                            bounded = False   # 机会节点走 Star1 期望，本身即精确估值
+                        else:
+                            child = state.apply(a)
+                            score = -self._negamax(child, d - 1, 1, -beta, -alpha,
+                                                   path_history)
+                            # fail-low（score <= alpha）时这个值只是上界
+                            bounded = score <= alpha
 
                     # 避免命中 avoid 集合
                     if avoid and a.kind == "move":
@@ -712,19 +798,7 @@ class ExpertSearchEngine:
                             score -= 150.0
 
                     d_scores.append((a, score))
-
-                    # 战术确定性优先准则 (用户核心原则：杜绝盲目翻暗棋赌概率)
-                    # 仅当移动走法属于【实质性吃子/战术制胜】或【进驻空行营】时，享有 0.5 分确定性优先特权；
-                    # 普通静步闲走（尤其是出营、营间乱窜等）严禁压制翻开邻营暗子开拓据点的行动！
-                    def _is_tactical(act: Action) -> bool:
-                        if act.kind != "move":
-                            return False
-                        tgt = state.board.get(act.to)
-                        if tgt is not None and tgt.revealed:
-                            return True
-                        if not is_camp(act.frm) and is_camp(act.to):
-                            return True
-                        return False
+                    d_bounded.append(bounded)
 
                     is_better = False
                     if current_d_best_act is None:
@@ -752,25 +826,44 @@ class ExpertSearchEngine:
                         if score > alpha:
                             alpha = score
 
+                depth_ms.append((time.perf_counter() - d_start) * 1000.0)
+
                 if not self.stopped:
                     best_action = current_d_best_act
                     best_score = current_d_best_score
                     self.stats.max_depth = d
-                    sorted_roots = sorted(d_scores, key=lambda t: t[1], reverse=True)
+                    bounded_by_act = {a: b for (a, _s), b in zip(d_scores, d_bounded)}
+                    order = sorted(range(len(d_scores)), key=lambda i: d_scores[i][1],
+                                   reverse=True)
+                    sorted_roots = [d_scores[i] for i in order]
                     if best_action is not None:
                         best_tuple = next((t for t in sorted_roots if t[0] == best_action), (best_action, best_score))
                         sorted_roots = [best_tuple] + [t for t in sorted_roots if t[0] != best_action]
                     self.stats.root_scores = sorted_roots
+                    self.stats.root_scores_bounded = [
+                        bounded_by_act.get(a, False) for a, _s in sorted_roots]
                     self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
 
-                    # 动态时间预算早停控制 (对齐原版 APK 0x5ac3a: cmp.w r2, r3, asr #2)
-                    # 若当前深度总耗时已超过时间限制的 25%，下一深度耗时预计成倍增长大概率超时，
-                    # 故在此安全退出，保留当前深度完整稳定的最优决策
+                    # 动态时间预算早停控制（对齐原版 APK 0x5ac3a 的意图：
+                    # 下一深度预计会超时就安全退出，保留当前深度完整的最优决策）。
+                    # C1 修复：旧判据是"总耗时 > 预算 25%"，与上述语义完全不符，
+                    # 会把大部分预算白白浪费掉（详见 should_stop_ids 注释）。
                     elapsed_now = (time.perf_counter() - start_time) * 1000.0
-                    if time_limit_ms > 0 and elapsed_now > (time_limit_ms * 0.25):
+                    if should_stop_ids(elapsed_now, float(time_limit_ms or 0),
+                                       depth_ms[-1],
+                                       depth_ms[-2] if len(depth_ms) > 1 else 0.0):
                         break
 
+            # C2 修复：首层未跑完就超时时，旧实现返回 (acts[0], -inf)；
+            # 该 -inf 会在 hybrid_engine 取负成 +inf 参与排序，并被
+            # train_search_distill 的全量 softmax 蒸馏，直接污染教师标签。
+            if best_action is None or not math.isfinite(best_score):
+                self.stats.degraded = True
+                fallback = best_action or ordered_acts[0] or acts[0]
+                self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                return fallback, 0.0, self.stats
+
             self.stats.time_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            return best_action or acts[0], best_score, self.stats
+            return best_action, best_score, self.stats
         finally:
             self.qsearch_depth = old_qdepth

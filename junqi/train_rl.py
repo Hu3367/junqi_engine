@@ -28,7 +28,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset   # PolicyDataset/ValueDataset 的基类
 
 from .analysis import (PHASE_ENDGAME, PHASE_MIDGAME, PHASE_OPENING,
                        detect_phase)
@@ -182,37 +181,11 @@ def opponent_type_for(r: float, net1_available: bool = True,
 
 
 # ------------------------------------------------------------- 经验回放数据集
-
-class PolicyDataset(Dataset):
-    def __init__(self, samples: List[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]):
-        self.samples = samples
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        tensor, mask, pi, phase = self.samples[idx]
-        return (
-            torch.from_numpy(tensor).float(),
-            torch.from_numpy(mask).bool(),
-            torch.from_numpy(pi).float(),
-        )
-
-
-class ValueDataset(Dataset):
-    def __init__(self, samples: List[Tuple[np.ndarray, float, int]]):
-        self.samples = samples
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        tensor, z, phase = self.samples[idx]
-        return (
-            torch.from_numpy(tensor).float(),
-            torch.tensor(z, dtype=torch.float32),
-        )
-
+#
+# 审查 C10（2026-09-15）：原 `PolicyDataset` / `ValueDataset` 两个 Dataset 子类
+# 从未被任何代码引用——`train_epoch` 直接从 `StratifiedReplayBuffer` 采样
+# numpy 数组再转 tensor，不经过 DataLoader。连同 `DataLoader` 导入一并删除，
+# 避免后来者误以为存在一条基于 DataLoader 的训练路径。
 
 def effective_policy_weights(counts, base_weights=(0.2, 0.5, 0.3),
                              mode: str = "fixed") -> np.ndarray:
@@ -388,8 +361,12 @@ class StratifiedReplayBuffer:
             for c, lst in data.get("value", {}).items():
                 if c in self.value_buckets:
                     self.value_buckets[c] = deque(lst, maxlen=self.capacity // 3)
-        except Exception:
-            pass
+        except Exception as exc:                      # noqa: BLE001
+            # C8 修复：原为静默 `pass`。经验池是断点续训的核心状态，
+            # 加载失败却继续训练＝用空池起步，且外部完全看不到（只能从
+            # "样本数突然归零"倒推）。现在显式告警，让故障可诊断。
+            print(f"⚠️ 经验池加载失败：{path}（{type(exc).__name__}: {exc}）"
+                  f"——将以空池继续，断点续训的历史样本已丢失", flush=True)
 
 
 # ------------------------------------------------------------- 每轮 Value 重锚（P3 修订）
@@ -699,6 +676,24 @@ def wilson_lower_bound(successes: float, n: int, z: float = 1.96) -> float:
     centre = (p + z * z / (2.0 * n)) / denom
     half = z * math.sqrt(max(0.0, p * (1.0 - p) / n + z * z / (4.0 * n * n))) / denom
     return max(0.0, centre - half)
+
+
+def elo_update_from_score(opponent_elo: float, score_rate: float,
+                          n_games: int) -> float:
+    """按标准 Elo 公式把"对基准的得分率"换算成新的等级分（纯函数，可单测）。
+
+    C9 修复（2026-09-15）：原实现是与对手等级分无关的线性随机游走
+    （按得分率偏移固定 16 分、且与样本量无关），却被当成 Elo 写进
+    elo_history.jsonl，任何人都无法据此判断"这一轮到底强了多少"。
+
+    现在用标准换算：new = r_opp + 400 * log10(s / (1 - s))，
+    其中 s 为候选对已发布基准的得分率（胜 1 / 和 0.5 / 负 0 口径）。
+    s 会被夹到 [1/(n+1), n/(n+1)]，保证样本量小或全胜/全负时不产生 ±inf。
+    """
+    n = max(1, int(n_games))
+    lo, hi = 1.0 / (n + 1), float(n) / (n + 1)
+    s = min(max(float(score_rate), lo), hi)
+    return float(opponent_elo) + 400.0 * math.log10(s / (1.0 - s))
 
 
 def _stage_score(s: dict) -> Tuple[float, int]:
@@ -1458,8 +1453,13 @@ def run_training(epochs: int = 10, games_per_epoch: int = 40,
         else:
             # §3.1.3：门控失败不回滚候选训练进度，仅不更新发布模型
             print(f"⚠️ 未达晋升条件：{reason}（候选训练进度保留，不回滚）", flush=True)
-        # S1：Elo 与晋升解耦——每轮按门控整体得分更新，恢复曲线信号（原来仅晋升时更新，恒 1500）
-        current_elo += 16.0 * (ov_score - 0.5) * 2
+        # C9 修复：Elo 与晋升解耦（每轮都更新，恢复曲线信号），但必须用标准公式
+        # 由"对已发布基准的得分率"换算，而不是与对手无关的线性随机游走。
+        # 基准侧沿用当前 current_elo（同一血脉的等级分），得分率来自本轮门控 overall。
+        prev_elo = current_elo
+        current_elo = elo_update_from_score(current_elo, ov_score, stage_stats["overall"]["games"])
+        print(f"Elo 更新（vs 已发布基准）：{prev_elo:.1f} → {current_elo:.1f} "
+              f"（得分率 {ov_score:.3f}，n={stage_stats['overall']['games']}）", flush=True)
 
         # 每轮保存完整检查点（无论是否晋升）
         # P1 瘦身（审查 P1）：经验池 pickle 约 3.8 GB/份，按节流判据落盘

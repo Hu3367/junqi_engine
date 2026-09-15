@@ -180,20 +180,24 @@ def main(argv=None):
     fw.add_argument("--verify", type=int, default=0, help="验证镜像对局数（0=跳过）")
     fw.add_argument("--workers", type=int, default=8, help="验证对局并行进程数")
 
+    from .dataset import DEFAULT_P1_DIR
+
     ed = sub.add_parser("export_dataset", help="P1: 从复盘数据导出标准行为克隆数据集")
     default_sav = "军旗复盘" if os.path.exists("军旗复盘") else "../军旗复盘"
     ed.add_argument("--sav-dir", default=default_sav, help=".sav 复盘文件目录")
-    ed.add_argument("--out-dir", default="datasets/p1_v1", help="输出 npz 目录")
+    ed.add_argument("--out-dir", default=DEFAULT_P1_DIR, help="输出 npz 目录")
     ed.add_argument("--seed", type=int, default=2026, help="随机种子")
-    ed.add_argument("--version", default="1.0.0", help="数据集版本号")
+    ed.add_argument("--version", default="3.0.0",
+                    help="数据集版本号（低于 3.0.0 的数据集会被训练侧拒绝加载）")
 
     evd = sub.add_parser("eval_dataset", help="P1: 评估数据集上的 Policy 基准与分阶段覆盖率")
-    evd.add_argument("--dataset", default="datasets/p1_v1/val.npz", help="npz 数据集文件路径")
+    evd.add_argument("--dataset", default=f"{DEFAULT_P1_DIR}/val.npz",
+                    help="npz 数据集文件路径")
     evd.add_argument("--samples", type=int, default=1000, help="评估样本量")
 
     tbc = sub.add_parser("train_bc", help="P2: 训练复盘行为克隆神经网络 (BC)")
-    tbc.add_argument("--train-npz", default="datasets/p1_v1/train.npz", help="训练集 npz")
-    tbc.add_argument("--val-npz", default="datasets/p1_v1/val.npz", help="验证集 npz")
+    tbc.add_argument("--train-npz", default=f"{DEFAULT_P1_DIR}/train.npz", help="训练集 npz")
+    tbc.add_argument("--val-npz", default=f"{DEFAULT_P1_DIR}/val.npz", help="验证集 npz")
     tbc.add_argument("--out", default="models/bc_best.pt", help="输出权重路径")
     tbc.add_argument("--epochs", type=int, default=15, help="训练轮数")
     tbc.add_argument("--batch-size", type=int, default=256, help="批大小")
@@ -210,7 +214,7 @@ def main(argv=None):
 
     ebc = sub.add_parser("eval_bc", help="P2: 在独立测试集上评测 BC 模型")
     ebc.add_argument("--model", default="models/bc_best.pt", help="模型路径")
-    ebc.add_argument("--test-npz", default="datasets/p1_v1/test.npz", help="测试集 npz")
+    ebc.add_argument("--test-npz", default=f"{DEFAULT_P1_DIR}/test.npz", help="测试集 npz")
     ebc.add_argument("--out", default="reports/p2_bc_report.md", help="输出 Markdown 报告路径")
 
     args = parser.parse_args(argv)

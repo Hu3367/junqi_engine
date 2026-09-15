@@ -14,12 +14,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .dataset import NpzReplayDataset
+from .dataset import DEFAULT_P1_DIR, NpzReplayDataset
 from .net import JunqiNet
 
 
 def evaluate_test_set(model_path: str = "models/bc_best.pt",
-                      test_npz: str = "datasets/p1_v1/test.npz",
+                      test_npz: str = f"{DEFAULT_P1_DIR}/test.npz",
                       batch_size: int = 256,
                       device_str: str | None = None) -> dict:
     """在测试集上全面评测模型性能指标。"""
@@ -209,7 +209,7 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="P2 阶段：行为克隆模型独立测试集评测")
     parser.add_argument("--model", default="models/bc_best.pt", help="待评测模型路径")
-    parser.add_argument("--test-npz", default="datasets/p1_v2/test.npz", help="测试集 npz 路径")
+    parser.add_argument("--test-npz", default=f"{DEFAULT_P1_DIR}/test.npz", help="测试集 npz 路径")
     parser.add_argument("--batch-size", type=int, default=256, help="批大小")
     parser.add_argument("--device", default=None, help="评测设备 (cuda:0 / cpu)")
     parser.add_argument("--out-report", default="reports/p2_bc_report.md", help="输出 Markdown 报告路径")

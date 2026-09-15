@@ -222,6 +222,8 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
     first_flip = True
     last_live_eval = None                  # 对局期间最后一次有效估值（评测裁决用）
 
+    eval_failures = 0                      # C8：估值失败次数（进对局记录，可观测）
+
     while not st.is_terminal():
         if st.ply % EVAL_SAMPLE_EVERY == 0:
             try:
@@ -230,8 +232,14 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
                 e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
                 if abs(e0) + abs(e1) > 1e-9:
                     last_live_eval = (e0, e1)
-            except Exception:
-                pass
+            except Exception as exc:      # noqa: BLE001
+                # C8 修复：原为 `pass`。估值缺失会让门控的裁决式判分静默退化为
+                # 0.5（等于把该局当平局），却完全不出现在报告里。
+                eval_failures += 1
+                if eval_failures == 1:
+                    print(f"⚠️ 对局 seed={seed}: 专家估值采样失败 "
+                          f"({type(exc).__name__}: {exc})，该局裁决判分可能退化为 0.5",
+                          flush=True)
         seen[position_key(st)] += 1
         if seen[position_key(st)] >= cfg.repetition_draw_count:
             rec.update(winner=-1, reason="repetition")
@@ -306,20 +314,27 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
         from .eval_expert import evaluate_expert
         e0 = float(evaluate_expert(st, seat=0, ignore_rule_draw=True))
         e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
-        if abs(e0) + abs(e1) <= 1e-9 and last_live_eval is not None:
+        is_dead = abs(e0) + abs(e1) <= 1e-9
+        if is_dead and last_live_eval is not None:
             # 终局为结构性死锁（估值恒 0）时，回退到对局中最后一次有效估值：
             # 否则"和棋局按终局估值裁决"在恰好需要它的场合全部退化为 0.5
             # （实测 40 组种子镜像 80 局中有 74 局如此）。
             e0, e1 = last_live_eval
         rec["final_eval0"] = round(e0, 3)
         rec["final_eval1"] = round(e1, 3)
-        rec["last_live_eval_used"] = bool(abs(float(evaluate_expert(
-            st, seat=0, ignore_rule_draw=True))) + abs(float(evaluate_expert(
-            st, seat=1, ignore_rule_draw=True))) <= 1e-9)
-    except Exception:                                     # 估值不可用时不影响对局记录
+        # C8 附带修复：原实现为算这个布尔值**又调了两次** evaluate_expert
+        # （共 4 次），而 is_dead 已经算出来了。这里直接复用。
+        rec["last_live_eval_used"] = bool(is_dead)
+    except Exception as exc:                              # noqa: BLE001
+        # C8 修复：估值不可用时不影响对局记录，但必须可观测
+        eval_failures += 1
+        if eval_failures == 1:
+            print(f"⚠️ 对局 seed={seed}: 终局专家估值失败 "
+                  f"({type(exc).__name__}: {exc})，final_eval 置 None", flush=True)
         rec["final_eval0"] = None
         rec["final_eval1"] = None
         rec["last_live_eval_used"] = None
+    rec["eval_failures"] = eval_failures
     return rec
 
 

@@ -13,7 +13,10 @@
 > - ✅ 全量单元测试通过（`python -m pytest tests/ -q`，数量随迭代增长，以 CI 输出为准）
 > - ⚠️ Python ≥ 3.10，必须使用虚拟环境运行
 >
-> **代码审查报告**：[reviews/CODE_REVIEW_2026-09-15.md](reviews/CODE_REVIEW_2026-09-15.md)
+> **代码审查报告（2026-09-15）**：[reviews/CODE_REVIEW_2026-09-15.md](reviews/CODE_REVIEW_2026-09-15.md)
+> — 全部条目已处置（含 P0 两处致命缺陷：热启动 optimizer 脱钩、对手权重加载），
+> 测试基线 298 → 403 passed；逐条状态见报告顶部「修复状态」表。
+> 数据集默认目录统一为 `datasets/p1_v3`（`DEFAULT_P1_DIR`），低于 3.0.0 的旧数据集会被拒载。
 > ⚠️ `junqi/expert/` 已废弃且不可导入，在线搜索引擎是 `junqi/search.py`，详见
 > [junqi/expert/DEPRECATED.md](junqi/expert/DEPRECATED.md)
 
@@ -288,6 +291,10 @@ python -m junqi train_rl --epochs 5 --games 24 --sims 25 --eval-games 4 --worker
 # 经验池落盘默认每 5 轮一次（实测约 3.8 GB/份）；--buffer-save-every 0 除末轮外不写，
 # 1 恢复旧的"每轮写 4GB"行为
 python -m junqi train_rl --epochs 5 --games 24 --buffer-save-every 5
+
+# 清理 models/ 中间产物（默认 dry-run，必须 --yes 才真正删除；
+# 热启动链上的 best.pt / bc_best.pt / value_distilled*.pt 受保护）
+python scripts/cleanup_models.py
 
 # 运行固定 50 题实验靶场基准测试（S0 起真值与类别一致，含 Brier/预测熵指标）
 python -m junqi benchmark --model models/best.pt

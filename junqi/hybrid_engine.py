@@ -70,7 +70,9 @@ class HybridDecisionEngine:
         self.rep_penalty = float(rep_penalty)
 
         if model_path and os.path.exists(model_path):
-            self.net = JunqiNet.load_from_file(model_path, device=device)
+            # P4：走缓存加载（评测/门控每局重建策略时避免重复反序列化 34MB 权重）
+            from .ai import load_net_cached
+            self.net = load_net_cached(model_path, device)
         else:
             self.net = JunqiNet().to(device)
             self.net.eval()
@@ -203,14 +205,19 @@ class HybridDecisionEngine:
 
     def select_action(self, state: GameState,
                       avoid: Optional[Set] = None,
-                      history_counts: Optional[dict] = None) -> Action:
-        """返回最优单步决策动作。"""
+                      history_counts: Optional[dict] = None) -> Optional[Action]:
+        """返回最优单步决策动作；无合法动作时返回 None。
+
+        C5 修复：原兜底构造了一个缺 `frm` 必填参数的空动作，一旦触发就是
+        TypeError。翻棋规则里没有"过手"动作，无子可动即终局，
+        返回 None 才是正确表达。
+        """
         scored = self.choose_actions(state, topn=1, avoid=avoid,
                                      history_counts=history_counts)
         if scored:
             return scored[0][0]
         acts = state.legal_actions()
-        return acts[0] if acts else Action("pass")
+        return acts[0] if acts else None
 
     # ------------------------------------------------------------- 动作定价
 
@@ -266,8 +273,9 @@ class HybridDecisionEngine:
                     state, a, self.tactical_depth, 0, -WIN_SCORE, WIN_SCORE, set())
 
             # 重复局面规避（价值量纲罚分：高于常规战术分、低于胜负分）
+            # P3：move 分支上面已经构造过 nxt，这里直接复用，不再 apply 一次
             if history_counts and a.kind == "move":
-                c = history_counts.get(position_key(state.apply(a)), 0)
+                c = history_counts.get(position_key(nxt), 0)
                 if c >= 2:
                     val -= self.rep_penalty
                 elif c == 1:

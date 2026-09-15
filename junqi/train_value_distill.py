@@ -28,6 +28,7 @@ import torch.nn.functional as F
 from .analysis import detect_phase
 from .ai import ExpertAgent
 from .config import RuleConfig, SearchConfig
+from .dataset import DEFAULT_P1_DIR, MIN_P1_VERSION
 from .encoder import encode_state_np
 from .endgame_gen import gen_endgame
 from .net import JunqiNet
@@ -316,15 +317,45 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
 
 # ---------------------------------------------------------------- Value 健康度探针（P3 修订）
 
-def load_p1_arrays(p1_dir: str, split: str = "train") -> dict:
+def check_p1_version(metadata: dict) -> tuple[bool, str]:
+    """校验数据集版本是否达到 `MIN_P1_VERSION`（R6 修复的守卫）。
+
+    p1_v1 / p1_v2 生成于 2026-09-06，早于 2026-09-13 的 "code 24 断线不得赋
+    Value" 修正，两者的 Value 标签口径不同。混用会出现"同一份指标、两套真值"
+    的静默不一致，因此低于 3.0.0 直接拒绝。
+    """
+    ver = str((metadata or {}).get("version", "") or "")
+    try:
+        parts = tuple(int(x) for x in ver.split(".")[:3])
+    except ValueError:
+        parts = (0,)
+    ok = parts >= tuple(MIN_P1_VERSION)
+    if ok:
+        return True, f"数据集版本 {ver} 通过（≥ {'.'.join(map(str, MIN_P1_VERSION))}）"
+    return False, (f"数据集版本 {ver} 低于最低要求 "
+                   f"{'.'.join(map(str, MIN_P1_VERSION))}：该版本生成于 code 24 "
+                   f"标签口径修正之前，请改用 {DEFAULT_P1_DIR} 或重新导出")
+
+
+def load_p1_arrays(p1_dir: str, split: str = "train",
+                   check_version: bool = True) -> dict:
     """加载 p1_v* npz 的一种划分，仅保留 has_values=True 的官方客观标签样本。
 
     has_values=False（未终局/早期强退 code 20/断线 code 24）不赋 Value，与
     AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §6 口径一致。
+
+    R6：默认会读取同目录 metadata.json 并校验版本，防止误用口径不同的旧数据集。
     """
     path = os.path.join(p1_dir, f"{split}.npz")
     if not os.path.exists(path):
         raise FileNotFoundError(f"缺少 {path}（p1 数据集划分 {split}）")
+    if check_version:
+        meta_path = os.path.join(p1_dir, "metadata.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                ok, msg = check_p1_version(json.load(f))
+            if not ok:
+                raise ValueError(msg)
     d = np.load(path)
     hv = d["has_values"].astype(bool)
     return {
@@ -486,7 +517,7 @@ def train_value_head_only(net: JunqiNet, train: dict, val: dict, *,
 
 # ---------------------------------------------------------------- 真实终局标签训练 (P1)
 
-def train_value_from_p1_dataset(p1_dir: str = "datasets/p1_v2",
+def train_value_from_p1_dataset(p1_dir: str = DEFAULT_P1_DIR,
                                 base_model: str = "models/bc_best.pt",
                                 out_path: str = "models/value_distilled_v2.pt",
                                 epochs: int = 8, batch_size: int = 512,

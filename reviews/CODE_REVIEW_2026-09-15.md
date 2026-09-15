@@ -1,9 +1,46 @@
 # junqi_engine 全面代码审查报告
 
 > 审查日期：2026-09-15
-> 审查方式：**只读审查**（未改动任何业务代码）
+> 审查方式：初检为**只读审查**；随后按优先级逐条修复（见下方「修复状态」）
 > 审查范围：`junqi/` 全部 54 个模块、`scripts/` 34 个脚本、`tests/` 39 个测试文件、核心文档与配置
-> 阶段归属：本次审查覆盖 P0–P4；后续修复动作将在每条上单独标注阶段
+> 阶段归属：本次审查覆盖 P0–P4
+
+## 修复状态（2026-09-15 收口）
+
+全部条目已处置。测试：**298 passed / 3 skipped（修复前基线）→ 403 passed / 3 skipped**。
+详细改动见 `docs/CHANGELOG.md` 同日两条记录。
+
+| 编号 | 结论 | 处置 |
+|---|---|---|
+| R1 热启动 optimizer 脱钩 | 致命 | ✅ 已修（`warmstart_candidate` 就地载入） |
+| R2 best 对手为随机网络 | 致命 | ✅ 已修（`unwrap_state_dict` + 缺键降级为 None） |
+| R3 门控双实现 | 高 | ✅ 已修（训练主循环委托 `eval_gate.run_gate`） |
+| R4 `junqi/expert/` 僵尸包 | 高 | ✅ 标记废弃 + 守卫测试（未删除，见 DEPRECATED.md） |
+| R5 方案与代码认输局口径冲突 | 中 | ✅ 已回写方案（含原因/影响/验证/回滚） |
+| R6 数据集版本口径分裂 | 中 | ✅ 统一 `DEFAULT_P1_DIR=p1_v3` + 版本守卫 |
+| C1 IDS 早停语义错误 | 高 | ✅ 已修（`should_stop_ids`） |
+| C2 超时返回 `-inf` 污染蒸馏 | 高 | ✅ 已修（降级返回 0.0 + `degraded` 标记） |
+| C3 根节点上界当精确分 | 中 | ✅ 已修（`exact_root_scores` + `root_scores_bounded`） |
+| C4 topn 回退用 1e5 排序分 | 中 | ✅ 已修 |
+| C5 `Action("pass")` TypeError | 低 | ✅ 已修（返回 None） |
+| C6 MCTS 重复阈值硬编码 | 中 | ✅ 已修（`tree_repetition_limit`） |
+| C7 code 24 计入 decided_win | 中 | ✅ 已修（`outcome_bucket_from_meta` 同源） |
+| C8 异常静默吞掉 | 中 | ✅ 已修（计数 + 告警 + 记录到对局） |
+| C9 伪 Elo 随机游走 | 中 | ✅ 已修（`elo_update_from_score` 标准公式） |
+| C10 长函数/死代码 | 中 | 🟡 部分：删除死类；超长函数拆分未做（收益 < 回归风险） |
+| C11 文档漂移 | 中 | ✅ 已修（README 计数/YAML 声明、CHANGELOG） |
+| C12 高危路径零测试 | 中 | ✅ 已修（train_bc / eval_bc / fit_weights / load_p1_arrays） |
+| P1 经验池每轮全量落盘 | 高 | ✅ 已修（节流 + 原子写） |
+| P2 MCTS batch=1 / 重复 legal_actions | 中 | ✅ 已修（`acts` 透传 + avoid 复用） |
+| P3 position_key 重复构造 | 中 | ✅ 已修（MCTS 根避免重算；hybrid 复用 nxt） |
+| P4 门控每局反序列化模型 | 中 | ✅ 已修（`load_net_cached`） |
+| P5 叶子白算 Zobrist、闭包重建 | 低 | ✅ 已修 |
+| P6 apk TT 错命中 + 无界 | 中 | ✅ 已修（完整键校验 + 容量上界） |
+| P7 `venv/` 4.7GB 在工程内 | 低 | ⬜ 未处置（运营决策，需人工确认） |
+
+**附带发现并修复**：`scripts/cleanup_models.py` 的删除模式含 `*_distilled.pt`，会删掉
+P3 热启动链首选的 `models/value_distilled_v2.pt`，导致训练静默退回未校准的 BC 价值头。
+现改为显式保护名单 + 默认 dry-run。
 
 ---
 

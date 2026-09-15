@@ -316,6 +316,9 @@ class ExpertAgent:
             time_limit_ms=self.cfg.time_limit_ms,
             avoid=avoid,
             qsearch_depth=getattr(self.cfg, "qsearch_depth", 16),
+            # C3 修复：需要 top-N 时必须拿精确分，否则 fail-low 动作只会拿到
+            # 被 alpha 窗口截断的上界，展示与蒸馏都会失真。
+            exact_root_scores=topn > 1,
         )
 
         if topn <= 1 or best_act is None:
@@ -325,15 +328,11 @@ class ExpertAgent:
         if stats.root_scores:
             return stats.root_scores[:topn]
 
-        # 如果无根节点搜索分，回退到启发排序
-        scored = []
-        for a in acts:
-            score = self.engine._score_action(a, state, 0, best_act)
-            if a == best_act:
-                score += 100_000.0
-            scored.append((a, score))
-        scored.sort(key=lambda t: t[1], reverse=True)
-        return scored[:topn]
+        # C4 修复：无根节点搜索分（首层超时降级）时，原实现回退到
+        # `engine._score_action` —— 那是量级 1e5 的 **move-ordering** 分，
+        # 还额外给 best_act 加了 100_000，直接当估值分返回会彻底破坏量纲。
+        # 现在只诚实地返回"当前最优 + 0 分"，绝不伪造候选与分值。
+        return [(best_act, 0.0)]
 
     def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
         """返回最优单步决策动作 (统一 Agent 规范)。"""
@@ -347,6 +346,35 @@ class ExpertAgent:
 def win_probability(score: float, scale: float = 250.0) -> float:
     """把估值分粗略映射到胜率（仅用于展示，非严格校准）。"""
     return 1.0 / (1.0 + math.exp(-score / scale))
+
+
+# P4（审查 P4）：评测/门控链路里每个 Worker 会为**每一局**重新构造策略，
+# 原先每次都要从磁盘反序列化一份 ~34MB 权重并重建网络（默认 256 局/轮 ≈ 512 次）。
+# 这里按 (绝对路径, mtime, 设备) 缓存**只读推理副本**：
+#   - 仅缓存 load_from_file 的产物，缓存对象不参与训练（训练侧走 warmstart_candidate）；
+#   - 以 mtime 作为失效键，权重文件被改写（晋升/重新蒸馏）后自动重新加载；
+#   - 容量固定为 8（门控同时最多用到 cand/best/pool 快照各一）。
+_NET_CACHE: dict = {}
+_NET_CACHE_MAX = 8
+
+
+def load_net_cached(model_path: str, device: str):
+    """按路径+修改时间缓存权重加载，返回只读推理用网络（调用方不得原地训练）。"""
+    from .net import JunqiNet
+
+    try:
+        key = (os.path.abspath(model_path), os.path.getmtime(model_path), str(device))
+    except OSError:
+        return JunqiNet.load_from_file(model_path, device=device)
+
+    hit = _NET_CACHE.get(key)
+    if hit is not None:
+        return hit
+    net = JunqiNet.load_from_file(model_path, device=device)
+    if len(_NET_CACHE) >= _NET_CACHE_MAX:
+        _NET_CACHE.pop(next(iter(_NET_CACHE)), None)
+    _NET_CACHE[key] = net
+    return net
 
 
 class NNAgent:
@@ -369,7 +397,7 @@ class NNAgent:
         if net is not None:
             self.net = net.to(device)
         elif model_path and os.path.exists(model_path):
-            self.net = JunqiNet.load_from_file(model_path, device=device)
+            self.net = load_net_cached(model_path, device)
         else:
             self.net = JunqiNet().to(device)
             self.net.eval()

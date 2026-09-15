@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .dataset import NpzReplayDataset
+from .dataset import DEFAULT_P1_DIR, NpzReplayDataset
 from .net import JunqiNet
 
 
@@ -123,8 +123,8 @@ def evaluate_model(model: JunqiNet, val_loader: DataLoader,
     }
 
 
-def train_bc(train_npz: str = "datasets/p1_v1/train.npz",
-             val_npz: str = "datasets/p1_v1/val.npz",
+def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
+             val_npz: str = f"{DEFAULT_P1_DIR}/val.npz",
              out_path: str = "models/bc_best.pt",
              epochs: int = 20, batch_size: int = 256,
              lr: float = 1e-3, value_weight: float = 0.5,
@@ -295,8 +295,8 @@ def train_bc(train_npz: str = "datasets/p1_v1/train.npz",
 
 def main():
     parser = argparse.ArgumentParser(description="军棋翻棋行为克隆 (BC) 训练")
-    parser.add_argument("--train-npz", default="datasets/p1_v2/train.npz", help="训练集 npz 路径")
-    parser.add_argument("--val-npz", default="datasets/p1_v2/val.npz", help="验证集 npz 路径")
+    parser.add_argument("--train-npz", default=f"{DEFAULT_P1_DIR}/train.npz", help="训练集 npz 路径")
+    parser.add_argument("--val-npz", default=f"{DEFAULT_P1_DIR}/val.npz", help="验证集 npz 路径")
     parser.add_argument("--out", default="models/bc_best.pt", help="输出模型路径")
     parser.add_argument("--epochs", type=int, default=20, help="训练轮数")
     parser.add_argument("--batch-size", type=int, default=256, help="批大小")
