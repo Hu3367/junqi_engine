@@ -184,7 +184,7 @@ models/
 
 1. ✅ 运行所有测试确保稳定：
    ```bash
-   "/e/local code/军棋/junqi_engine/venv/Scripts/python.exe" -m pytest tests/ -v
+   "/e/local code/军棋/venv_junqi_engine/Scripts/python.exe" -m pytest tests/ -v
    ```
 
 2. ✅ 更新 README.md 反映新结构（见下方）
@@ -245,13 +245,13 @@ models/
 .\run_tests.bat
 
 # 运行单个测试
-"/e/local code/军棋/junqi_engine/venv/Scripts/python.exe" -m pytest tests/test_rules.py -v
+"/e/local code/军棋/venv_junqi_engine/Scripts/python.exe" -m pytest tests/test_rules.py -v
 
 # 查看目录结构
 tree /f /a
 
 # 验证配置
-"/e/local code/军棋/junqi_engine/venv/Scripts/python.exe" -c "from configs import rules; print(rules)"
+"/e/local code/军棋/venv_junqi_engine/Scripts/python.exe" -c "from configs import rules; print(rules)"
 ```
 
 ### 紧急回滚

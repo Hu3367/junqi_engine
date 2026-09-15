@@ -17,8 +17,9 @@
 > — 全部条目已处置（含 P0 两处致命缺陷：热启动 optimizer 脱钩、对手权重加载），
 > 测试基线 298 → 403 passed；逐条状态见报告顶部「修复状态」表。
 > 数据集默认目录统一为 `datasets/p1_v3`（`DEFAULT_P1_DIR`），低于 3.0.0 的旧数据集会被拒载。
-> ⚠️ `junqi/expert/` 已废弃且不可导入，在线搜索引擎是 `junqi/search.py`，详见
-> [junqi/expert/DEPRECATED.md](junqi/expert/DEPRECATED.md)
+> ⚠️ `junqi/expert/` 已**彻底删除**（2026-09-15）：该包不可导入且主流程零调用，
+> 在线搜索引擎是 `junqi/search.py::ExpertSearchEngine`。删除原因、被引用的不存在成员、
+> git 恢复命令见 [docs/06-References/DEPRECATED_EXPERT_PACKAGE.md](docs/06-References/DEPRECATED_EXPERT_PACKAGE.md)。
 
 ---
 
@@ -72,20 +73,34 @@
 ```bash
 cd junqi_engine
 
-# Windows (PowerShell)
+# 方式 A（最省事）: 用根目录脚本自动定位并激活，无需记相对层级
+.\activate_env.ps1          # PowerShell
+activate_env.cmd            # cmd.exe
+
+# 方式 B: 手动激活（注意是 ..\ 不是 .\ —— 虚拟环境在上一级）
 ..\venv_junqi_engine\Scripts\Activate.ps1
 
-# Linux/Mac（若为软链或自建环境）
-source ../venv_junqi_engine/bin/activate
-
-# 验证 Python 版本（需要 3.10+）
-python --version
+# 验证
+python -c "import torch; print(torch.__version__)"
 ```
+
+> **两个高频报错**：
+> 1. `.venv_junqi_engine\Scripts\Activate.ps1 : 无法将...识别为 cmdlet` —— 路径少了一个点：
+>    venv 在**上一级**，应写 `..\venv_junqi_engine\...`（或用 `.\activate_env.ps1`）。
+> 2. `ModuleNotFoundError: No module named 'torch'` —— 当前会话用的不是项目虚拟环境。
+>    常见于「旧 venv 被移动/删除后，会话里仍显示 `(venv)` 却实际指向已失效路径」：
+>    提示符看着正常，但 `python` 已落到别的解释器上。**先 `deactivate`，或直接重开一个终端**，
+>    再用上面方式 A 激活。
 
 ### 运行测试
 
 ```bash
-# 方法 1: 使用便捷脚本（推荐；会自动定位虚拟环境）
+# 方法 0（推荐）: 统一启动器，自动定位虚拟环境，避免用错解释器
+.\run.bat test              # 等价于 pytest tests/
+.\run.bat gui               # 启动人机对战
+.\run.bat train_rl --epochs 5 --games 24
+
+# 方法 1: 测试专用脚本（同样会自动定位虚拟环境）
 .\run_tests.bat
 
 # 方法 2: 使用完整路径（Windows / Git Bash）
@@ -98,22 +113,27 @@ python -m pytest tests/test_rules.py -v
 python -m pytest tests/ -v --tb=short
 ```
 
+> **常见坑**：直接敲 `python -m junqi gui` 时，若 PATH 上的 python 不是项目虚拟环境，
+> 会报 `ModuleNotFoundError: No module named 'torch'`。现在包级导入会把它转成
+> 明确提示（回显当前解释器 + 正确路径），但**最省事的做法是统一用 `run.bat`**。
+
 ### CLI 命令
 
 统一入口是 `python -m junqi <子命令>`（旧 `cli.py` 为已失效的历史壳，其 `train/`、`eval/`、`ui/` 目录已不存在）。
+**推荐用 `run.bat <子命令>`**——它会自动定位虚拟环境，避免用到没有 torch 的解释器。
 
 ```bash
 # 测试套件
-python -m junqi test        # 全量单元测试
+run.bat test                # 或 python -m junqi test
 
 # GUI 界面
-python -m junqi gui         # 启动人机对战
+run.bat gui                 # 或 python -m junqi gui（需已激活虚拟环境）
 
-# 局面计算器  
-python -m junqi calc        # 交互式计算
+# 局面计算器
+run.bat calc
 
 # 训练（需要 PyTorch/GPU）
-python -m junqi train_rl --epochs 5 --games 24
+run.bat train_rl --epochs 5 --games 24
 
 # 训练（P3 修订 2026-09-14：默认 lr=1e-4 + 每轮 Value 重锚 + p1_v3/test 健康验收）
 #   --fresh 会优先热启动 models/value_distilled_v2.pt（健康 Value 头）
@@ -179,7 +199,8 @@ junqi_engine/
 │   ├── net.py                  # 神经网络
 │   └── ... (共 31 个文件)
 │
-├── cli.py                       # CLI 入口点 ⭐
+├── cli.py                       # CLI 入口点（历史壳，等价功能见 `python -m junqi`）⭐
+├── run.bat                      # 统一启动器（自动定位虚拟环境）⭐
 ├── run_tests.bat                # 测试启动器 ⭐
 ├── requirements.txt             # Python 依赖 ⭐
 ├── AGENTS.md                    # 大模型规则
@@ -220,8 +241,8 @@ junqi_engine/
 
 ### 立即开始
 1. ✅ 阅读 [`FINAL_REFACTORING_SUMMARY.md`](docs/01-GettingStarted/FINAL_REFACTORING_SUMMARY.md) 了解工程重构
-2. ✅ 激活虚拟环境并运行 `.\run_tests.bat` 验证安装
-3. ✅ 启动 GUI: `python cli.py gui` 体验人机对战
+2. ✅ 运行 `.\run.bat test` 验证安装（会自动定位虚拟环境）
+3. ✅ 启动 GUI: `.\run.bat gui` 体验人机对战
 
 ### 深入学习
 1. 📚 阅读 [`AI_TRAINING_AND_HUMAN_PLAY_PLAN.md`](AI_TRAINING_AND_HUMAN_PLAY_PLAN.md) 了解 P0-P4 路线图与官方标签规则

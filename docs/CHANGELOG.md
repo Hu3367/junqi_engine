@@ -1,5 +1,108 @@
 # CHANGELOG
 
+## [2026-09-15] 第五批 — 激活路径易错修复 + PowerShell 编码陷阱
+
+阶段归属：**P0（可运行性）**。承接第四批的启动链路修复。
+
+### 一、用户实测报错与诊断
+
+```console
+(venv) PS E:\Local code\军棋\junqi_engine> .\venv_junqi_engine\Scripts\Activate.ps1
+无法将".\venv_junqi_engine\Scripts\Activate.ps1"项识别为 cmdlet...
+```
+
+两处问题：
+
+1. **路径少一个点**：虚拟环境在工程**上一级**（`..\venv_junqi_engine`），不是工程内；
+   `.\` 指当前目录，故找不到。正确写法 `..\venv_junqi_engine\Scripts\Activate.ps1`。
+2. **会话里残留着旧激活状态**（提示符显示 `(venv)`）：该会话此前激活的是**已被移走的**
+   `junqi_engine\venv`，其 `Scripts` 目录已不存在。于是 PATH 首项指向死路径，
+   `python` 静默落到别的解释器上——这正是第四批那个 `ModuleNotFoundError: torch` 的来源。
+   仅"重新激活正确路径"还不够，必须先 `deactivate` 或重开终端。
+
+### 二、修复
+
+1. **新增 `activate_env.ps1` / `activate_env.cmd`**（工程根目录）：自动定位虚拟环境
+   （工程内 `venv` → 同级 `..\venv_junqi_engine`），供用户直接
+   `.\activate_env.ps1` 调用，彻底不必记相对层级；激活后追加 `import torch` 依赖自检。
+2. **残留激活自动清理**：两个脚本都会检测 `VIRTUAL_ENV` 指向的解释器是否还存在，
+   不存在则从 PATH 中剔除该死路径并清空 `VIRTUAL_ENV`，并提示重开窗口。
+3. **修复 `activate_env.ps1` 的解释器路径拼接错误**：原写成 `<venv>\python.exe`，
+   导致依赖自检被静默跳过；正确为 `<venv>\Scripts\python.exe`。
+4. **README** 环境准备章节改写：给出方式 A（`activate_env.ps1`）与方式 B（`..\` 手动），
+   并把"路径少一个点"和"残留 `(venv)` 激活"两个高频报错连同处置方法写进提示框。
+
+### 三、PowerShell 编码陷阱（顺带修掉一个真 bug）
+
+`activate_env.ps1` 首次实测直接报
+`ParseException: 语句块或类型定义中缺少右"}"` —— Power**Shell 5.1 在没有 BOM 时
+按本地编码（GBK）读取脚本**，中文注释被解成乱码，随即产生"括号不匹配"这类
+看起来毫不相干的语法错误。
+
+- 已给 `activate_env.ps1`、`scripts/run_test.ps1` 补上 **UTF-8 BOM**；
+- 新增守卫：仓库内任何含非 ASCII 的 `.ps1` 必须带 UTF-8 BOM；
+- 新增守卫：用 **PowerShell 自身的 Parser** 校验这两个脚本语法，错误数必须为 0
+  （该测试在本轮实际捕获到了上述 ParseException）。
+
+### 四、测试
+
+`tests/test_p0_env_and_launchers.py` 由 8 项扩充至 **15 项**：新增
+activate_env 双布局定位、解释器路径必须拼到 `Scripts\python.exe`（回归上述拼接 bug）、
+非 ASCII `.ps1` 必须有 BOM、PowerShell Parser 语法校验、README 需提及 activate_env。
+全量：**419 passed / 3 skipped → 426 passed / 3 skipped**。
+
+---
+
+## [2026-09-15] 第四批 — 启动链路修复：`ModuleNotFoundError: No module named 'torch'`
+
+阶段归属：**P0（可运行性）**。这是第三批"虚拟环境移出工程目录"的直接后遗症修复。
+
+### 一、故障诊断（用户实测）
+
+```console
+$ python -m junqi gui
+  File "junqi\__init__.py", line 19, in <module>
+    from .hybrid_engine import HybridDecisionEngine
+  File "junqi\hybrid_engine.py", line 28, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'
+```
+
+**不是误删启动文件**：`junqi/__init__.py`、`junqi/__main__.py`、`cli.py`、`pytest.ini`、
+`run_tests.bat` 均完好（包级导入已成功走到 `hybrid_engine`）。
+
+真实原因：虚拟环境在第三批被移到同级 `../venv_junqi_engine/`，而这次调用用的是
+PATH 上的系统 python（本机为 WorkBuddy 自带的 Python 3.13，**不含 torch**）。
+`junqi/__init__.py` 会经 `ai` / `hybrid_engine` 连带 `import torch`，于是在包导入阶段就失败。
+用迁移后的解释器直接跑 `pytest tests/` 全程通过（411 passed），可反证代码无损。
+
+### 二、修复
+
+1. **包级诊断增强**（`junqi/__init__.py`）：把"第三方依赖缺失"转成可操作提示
+   （回显当前解释器 + 正确的虚拟环境路径 + `run.bat` 入口 + README 指引），
+   并用 `raise ... from exc` 保留原始异常链。白名单 `_THIRD_PARTY_DEPS` 之外的
+   `ModuleNotFoundError`（即项目自身的导入错误）**原样抛出**，不掩盖真问题。
+2. **新增统一启动器 `run.bat`**：自动定位解释器（工程内 `venv\` → 同级
+   `..\venv_junqi_engine\` → 报错并给出创建命令），支持
+   `run.bat gui` / `run.bat train_rl ...` / `run.bat test`。这是避免该故障最省事的入口。
+3. **`scripts/run_test.ps1` 不再裸调 `python`**：改为先定位虚拟环境并校验 torch 可用。
+4. **文档路径收口**：`docs/01-GettingStarted/FINAL_REFACTORING_SUMMARY.md` 3 处旧 venv
+   绝对路径改为新位置；README 环境准备/快速开始/CLI/目录结构同步 `run.bat`，
+   并修正 `junqi/expert/` 的旧说明（改为"已彻底删除 + 新文档路径"）；
+   "下一步行动"里失效的 `python cli.py gui` 改为 `.\run.bat gui`。
+
+### 三、测试
+
+新增 `tests/test_p0_env_and_launchers.py`（8 项），其中一项**直接复现用户故障**：
+用一个"缺 torch 的解释器"跑 `python -m junqi --help`，断言输出必须是可操作提示
+（含"缺少第三方依赖"、`venv_junqi_engine`、`run.bat`、当前解释器），而非裸报错；
+另含 run.bat/run_tests.bat 双布局定位、run_test.ps1 不裸调 python、
+以及"仓库内不得残留指向工程内 venv 的可执行路径"（历史记录类文档白名单豁免）。
+
+全量：**411 passed / 3 skipped → 419 passed / 3 skipped**。
+
+---
+
 ## [2026-09-15] 第三批 — 僵尸包彻底移除 + 虚拟环境移出工程 + 归档脚本标注
 
 阶段归属：**P0/P4 收尾（结构性清理）**。依据用户对审查报告"未处置项"的三项决策。
