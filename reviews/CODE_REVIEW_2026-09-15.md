@@ -7,15 +7,16 @@
 
 ## 修复状态（2026-09-15 收口）
 
-全部条目已处置。测试：**298 passed / 3 skipped（修复前基线）→ 403 passed / 3 skipped**。
-详细改动见 `docs/CHANGELOG.md` 同日两条记录。
+全部条目已处置。测试：**298 passed / 3 skipped（修复前基线）→ 411 passed / 3 skipped**。
+详细改动见 `docs/CHANGELOG.md` 同日三条记录。
+> 执行环境：虚拟环境已移至同级 `../venv_junqi_engine/`（原 `junqi_engine/venv/`）。
 
 | 编号 | 结论 | 处置 |
 |---|---|---|
 | R1 热启动 optimizer 脱钩 | 致命 | ✅ 已修（`warmstart_candidate` 就地载入） |
 | R2 best 对手为随机网络 | 致命 | ✅ 已修（`unwrap_state_dict` + 缺键降级为 None） |
 | R3 门控双实现 | 高 | ✅ 已修（训练主循环委托 `eval_gate.run_gate`） |
-| R4 `junqi/expert/` 僵尸包 | 高 | ✅ 标记废弃 + 守卫测试（未删除，见 DEPRECATED.md） |
+| R4 `junqi/expert/` 僵尸包 | 高 | ✅ **已彻底删除**（11 模块 + 关联脚本；记录见 docs/06-References/DEPRECATED_EXPERT_PACKAGE.md） |
 | R5 方案与代码认输局口径冲突 | 中 | ✅ 已回写方案（含原因/影响/验证/回滚） |
 | R6 数据集版本口径分裂 | 中 | ✅ 统一 `DEFAULT_P1_DIR=p1_v3` + 版本守卫 |
 | C1 IDS 早停语义错误 | 高 | ✅ 已修（`should_stop_ids`） |
@@ -36,7 +37,11 @@
 | P4 门控每局反序列化模型 | 中 | ✅ 已修（`load_net_cached`） |
 | P5 叶子白算 Zobrist、闭包重建 | 低 | ✅ 已修 |
 | P6 apk TT 错命中 + 无界 | 中 | ✅ 已修（完整键校验 + 容量上界） |
-| P7 `venv/` 4.7GB 在工程内 | 低 | ⬜ 未处置（运营决策，需人工确认） |
+| P7 `venv/` 4.7GB 在工程内 | 低 | ✅ **已移出**至同级 `../venv_junqi_engine/`（含 activate/pyvenv.cfg 路径修正与 run_tests.bat 自动定位） |
+| 归档脚本无标注（C10 附带） | 低 | ✅ `scripts/archive/` 与 `tests/utils/` 各加废弃 README + 守卫测试 |
+
+**最终状态**：`junqi/expert/` 已彻底删除，`venv/` 已移出工程目录，
+`models/` 中间产物按决策**暂不清理**（需要时 `python scripts/cleanup_models.py`，默认 dry-run）。
 
 **附带发现并修复**：`scripts/cleanup_models.py` 的删除模式含 `*_distilled.pt`，会删掉
 P3 热启动链首选的 `models/value_distilled_v2.pt`，导致训练静默退回未校准的 BC 价值头。

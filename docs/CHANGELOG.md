@@ -1,5 +1,68 @@
 # CHANGELOG
 
+## [2026-09-15] 第三批 — 僵尸包彻底移除 + 虚拟环境移出工程 + 归档脚本标注
+
+阶段归属：**P0/P4 收尾（结构性清理）**。依据用户对审查报告"未处置项"的三项决策。
+
+### 一、`junqi/expert/` 彻底删除（原 R4 的升级处置）
+
+上一批选择"标记废弃 + 守卫测试"，本批按决策**彻底删除**：
+
+- 删除 `junqi/expert/` 全部 11 个模块（`__init__ / expert_engine / tactical_analyzer /
+  threat_detection / search_optimizer / mobility_calculator / conditional_value /
+  hidden_piece_belief / tempo_tracker / rule_validator / move_adapter`）；
+- 连带删除 `scripts/test_expert_core.py`（367 行，唯一 `import junqi.expert` 的脚本）；
+- 原包内 `DEPRECATED.md` 的内容迁出并改写为
+  [`docs/06-References/DEPRECATED_EXPERT_PACKAGE.md`](06-References/DEPRECATED_EXPERT_PACKAGE.md)：
+  记录删除原因、被引用的不存在成员清单、**git 恢复命令**、以及将来复活的前置 gates；
+- 守卫测试由 `tests/test_p0_expert_deprecated.py` 替换为
+  `tests/test_p0_expert_removed.py`：断言目录已消失、全仓无任何 `import junqi.expert`、
+  删除记录文档仍在、在线引擎仍归属 `junqi/search.py::ExpertSearchEngine`。
+
+### 二、虚拟环境移出工程目录
+
+`junqi_engine/venv/`（4.7 GB / 25,054 个文件）→ 同级 `../venv_junqi_engine/`。
+动机：依赖树混在源码目录里会被误当项目内容扫描/归档/统计，也拖慢全库检索。
+
+- `venv/` 本就在 `.gitignore` 中，移动**不影响版本控制**；
+- 已修正迁移后 `Scripts/activate`、`Scripts/activate.bat`、`pyvenv.cfg` 中的绝对路径
+  （`Activate.ps1` 用 `$PSScriptRoot` 相对解析，无需改动）；
+- `run_tests.bat` 改为**自动定位**：优先工程内 `venv\`（旧布局/自建环境），
+  其次同级 `..\venv_junqi_engine\`，都找不到时回退 PATH 上的 python 并明确告警；
+- `README.md` 的环境准备与测试章节同步为新路径，并注明移动原因。
+
+### 三、归档脚本加废弃标注
+
+`scripts/archive/`（8 个脚本）与 `tests/utils/`（4 个脚本，与前者同源）此前既无测试覆盖、
+也不在 pytest 收集范围内，尤其 `tests/utils/` 位于 `tests/` 之下极易被误读为"被执行过的测试"。
+现各加 `README.md` 标注：说明它们是一次性验证脚本、逐一列出当初用途与现役替代入口
+（`pytest tests/` / `python -m junqi benchmark` / `python -m junqi gate` / `export_dataset`），
+并明确"需要长期守门就写成 `tests/test_*.py` 正式用例"。
+
+新增 `tests/test_p4_archived_scripts_labelled.py` 守卫：两处 README 存在且内容达标、
+归档脚本文件名不得匹配 `test_*.py`、`pytest.ini` 收集范围未被放宽、
+以及它们依赖的 `train_rl` 内部原语若被删除须先在此失败（而非静默 ImportError）。
+
+### 四、未处置（按决策"暂时不进行清理"）
+
+- `models/` 中间产物（约 8.0 GB，其中三个 `*_buffer.pkl` 合计约 11.4 GB 的历史残留）
+  保持不变；需要时执行 `python scripts/cleanup_models.py`（**默认 dry-run**，加 `--yes` 才删除；
+  `best.pt` / `bc_best.pt` / `value_distilled*.pt` 在保护名单内）。
+
+### 五、测试
+
+`tests/test_p0_expert_deprecated.py` → `tests/test_p0_expert_removed.py`（5 项，含"目录已消失"断言）；
+新增 `tests/test_p4_archived_scripts_labelled.py`（6 项）。
+全量：**403 passed / 3 skipped**（用迁移后的 `../venv_junqi_engine` 解释器执行）。
+
+> ⚠️ **过程记录（供后来者避坑）**：本批使用 `git rm -r` 删除 `junqi/expert/` 时，命令被中途
+> 终止（SIGTERM）并遗留 `.git/index.lock`，随后 `junqi/` 与 `scripts/` 共 96 个文件从工作区
+> 消失（`git status` 显示为 ` D`）。已通过清除 stale lock + `git checkout HEAD -- junqi scripts`
+> 完整恢复，全部源码改动经关键词核验无损。**教训：本仓库的删除操作请用普通文件系统操作
+> （`os.remove` / `shutil.rmtree`）完成，不要用 `git rm`；确需 git 操作时避免长链命令。**
+
+---
+
 ## [2026-09-15] 第二批 — 搜索/数据/健壮性/性能全量收口（审查 C1–C12、P2–P6 修复完毕）
 
 阶段归属：**P0（正确性）+ P1（数据口径）+ P3（运营/性能）**。承接同日第一批

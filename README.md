@@ -65,14 +65,18 @@
 
 本项目使用独立的虚拟环境管理依赖。**切勿直接使用系统 Python**！
 
+> **虚拟环境位置（2026-09-15 起）**：虚拟环境已移出工程目录，位于同级
+> `../venv_junqi_engine/`——避免 4.7 GB 的依赖树混在源码目录里（也避免被
+> 误当项目内容扫描/归档）。`venv/` 已在 `.gitignore` 中，移动不影响版本控制。
+
 ```bash
 cd junqi_engine
 
 # Windows (PowerShell)
-.\venv\Scripts\activate.ps1
+..\venv_junqi_engine\Scripts\Activate.ps1
 
-# Linux/Mac
-source venv/bin/activate
+# Linux/Mac（若为软链或自建环境）
+source ../venv_junqi_engine/bin/activate
 
 # 验证 Python 版本（需要 3.10+）
 python --version
@@ -81,11 +85,11 @@ python --version
 ### 运行测试
 
 ```bash
-# 方法 1: 使用便捷脚本（推荐）
+# 方法 1: 使用便捷脚本（推荐；会自动定位虚拟环境）
 .\run_tests.bat
 
-# 方法 2: 使用完整路径（Windows）
-"/e/local code/军棋/junqi_engine/venv/Scripts/python.exe" -m pytest tests/ -v
+# 方法 2: 使用完整路径（Windows / Git Bash）
+"../venv_junqi_engine/Scripts/python.exe" -m pytest tests/ -v
 
 # 方法 3: 激活虚拟环境后运行
 python -m pytest tests/test_rules.py -v
