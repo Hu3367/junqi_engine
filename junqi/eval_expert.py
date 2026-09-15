@@ -498,3 +498,39 @@ def evaluate_expert(state: GameState, seat: int, w: Optional[EvalWeights] = None
     score += w.hidden_tempo * (my_active - opp_active)
 
     return score
+
+
+def evaluate_expert_dual(state: GameState, w: Optional[EvalWeights] = None,
+                         ignore_rule_draw: bool = False
+                         ) -> tuple[float, float, float, float]:
+    """返回 ``(e0, e1, sym0, sym1)``：原口径估值 + **镜像对称化**估值。
+
+    ``sym_s = [f(st, s) + f(mirror(st), 1-s)] / 2``，等价于
+    ``Δ_sym = [Δ(st) - Δ(mirror(st))] / 2``（其中 Δ = e0 - e1）。
+
+    为什么需要（P1 评测口径，2026-09-15 实测）：
+    `evaluate_expert` 存在**按座位标签**的微弱加性偏差 ``b_s`` —— 直接测镜像对称性
+    ``f(mirror(st),0)`` vs ``f(st,1)``，210 个局面里 83 个违反、最大偏差 9 分。
+    裁决式判分用零阈值比较 Δ，会把这个小偏差放大成**系统性符号偏置**：
+    镜像自对局（同一模型）的裁决得分率实测 0.600 而非 0.500，
+    反而不低于已知更强方的 0.575，导致该口径无法分辨真实强度差。
+
+    设 ``f(st,s) = T(st,s) + b_s``（T 为真实价值），则
+        Δ(st)      = T0 - T1 + (b0 - b1)      ← 含偏差
+        Δ_sym(st)  = T0 - T1                  ← 偏差严格抵消
+    且 ``Δ_sym(mirror(st)) = -Δ_sym(st)`` 恒成立（严格反对称）。
+    **无任何可调参数**，不改变规则定义、训练奖励与 `evaluate_expert` 本身。
+
+    成本：4 次 `evaluate_expert` + 1 次 `mirror_state`（约 0.2ms/次估值），
+    仅用于评测采样与终局裁决，不进搜索热路径。
+    """
+    from .state import mirror_state
+
+    e0 = evaluate_expert(state, 0, w=w, ignore_rule_draw=ignore_rule_draw)
+    e1 = evaluate_expert(state, 1, w=w, ignore_rule_draw=ignore_rule_draw)
+    ms = mirror_state(state)
+    m0 = evaluate_expert(ms, 0, w=w, ignore_rule_draw=ignore_rule_draw)
+    m1 = evaluate_expert(ms, 1, w=w, ignore_rule_draw=ignore_rule_draw)
+    # F(st,0) = [f(st,0) + f(mirror(st),1)] / 2
+    # F(st,1) = [f(st,1) + f(mirror(st),0)] / 2
+    return e0, e1, (e0 + m1) / 2.0, (e1 + m0) / 2.0

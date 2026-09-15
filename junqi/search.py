@@ -44,45 +44,54 @@ class SearchStats:
     max_depth: int = 0
     time_elapsed_ms: float = 0.0
     root_scores: list[tuple[Action, float]] = field(default_factory=list)
-    # P0 修复（审查 C2/C3，2026-09-15）
-    degraded: bool = False             # 首层未完成即超时 / 兜底选招
+    # P0 修复（审查 C2/C3/C13，2026-09-15）
+    degraded: bool = False             # 首层未完成 / 根循环层内被打断 / 兜底选招
     root_scores_bounded: list[bool] = field(default_factory=list)
     # True 表示该根节点分数只是**上界**（被 alpha 窗口截断），不是精确值。
     # 排序仍然有效（上界低于另一动作的精确分 ⇒ 确实更差），但不可当绝对分展示。
+    #
+    # degraded 为 True 时的两点含义（返回值仍是合法动作、分值仍然有限）：
+    #   - `score` 来自最后一次有产出的层，是真实值的**下界**估计（未搜完的层，
+    #     未搜索的动作可能更优）；
+    #   - `root_scores` 的候选集合可能是**截断**的（不覆盖全部合法动作），
+    #     逐个分值与排序依然有效，但覆盖面不完整——top-N 展示与蒸馏软分布
+    #     应结合本标记判断。
 
 
 # ----------------------------------------------------------------- 迭代加深时限判据
 
-IDS_MIN_GROWTH = 2.0      # 下一层至少比本层慢 2 倍（分支因子下限）
-IDS_MAX_GROWTH = 12.0     # 增长因子上限，防止历史比值把预估吹爆
+def ids_next_depth_estimate(elapsed_ms: float, last_depth_ms: float) -> float:
+    """外推"下一层大约要跑多久"（毫秒）。
 
-
-def ids_growth_estimate(last_depth_ms: float, prev_depth_ms: float) -> float:
-    """由实测的两层耗时外推下一层的增长因子，夹在 [2, 12]。
-
-    上一轮不存在时（首次迭代）退化为下限 2.0。
+    采用迭代加深的经典假设——**累计耗时会随深度大约翻倍**，
+    因此下一层耗时不小于：本层耗时，也不小于累计耗时的一半。
+    取两者较大值，且**不做比值外推**。
     """
-    if prev_depth_ms <= 1e-9:
-        return IDS_MIN_GROWTH
-    ratio = last_depth_ms / prev_depth_ms
-    return min(IDS_MAX_GROWTH, max(IDS_MIN_GROWTH, ratio))
+    return max(float(last_depth_ms), float(elapsed_ms) * 0.5)
 
 
 def should_stop_ids(elapsed_ms: float, budget_ms: float,
                     last_depth_ms: float, prev_depth_ms: float = 0.0) -> bool:
     """是否应在开始下一层迭代加深前停止（纯函数，可单测）。
 
-    判据：**已用时间 + 下一层预估耗时 > 预算**，其中下一层耗时按
-    `last_depth_ms × growth` 估算。
+    判据：**已用时间 + 下一层预估耗时 > 预算**。
 
-    旧实现写成 `elapsed > budget * 0.25`（总耗时超过预算四分之一就停），
-    与"下一深度预计超时"的语义完全不符：1000ms 预算下 depth-1 只要用掉
-    260ms 就退出，剩余 740ms 全部浪费（审查 C1）。
+    为什么不是"总耗时 > 预算的 25%"（旧实现）：与"下一深度预计超时"的语义
+    完全不符 —— 1000ms 预算下 depth-1 只要用掉 260ms 就退出，剩余 740ms 全浪费。
+
+    为什么**也不做比值外推**（第一版修复的做法）：实测 endgame 局面
+    d1/d2/d3/d4 = 2.6/26.9/173/598 ms，实测比值 6.1 会把 d4 估成 891ms，
+    于是 1000ms 预算下在 d3 就停 —— 只用了 171ms（17% 预算），比旧实现还少搜一层。
+    改用"翻倍"假设（估计值 = max(本层, 累计/2)）后：
+    d3 后估计 173ms，173+173 < 1000 继续 → d4 跑完 598ms，
+    之后估计 425ms，600+425 > 1000 停止 —— 拿到与旧实现相同的深度，且预算用满 60%。
+
+    `prev_depth_ms` 仅为兼容旧签名保留，不参与计算。
     """
     if budget_ms <= 0:
         return False
-    growth = ids_growth_estimate(last_depth_ms, prev_depth_ms)
-    return elapsed_ms + last_depth_ms * growth > budget_ms
+    estimate = ids_next_depth_estimate(elapsed_ms, last_depth_ms)
+    return elapsed_ms + estimate > budget_ms
 
 
 class ExpertSearchEngine:
@@ -90,11 +99,22 @@ class ExpertSearchEngine:
 
     def __init__(self, weights: Optional[EvalWeights] = None,
                  tt_size_power: int = 18, seed: Optional[int] = None,
-                 qsearch_depth: int = DEFAULT_QSEARCH_DEPTH):
+                 qsearch_depth: int = DEFAULT_QSEARCH_DEPTH,
+                 use_qtt: bool = True, qtt_size_power: int = 16):
         self.w = weights or EvalWeights()
         self.tt = TranspositionTable(size_power=tt_size_power)
         self.rng = random.Random(seed)
         self.qsearch_depth = qsearch_depth
+
+        # QSearch 专用置换表（P1，2026-09-15）。
+        # **必须与主表分离**：主表 TTEntry.depth 是"剩余搜索深度"，qsearch 的
+        # depth_left 是"剩余吃子链长度"，语义不同。共用一张表会让 qsearch 写入的
+        # depth_left=10 条目被 _negamax 的 depth=2 查询命中（entry.depth >= depth
+        # ⇒ 10 >= 2），直接返回错误分数。
+        # 实测（残局 ply=90）：(zobrist, depth_left) 重复率 54.3%（35538 → 16253），
+        # 值得付出每次 7.4us 的 zobrist 成本，换取 evaluate_expert（104.7us）的命中豁免。
+        self.use_qtt = use_qtt
+        self.qtt = TranspositionTable(size_power=qtt_size_power)
 
         # 启发式表
         # killer_moves[depth] = list[Action]
@@ -108,9 +128,10 @@ class ExpertSearchEngine:
         self.stopped = False
 
     def clear_heuristics(self):
-        """清空杀手着法与历史表（置换表选择性保留或清空）。"""
+        """清空杀手着法与历史表（含 QSearch 置换表）。"""
         self.killers = [[] for _ in range(MAX_SEARCH_DEPTH)]
         self.history.clear()
+        self.qtt.clear()
 
     # ------------------------------------------------------------- 走法排序
 
@@ -400,14 +421,27 @@ class ExpertSearchEngine:
             win = WIN_SCORE - state.ply
             return win if state.winner == state.turn else -win
 
+        # QSearch 置换表查询（与主表分离，理由见 __init__ 注释）。
+        # 命中即省下一次 evaluate_expert（104.7us）与整棵吃子子树。
+        orig_alpha = alpha
+        zkey: Optional[int] = None
+        if self.use_qtt:
+            zkey = compute_zobrist(state)
+            tt_val, _ = self.qtt.lookup(zkey, depth_left, alpha, beta)
+            if tt_val is not None:
+                return tt_val
+
         # Stand-Pat 评估剪枝
         stand_pat = evaluate_expert(state, state.turn, self.w)
         if stand_pat >= beta:
+            if zkey is not None:
+                self.qtt.store(zkey, depth_left, beta, FLAG_LOWER_BOUND)
             return beta
         if stand_pat > alpha:
             alpha = stand_pat
 
         if depth_left <= 0:
+            # 静态近似值：既非上界也非下界，**不入表**（入了会污染真实分数）
             return stand_pat
 
         # Delta Pruning (大 Delta 剪枝)
@@ -415,6 +449,8 @@ class ExpertSearchEngine:
         max_piece_val = max(self.w.piece.values()) if (self.w and self.w.piece) else 100.0
         big_delta = max_piece_val + 200.0
         if stand_pat + big_delta < alpha:
+            if zkey is not None:
+                self.qtt.store(zkey, depth_left, alpha, FLAG_UPPER_BOUND)
             return alpha
 
         # 仅生成吃子动作（吃敌方明子或吃旗）
@@ -431,6 +467,10 @@ class ExpertSearchEngine:
                 tactical_moves.append(a)
 
         if not tactical_moves:
+            if zkey is not None:
+                # stand_pat < beta 已在上面保证；高于原 alpha ⇒ 精确值，否则 fail-low 上界
+                flag = FLAG_EXACT if stand_pat > orig_alpha else FLAG_UPPER_BOUND
+                self.qtt.store(zkey, depth_left, stand_pat, flag)
             return stand_pat
 
         # MVV-LVA 排序
@@ -447,10 +487,15 @@ class ExpertSearchEngine:
             child = state.apply(a)
             score = -self._qsearch(child, -beta, -alpha, depth_left - 1)
             if score >= beta:
+                if zkey is not None:
+                    self.qtt.store(zkey, depth_left, beta, FLAG_LOWER_BOUND)
                 return beta
             if score > alpha:
                 alpha = score
 
+        if zkey is not None:
+            flag = FLAG_EXACT if alpha > orig_alpha else FLAG_UPPER_BOUND
+            self.qtt.store(zkey, depth_left, alpha, flag)
         return alpha
 
     # ------------------------------------------------------------- 翻棋几率节点 (Chance Node / Star1)
@@ -700,8 +745,12 @@ class ExpertSearchEngine:
                 软分布时必须设为 True，否则 fail-low 动作的上界会被误当精确分。
 
         返回:
-            (best_action, score, stats)。超时降级时 score 为 0.0 且
-            stats.degraded=True，**永不返回 ±inf**（C2 修复）。
+            (best_action, score, stats)。**time_limit_ms > 0 时应先查 `stats.degraded`**：
+            为 True 表示预算不足（根循环在层内被打断，或首层未完成），返回的
+            (best_action, score) 是**最后一次有产出的层**的部分最优——它是真实值的
+            有效下界估计，但该层的候选集合可能是**截断**的，即
+            `stats.root_scores` 可能不覆盖全部合法动作（排序仍有效）。
+            超时兜底时 score 为 0.0；**永不返回 ±inf**（C2 修复）。
         """
         self.stats = SearchStats()
         self.stopped = False
@@ -762,9 +811,12 @@ class ExpertSearchEngine:
                 beta = math.inf
                 d_scores: list[tuple[Action, float]] = []
                 d_bounded: list[bool] = []
+                # C13：本层是否在动作循环内被时限打断（区别于"本层完整跑完"）。
+                interrupted = False
 
                 for a in ordered_acts:
                     if self.stopped or (time_limit_ms > 0 and time.perf_counter() >= self.deadline):
+                        interrupted = True
                         break
 
                     if exact_root_scores:
@@ -828,7 +880,24 @@ class ExpertSearchEngine:
 
                 depth_ms.append((time.perf_counter() - d_start) * 1000.0)
 
-                if not self.stopped:
+                if self.stopped:
+                    # 子搜索内部已置 stopped：整层作废（既有语义），不更新任何统计
+                    break
+
+                # C13：根循环在**层内**被时限打断 ⇒ 本层未搜完。
+                # 与 self.stopped 不同，这条路径此前完全无人处理：本层被当作
+                # "已完成"，于是 degraded 不置位，并以 FLAG_EXACT 写入 depth-d
+                # 根节点置换表条目（实际只是下界）。
+                partial_layer = interrupted
+                if partial_layer:
+                    self.stats.degraded = True
+
+                if d_scores:
+                    # 决策仍沿用本层的（部分）最优——这是迭代加深的既定语义：
+                    # 层内首个动作是 tt_move/上一层最优，走全窗口搜索，其余动作也都会
+                    # 被验证，故"部分最优"是真实值的有效**下界**估计，比退回浅一层
+                    # 更接近真相。A/B 实测（`scripts/ab_search_compare.py`）证明退回
+                    # 浅一层会丢信息：处女局面 d=1 的全部翻棋同分 0.0，退回即等于弃权。
                     best_action = current_d_best_act
                     best_score = current_d_best_score
                     self.stats.max_depth = d
@@ -842,17 +911,31 @@ class ExpertSearchEngine:
                     self.stats.root_scores = sorted_roots
                     self.stats.root_scores_bounded = [
                         bounded_by_act.get(a, False) for a, _s in sorted_roots]
-                    self.tt.store(zobrist_key, d, best_score, FLAG_EXACT, best_action)
+                    # 未搜完的层只能记**下界**：未搜索的动作可能更优。绝不能标 EXACT，
+                    # 否则后续对同一局面（作为子树出现）的搜索会在 TT 查询处把它当精确值
+                    # 直接返回，污染真实分数与 PV。
+                    if math.isfinite(best_score) and best_action is not None:
+                        self.tt.store(zobrist_key, d, best_score,
+                                      FLAG_LOWER_BOUND if partial_layer else FLAG_EXACT,
+                                      best_action)
+                    # 注意：partial_layer 时 root_scores 是**截断**的候选集合——
+                    # 集合内每个分值本身有效，但不完整。消费方（GUI top-N、
+                    # train_search_distill 的 softmax）应结合 stats.degraded 判断。
 
-                    # 动态时间预算早停控制（对齐原版 APK 0x5ac3a 的意图：
-                    # 下一深度预计会超时就安全退出，保留当前深度完整的最优决策）。
-                    # C1 修复：旧判据是"总耗时 > 预算 25%"，与上述语义完全不符，
-                    # 会把大部分预算白白浪费掉（详见 should_stop_ids 注释）。
-                    elapsed_now = (time.perf_counter() - start_time) * 1000.0
-                    if should_stop_ids(elapsed_now, float(time_limit_ms or 0),
-                                       depth_ms[-1],
-                                       depth_ms[-2] if len(depth_ms) > 1 else 0.0):
-                        break
+                if partial_layer:
+                    # 本层一个动作都没搜完时 d_scores 为空：无新信息，保留上一层结果
+                    # （若连一层都没有，best_action 为 None，走下方 C2 兜底）。
+                    break
+
+                # 动态时间预算早停控制（对齐原版 APK 0x5ac3a 的意图：
+                # 下一深度预计会超时就安全退出，保留当前深度完整的最优决策）。
+                # C1 修复：旧判据是"总耗时 > 预算 25%"，与上述语义完全不符，
+                # 会把大部分预算白白浪费掉（详见 should_stop_ids 注释）。
+                elapsed_now = (time.perf_counter() - start_time) * 1000.0
+                if should_stop_ids(elapsed_now, float(time_limit_ms or 0),
+                                   depth_ms[-1],
+                                   depth_ms[-2] if len(depth_ms) > 1 else 0.0):
+                    break
 
             # C2 修复：首层未跑完就超时时，旧实现返回 (acts[0], -inf)；
             # 该 -inf 会在 hybrid_engine 取负成 +inf 参与排序，并被

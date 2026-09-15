@@ -64,6 +64,37 @@ def deal(rng: Optional[random.Random] = None,
     return GameState(board=board, cfg=cfg or RuleConfig())
 
 
+def mirror_state(state: "GameState") -> "GameState":
+    """镜像局面：棋盘上下翻转 + **交换座位标签**（棋子颜色保持不变）。
+
+    语义：返回局面的"座位 s"扮演原局面的"座位 1-s"。
+
+    用途（P1 评测口径）：`eval_expert.evaluate_expert_dual` 用它做镜像对称化，
+    把 `evaluate_expert` 中按座位标签的加性偏差严格抵消。
+
+    合法性：军棋翻棋棋盘在 r -> ROWS-1-r 下拓扑自同构 —— 行营集合
+    {(2,1),(2,3),(3,2),(4,1),(4,3)} <-> {(9,1),(9,3),(8,2),(7,1),(7,3)}，
+    大本营行 0 <-> 行 11，铁路网同为自同构集合，故结果必为合法局面。
+
+    注意：**不做颜色互换**。若同时互换颜色，得到的结果恰好是原估值取负，
+    那只是符号翻转的假象，不是真对称化（2026-09-15 实测踩过此坑）。
+    """
+    rows = max(r for r, _ in PLAY_POSITIONS) + 1
+    board = {(rows - 1 - r, c): Piece(pc.color, pc.rank, pc.revealed)
+             for (r, c), pc in state.board.items()}
+    dead = tuple(Piece(pc.color, pc.rank, pc.revealed) for pc in state.dead)
+    return GameState(board=board, dead=dead,
+                     seat_color={0: state.seat_color.get(1),
+                                 1: state.seat_color.get(0)},
+                     turn=1 - state.turn,
+                     first_flip_done=state.first_flip_done,
+                     ply=state.ply,
+                     winner=state.winner,
+                     win_reason=state.win_reason,
+                     cfg=state.cfg,
+                     quiet=state.quiet)
+
+
 class GameState:
     __slots__ = ("board", "dead", "seat_color", "turn", "first_flip_done",
                  "ply", "quiet", "winner", "win_reason", "cfg", "_rem_cache",

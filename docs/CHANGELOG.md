@@ -1,5 +1,350 @@
 # CHANGELOG
 
+## [2026-09-15] 第十一批 — QSearch 置换表（建议顺序第 3 项，P1）
+
+阶段归属：**P1（传统搜索性能）**。用户决策：跳过第 2 项（内层翻棋部分展开，高风险、
+需对局级 A/B），先做第 3 项。
+
+### 一、先测后改：瓶颈定位（`scratch/diag_qsearch_bottleneck.py`，残局 ply=90）
+
+| 项 | 单次成本 |
+|---|---|
+| `compute_zobrist` | **7.41 µs** |
+| `evaluate_expert` | **104.68 µs**（14.1×） |
+| `legal_actions` | 56.15 µs（7.6×） |
+
+- qsearch 节点的 `(zobrist, depth_left)` **重复率 54.3%**（35538 → 16253），最高重复 52 次；
+- cProfile：`_fortress_score_impl` 被调 **71,282 次**（= 2 × `evaluate_expert` 次数 ——
+  每次 evaluate 各算 fs_my / fs_opp），cumtime 占 26%。
+
+⇒ 结论：值得付出每次 7.4 µs 的 zobrist 成本，换取 104.7 µs 的 evaluate 豁免。
+
+### 二、设计（关键：防估值污染）
+
+1. **QTT 必须与主表分离**（新增 `ExpertSearchEngine.qtt`）。主表 `TTEntry.depth` 是
+   「剩余搜索深度」，qsearch 的 `depth_left` 是「剩余吃子链长度」，语义不同；
+   共用一张表会让 qsearch 写入的 `depth_left=10` 条目被 `_negamax` 的 `depth=2` 查询命中
+   （`entry.depth >= depth` ⇒ 10 >= 2），**直接返回错误分数**。
+2. **`depth_left <= 0` 不写表** —— 该分支返回的是静态近似值，既非上界也非下界。
+3. **边界标记**：cutoff → `FLAG_LOWER_BOUND`；正常完成且 `alpha <= orig_alpha` →
+   `FLAG_UPPER_BOUND`；否则 `FLAG_EXACT`。
+4. `use_qtt=False` 完全退回原实现，供等价性守卫与回归定位。
+
+### 三、验证
+
+**(a) 等价性**（`scratch/perf_baseline.py`，**改动前先 capture 基线**）：
+
+```
+captured 280 states, 30 searches  →  verify: EQUIVALENT
+```
+
+280 个状态的估值 / 死和 / fortress + 30 次 `depth=2` 搜索**逐位一致**。
+
+**(b) 加速**（`scratch/bench_qtt.py`）：
+
+| 局面 | qtt=off | qtt=on | 加速 | qnodes | 命中率 |
+|---|---|---|---|---|---|
+| opening (ply=0) | 1509 ms | 1532 ms | 0.99× | 0（无吃子） | – |
+| midgame (ply=30) | 675 ms | 669 ms | 1.01× | −4.3% | 29.6% |
+| midgame2 (ply=30) | 369 ms | 390 ms | 0.95× | −0.1% | 14.9% |
+| **endgame (ply=90)** | **6038 ms** | **4188 ms** | **1.44×** | **−27.5%** | **37.2%** |
+
+四个局面的**决策 + 分值 + max_depth 全部一致**。收益集中在残局（开局无吃子、中盘 qnodes 太小）。
+
+**(c) 限时路径**（`scratch/bench_qtt_timed.py`，800 ms 预算，`max_depth=8`）：
+更深 0 / 一致 4 / 更浅 0。其中残局是**预期的改善**而非回归 ——
+
+| | max_depth | 耗时 | degraded | 决策 |
+|---|---|---|---|---|
+| qtt=off | 1 | 850 ms | **True**（首层跑不完 → 降级下界估计） | 走(10,4)->(9,3) |
+| qtt=on | 1 | 610 ms | **False**（首层完成 → 完整结果） | 翻(2,4) |
+
+这正是 C2/C13 定义的 `degraded` 语义：预算不足时返回的部分最优 vs 完整结果。
+其余三个局面决策一致。
+
+### 四、`qsearch_depth` 分级：**结论是不降默认值**（负结论，但必须记录）
+
+原计划「按局面阶段分级 `qsearch_depth`」，实测**不支持**：
+
+- 开局 qnodes = 0，该项无影响；
+- 中盘 qnodes 1.5k~2.9k，qd=4 与 qd=16 的动作 / 分值 / 耗时均无差异；
+- **残局两档结论互相矛盾**：`depth=2` 下 qd=4 **会改变决策**
+  （走(8,1)->(8,2) vs 走(10,4)->(9,3)），`depth=3` 下 qd=4 与 qd=16 决策相同（33.3 s → 8.5 s）。
+  ⇒ 敏感性随深度/局面变化，**未经对局级 A/B 不得改默认值**。
+
+实测依据与"不要凭直觉下调"的警告已写入 `junqi/config.py::SearchConfig.qsearch_depth` 注释。
+
+### 五、测试
+
+`tests/test_p1_qsearch_tt.py`（10 项，新增文件）：QTT 与主表隔离、两表独立计数、
+`clear_heuristics` 一并清空 QTT、开/关 QTT 的动作与分值一致（3 个局面）、`root_scores` 一致、
+`max_depth` 一致、qnodes 不增加、残局命中原生、flag 取值合法、
+`qsearch_depth=1`（大量 `depth_left==0` 截断）下仍等价。
+**测试耗时经调优 117 s → 35 s**（统一用 `qsearch_depth=4` 压住耗时，等价性不依赖 qd 取值）。
+
+全量 495 → **505 passed / 3 skipped**（测试总耗时 118 s → 159 s）。
+
+### 六、风险 / 未做
+
+- QTT 固定 2^16 = 65,536 槽位，跨搜索累积且不清空（与主表行为一致）。
+- 残局 `qd=16` 首层仍需 610 ms，是 GUI 在线决策的延迟压力点，需与
+  `REPLAY_ANALYSIS_AND_SYSTEMIC_IMPROVEMENT_PLAN_20260913.md` §5.1 的延迟预算一并复核。
+- 建议顺序的**第 2 项**（内层翻棋部分展开）与**第 4/5 项**（C++ 移植、`fit_weights`）未开工。
+
+---
+
+## [2026-09-15] 第十批 — 配对 Δ 检验落地 + 镜像对称化假定被实测推翻（P1）
+
+阶段归属：**P1（传统搜索增强与专家评估校准 · 评测口径）**。
+起因：用户问"目前专家引擎还有提升空间吗"，诊断后按建议顺序（测量 → 搜索 → …）从第 1 项开工。
+**本轮最重要的产出是一个被推翻的假设** —— 它避免后续继续在错误方向上投入。
+
+### 一、起因假设（后被实测推翻）
+
+`reports/gate_calib_mirror_fixed.json`（同一模型自对，应 ≈0.5）裁决得分率 **0.6000**，
+高于已知更强方的 `gate_calib_sims_fixed.json` **0.5750**，两者 Wilson CI 几乎完全重叠。
+当时归因为「`evaluate_expert` 存在按座位标签的加性偏差 `b_s`，被零边距放大成符号偏置」。
+
+### 二、诊断链（全部为可直接复跑的 scratch 脚本）
+
+| 脚本 | 结论 |
+|---|---|
+| `diag_adjudication_bias.py` | 复盘 5 份历史门控报告：镜像 0.6000 / sims 对照 0.5750，差 0.025 |
+| `diag_eval_symmetry.py` | 评估函数**几乎**镜像对称：210 个随机构造局面中 83 个违反、最大偏差 9 分 |
+| `check_pair_identity.py` | **关键**：确定性策略下 `_run_pair` 两局**逐字段完全相同** |
+| `diag_bias_signed.py` | **决定性**：60 个真实对局终局上 `bias = Δ - Δ_sym` **恒为 0.0000（非零 0/60）** |
+
+### 三、结论修正（重要，防止后续误判）
+
+1. **「裁决口径存在镜像座位偏差」不成立**：真实终局上 `b_s ≡ 0`，`Δ_sym` 与 `Δ` 逐局相同。
+2. **0.6000 与 0.5 的差异不显著**：n=80 时 Wilson 半宽 ±0.105，`[0.4905, 0.7004]` 覆盖 0.5。
+3. **真问题是统计功效**：官方口径 88-92% 和棋；裁决口径又把 Δ 压成 0/0.5/1，**只剩符号**。
+4. **镜像标定对确定性策略没有区分力**：`_run_pair` 两局恒等 ⇒ 配对必然抵消任何座位优势
+   ⇒ 裁决得分率**恒为 0.5000**。这个"通过"是结构性必然，**不能当作"裁判无偏"的证据**
+   （已验证：expert1 60 组 120 局，r0 与 r1 逐字段相同）。
+   另可证：配对下 `P(A=1,B=0) − P(A=0,B=1) = P(A) − P(B) ≡ 0`，故无胜负局上得分率必然 0.5。
+
+### 四、落地
+
+**(a) 镜像对称化（保留，但实测收益为 0 —— 如实说明）**
+
+- `junqi/state.py::mirror_state`：棋盘上下翻转 + 交换座位标签（**不换颜色** ——
+  第一版误做颜色互换，得到"恰好取负"的假象，属测量陷阱）；
+- `junqi/eval_expert.py::evaluate_expert_dual`：`Δ_sym = [Δ(st) − Δ(mirror(st))]/2`，
+  等价于 `F(st,s) = [f(st,s) + f(mirror(st),1−s)]/2`；数学上**严格消除**任何按座位标签的
+  加性偏差，且 `Δ_sym(mirror(st)) = −Δ_sym(st)` 严格成立，**无任何可调参数**；
+- `play_game` 记录 `final_eval_sym0/1`（原 `final_eval0/1` 保留，兼容旧报告）；
+- `adjudicate_record(use_symmetric=True)` 优先读对称化字段，缺失自动回退。
+- **实测 `b_s ≡ 0`，本项不改变任何结果**。保留理由：把"座位标签偏差"这类风险**结构性**消除
+  （未来经 `fit_weights` 调参若引入偏差可自动兜住），且退出路径为零副作用（只在评测采样，
+  不进搜索热路径）。**不要指望它提升分辨力。**
+
+**(b) 配对 Δ 检验（真正提升分辨力）**
+
+- `eval_gate.paired_delta_test`：`d_i = Δ(r0) − Δ(r1)`，H0: `E[d] = 0`；
+  t 统计量（对**幅度**敏感）+ 符号检验（对离群值稳健）双口径，附连续性校正的正态近似 p；
+- `eval_gate.record_eval_delta`：从记录取 Δ（优先对称化字段，回退原口径）；
+- `run_gate` 报告新增 `paired_delta` 段，`format_gate_report` 同步显示；**不改 promote 判据**。
+- 为什么有效：二元裁决把 Δ 压成 0/0.5/1 **只剩符号**，本检验**保留幅度**；
+  且配对差分自动消掉座位固有优势（实测镜像对局里 Δ 的"座位 0 偏好"达 +90 量级，差分后 ≈0）。
+
+### 五、验证
+
+**单元测试** `tests/test_p1_adjudication_symmetry.py`（30 项，新增文件）：
+`mirror_state` 拓扑对应/颜色不变/座位交换/turn 翻转/对合性/死子保留；
+`evaluate_expert_dual` 公式一致/原值不变/镜像反对称/**注入任意座位偏差后 Δ 被污染而 Δ_sym 不变**；
+`adjudicate_record` 优先与回退语义/胜负语义不变/margin 作用于对称化差/座位映射；
+`paired_delta_test` 零输入/对称输入无信号/一致偏移显著/符号检验与 t 检验分离/
+**幅度优势**（4 正 4 负但正侧幅度大 ⇒ 二元裁决平手而 Δ 检验 p<0.05）/方向约定。
+
+**真实对局验证**（`scratch/calib_adjudication.py`、`scratch/demo_resolution.py`）：
+
+| 场景 | official | adjudicated | paired_delta |
+|---|---|---|---|
+| 镜像（expert1 自对，120 局） | 0.5000 | 0.5000 | `d ≡ 0`（确定性策略，平凡） |
+| expert1 vs greedy（80 局） | 0.6125 `[0.5029,0.7118]` | 0.6500 `[0.5408,0.7455]` | **mean +567.5, t=+4.81, p<0.0001** |
+
+### 六、未完成 / 风险
+
+- **随机策略下的特异性检验未做**：只有 nn_mcts 的 `_run_pair` 两局不同（r0≠r1），
+  那才是 Δ 检验真正的零假设场景；成本约 2.7 小时/80 局，本轮未跑。
+  当前"特异性"仅在确定性策略下平凡成立。
+- 建议顺序的第 2-5 项（内层翻棋部分展开 / QSearch 加 TT + 分级 qd / C++ 移植 /
+  `fit_weights` 修复运行）**未开工**。
+
+### 七、测试总量
+
+上一轮记录 462 → **495 passed / 3 skipped**（本批新增 30 项）。
+
+---
+
+## [2026-09-15] 第九批 — 根循环超时中断：置 degraded + TT 只记下界（C13）
+
+阶段归属：**P0（正确性）**。承接第八批"顺带发现（未修）"一项，用户决策：按要求修复。
+
+### 一、缺陷（C13）
+
+`ExpertSearchEngine.search` 的根节点动作循环在**层内**因时限 `break` 时：
+
+- `self.stopped` 仍为 `False`（它只在 `_negamax` 内部被置位），于是这一层被当作
+  "**已完成**"：`stats.degraded` 保持 `False`，调用方看不出降级；
+- `stats.max_depth = d` 与 `stats.root_scores` 被**部分动作集合**覆盖；
+- 最严重的是把该部分结果以 **`FLAG_EXACT`** 写入 depth-d 的根节点置换表条目。
+  未搜索的动作可能更优 ⇒ 这个分数只是**下界**。而根节点局面键完全可能在后续搜索中
+  作为子树节点出现，`_negamax` 的 TT 查询会把它当精确值直接返回，污染真实分数与 PV。
+
+旧版同样如此（非本次引入），但第八批的 A/B 工具把它暴露了出来。
+
+### 二、修复（只做"记账 + TT 正确性"，不改决策）
+
+1. 根循环新增 `interrupted` 标记，区分"本层完整跑完"与"层内被打断"；
+2. `interrupted` 时置 `stats.degraded = True`；
+3. TT 写入改为 `FLAG_LOWER_BOUND`，且**仅当分数有限**时写入
+   （此前"一个动作都没搜到就超时"会把 `-inf` 写成 `EXACT`，是额外的静默污染）；
+4. `self.stopped`（子搜索内部超时）路径保持既有语义不变：整层作废、不写 TT。
+
+### 二·补、为什么**不**把降级结果退回浅一层（一次实测否决）
+
+第一版实现的额外改动是"不完整层不覆盖 `max_depth` / `root_scores`，并把返回值
+退回上一次**完整**层"。A/B 工具立刻报 **5 处"更浅(回归!)"**，逐层追踪
+（对 `deal0` 等局面记录每层 `_order_actions` 的调用时刻）后确认**这是真回归**：
+
+| | 返回动作 | 分数 | max_depth | root_scores | 节点 |
+|---|---|---|---|---|---|
+| 旧（未修） | `flip(3,0)` | **7.64** | 2 | 6/8（截断） | 144 |
+| 退回完整层（第一版） | `flip(2,2)` | **0.0** | 1 | 8/8 | 144 |
+| 保留部分层（最终版） | `flip(3,0)` | **7.64** | 2 | 6/8 | 144 |
+
+逐层耗时：两版都是 d=1 在 7ms 内跑完、d=2 从 7ms 一直跑到 ~1130ms 被截断。
+`deal0` 是**处女局面**（全盘暗子、全部合法动作都是翻棋），d=1 的八个候选动作
+**全部同分 0.0**，而 d=2 才出现区分度（7.64）。也就是说：退回浅一层等于**弃权**。
+
+迭代加深的既定语义本就该保留部分层最优——层内首个动作是 tt_move/上一层最优，
+走全窗口搜索，其余动作也都会被验证，故"部分最优"是真实值的有效**下界**估计。
+因此最终实现保留部分层结果，只把它的性质如实标注出来：
+
+- `degraded=True` 表示"预算不足"；
+- 该层 `root_scores` 是**截断**的候选集合（集合内每个分值与排序仍有效，
+  但不覆盖全部合法动作）——GUI top-N 与蒸馏 softmax 应结合 `degraded` 判断。
+
+### 三、影响面
+
+- 默认配置（`time_limit_ms=0`，即 `ExpertAgent depth 1/2/3`、benchmark、GUI 对局、
+  `hybrid_engine` 与 `ai.py` 内部的 `as_evaluator` 估值）**不涉及**该路径 —— 这些调用
+  都是不限时或预算充裕的；A/B 复跑确认默认深度搜索与 APK 引擎**各 17/17 完全一致**。
+- 限时搜索：A/B 复跑 **更深 3 / 一致 14 / 更浅(仅记录口径) 0 / 更浅(回归) 0**；
+  决策（动作+分值）变化 3 处，**全部落在"更深"的那 3 个局面上**（属 C1 的收益），
+  `degraded` 由 False→True 8 处、True→False 0 处。
+- 受益方：限时教师打标（`train_search_distill --time-limit-ms`、`train_value_distill`
+  的搜索型估值）与 GUI top-N 提示——被打断时不再被当作"精确搜索的完整结果"，
+  且不再污染同局面后续搜索的 TT 命中。
+
+### 四、测试（新增 6 项）
+
+`tests/test_p1_search_time_and_scores.py::TestRootLoopInterruptTtFlag`，用
+"被 `arm()` 唤醒的脚本化时钟 + `_negamax` 桩"把这条路径单独隔离出来：
+
+| 用例 | 断言 |
+|---|---|
+| `test_interrupt_mid_depth_marks_degraded` | 层内被打断必须置 `degraded`（旧实现恒 False） |
+| `test_interrupt_mid_depth_stores_lower_bound_not_exact` | TT flag 必须是 `FLAG_LOWER_BOUND` |
+| `test_interrupt_keeps_partial_layer_result` | 部分层仍产出决策（`max_depth=2`、`root_scores` 为截断集合） |
+| `test_partial_layer_score_is_finite_and_used` | 降级时返回的是部分层最优分，不被丢弃/置零 |
+| `test_interrupt_before_any_action_does_not_store_minus_inf` | 本层无产出时不写 TT、不记 `max_depth` |
+| `test_interrupt_in_first_depth_returns_finite_and_lower_bound` | 最坏情况仍返回有限分 + 下界 |
+| `test_complete_search_stores_exact` | 对照组：未被打断仍为 EXACT 且 `degraded=False` |
+
+测试刻意**不硬编码根节点动作数**（`_order_actions` 含 Delta/翻棋候选剪枝，返回的是
+候选子集，硬编码会让用例悄悄变成另一个场景），改为在目标深度的根排序调用返回时唤醒时钟。
+
+修复前实测：5 项失败（`max_depth 4 != 1`、`degraded False`、`flag 0 != 1`）；
+修复后全通过。
+
+### 四·补、`scripts/ab_search_compare.py` 补掉一个盲点
+
+工具原先**只比对 `max_depth`**，正是这个盲点让"退回浅一层"看起来像 5 处回归而
+"其实还行"——反过来也说明只看深度数字不足以判读。现在同时输出：
+
+- 深度变化四分类：`更深(改善)` / `一致` / `更浅(仅记录口径)`（节点数与决策都相同）/
+  `更浅(回归!)`；
+- **决策（动作+分值）是否变化**，并列出差异明细；
+- `degraded` 单向变化统计（False→True 属预期，True→False 才是异常）。
+
+配套守卫测试增至 8 项（新增"必须同时看节点数与决策"、"探针必须记录限时搜索的
+act/score/degraded"）。
+
+### 五、遗留（未改，需你决定）
+
+`stats.degraded` 目前在**生产链路里没有消费者**（只有 `scripts/ab_search_compare.py`
+读取它）。`train_search_distill` 的教师打标即使拿到降级样本也照常使用，且
+`ExpertAgent.choose_actions` 不把 `stats` 暴露给调用方。若要让降级真正影响训练数据
+（例如跳过降级样本、或把截断的 `root_scores` 从软分布中剔除），需要在教师侧引入
+该统计——这会改变训练数据构成，故未擅自动。
+
+### 六、测试总量
+
+全量：**455 passed / 3 skipped → 462 passed / 3 skipped**。
+
+---
+
+## [2026-09-15] 第八批 — 传统搜索引擎 A/B 实测：修正 C1 的过度保守 + 新增对照工具
+
+阶段归属：**P0（正确性）**。起因：用户问"今天的修改对传统搜索引擎有影响吗"。
+不靠读代码推断，而是把改动前版本（`d6f0820`）导出做同局面 A/B 实测。
+
+### 一、实测结论（17 个固定局面：opening/midgame/endgame 各 3 + 4 随机发牌 + 4 中盘）
+
+| 维度 | 结果 |
+|---|---|
+| 默认深度搜索 `depth=2, time_limit=0` | **17/17 动作、分值、节点数逐一相同** → 无影响 |
+| `ApkSearchEngine depth=2` | **17/17 一致** → TT 键校验在这批局面未触发（碰撞本就罕见） |
+| 限时搜索 `max_depth=4, time_limit=1000ms` | 深度 **更深 4 / 一致 13 / 更浅 0** |
+
+### 二、修正 C1：第一版修复方向错了（过度保守）
+
+A/B 实测暴露：第一版用"实测比值外推"估计下一层耗时，在 endgame 局面
+（逐层耗时 d1/d2/d3/d4 = 2.6/26.9/173/598 ms）实测比值为 6.1，把 d4 估成 891ms，
+于是在 d3 就停 —— **1000ms 预算只用了 171ms（17%），比旧实现还少搜一层**。
+
+改为迭代加深的经典"翻倍"假设：
+`下一层估计 = max(本层耗时, 累计耗时/2)`，且不做比值外推。
+
+修正后 endgame 恢复深度 4（4619 节点 / 575ms，与旧版 599ms 相比同结果更快）；
+而旧实现因"总耗时 > 预算 25% 就停"而浪费预算的局面（`mid0/1/3/5`、`endgame#2`）
+现在能多搜一层 —— 这才是 C1 的**实际收益**，且**没有任何局面变浅**。
+
+新增/改写纯函数 `ids_next_depth_estimate` + `should_stop_ids`，并把实测数据写进 docstring；
+删除失效常量 `IDS_MIN_GROWTH` / `IDS_MAX_GROWTH` 与 `ids_growth_estimate`。
+
+### 三、新增 `scripts/ab_search_compare.py`（可复用对照工具）
+
+`python scripts/ab_search_compare.py --ref-commit d6f0820` 即可：
+`git archive` 导出旧版本 → 两个独立子进程跑同一批局面 → 输出三分项对照表
+（默认深度 / 限时深度 / APK 引擎），并把"深度变浅"显式标记为**回归**。
+工具只做 `git archive` 到临时目录，**不 checkout、不建 worktree**（避免重演
+`git rm` 事故那一类风险）。配套 `tests/test_p3_ab_search_tool.py`（6 项）守卫。
+
+### 四、顺带发现（已在第九批修复）
+
+限时搜索在**根节点动作循环**因时间而中断时，`self.stopped` 不会置位，
+于是该层被当作"已完成"记录（`stats.max_depth = d`、`root_scores` 截断），
+并向置换表写入 `FLAG_EXACT`。旧版同样如此，**不是本次引入的回归**，
+但意味着：
+  · `stats.degraded` 不会覆盖这种情形（它只覆盖"best_action 为空/分值为 ±inf"）；
+  · 根节点的 EXACT 条目可能在**后续同局面的搜索**中被读到，而它来自不完整的搜索。
+建议改法：根循环因超时中断时置 `degraded=True`、并把 TT 条目标为
+`FLAG_LOWER_BOUND`/不写。
+
+→ **已于同日第九批按此方案修复（编号 C13），见本文档上一条。**
+
+### 五、测试
+
+改写 `test_p1_search_time_and_scores.py` 的 IDS 判据用例（含"endgame 场景必须继续到 d4"
+的回归断言）；新增 `tests/test_p3_ab_search_tool.py`（6 项）。
+全量：**449 passed / 3 skipped → 455 passed / 3 skipped**。
+
+---
+
 ## [2026-09-15] 第七批 — 清理作废产物 + 修复后首次端到端跑通（含两处新修复）
 
 阶段归属：**P0（正确性验证）+ P3（运营清理）**。用户决策：清理三个 `*_buffer.pkl`、

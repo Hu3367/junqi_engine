@@ -32,6 +32,18 @@ class SearchConfig:
     samples: int = 6        # PIMC 采样的世界数 K
     time_limit_ms: int = 0  # >0 时迭代加深限时
     qsearch_depth: int = 16 # 静态搜索深度上限 (ply)
+    # qsearch_depth 取值的实测依据（2026-09-15，scratch/probe_qsearch_cost.py
+    # + scratch/bench_qtt.py），**不要凭直觉下调**：
+    #   · 开局（全暗子）qnodes = 0，该项无影响；
+    #   · 中盘（30 手）qnodes ≈ 1.5k~2.9k，qd=4 与 qd=16 的动作、分值、耗时均无差异；
+    #   · 残局（90 手、quiet=0）qnodes ≈ 35k，是单步耗时主因（4.6~6.0s）——
+    #     但 **不可盲目降 qd**：depth=2 下 qd=4 会改变决策
+    #     （走(8,1)->(8,2) vs 走(10,4)->(9,3)）；depth=3 下 qd=4 与 qd=16 决策相同
+    #     （33.3s → 8.5s）。两档结论矛盾 ⇒ 敏感性随深度/局面变化，
+    #     **未经对局级 A/B 不要改默认值**。
+    # 已落地的替代加速：QSearch 置换表（ExpertSearchEngine.use_qtt）——
+    #   残局实测 6038ms → 4188ms（1.44×），qnodes −27.5%，决策逐位不变
+    #   （PERF_BASELINE EQUIVALENT：280 状态估值 + 30 次搜索）。
 
 
 @dataclass

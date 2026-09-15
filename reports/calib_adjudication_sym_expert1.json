@@ -1,0 +1,13 @@
+{
+ "spec": "expert1",
+ "n_seeds": 60,
+ "official_rate": 0.5,
+ "adj_raw_rate": 0.5,
+ "adj_sym_rate": 0.5,
+ "reasons": {
+  "no_capture": 104,
+  "repetition": 4,
+  "immobilized": 6,
+  "flag": 6
+ }
+}

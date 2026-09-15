@@ -221,17 +221,20 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
     seen = Counter()
     first_flip = True
     last_live_eval = None                  # 对局期间最后一次有效估值（评测裁决用）
+    # 镜像对称化口径（P1）：同一次采样顺带记录，抵消 evaluate_expert 的座位标签偏差
+    last_live_eval_sym = None
 
     eval_failures = 0                      # C8：估值失败次数（进对局记录，可观测）
 
     while not st.is_terminal():
         if st.ply % EVAL_SAMPLE_EVERY == 0:
             try:
-                from .eval_expert import evaluate_expert
-                e0 = float(evaluate_expert(st, seat=0, ignore_rule_draw=True))
-                e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
+                from .eval_expert import evaluate_expert_dual
+                e0, e1, sy0, sy1 = evaluate_expert_dual(st, ignore_rule_draw=True)
                 if abs(e0) + abs(e1) > 1e-9:
                     last_live_eval = (e0, e1)
+                if abs(sy0) + abs(sy1) > 1e-9:
+                    last_live_eval_sym = (sy0, sy1)
             except Exception as exc:      # noqa: BLE001
                 # C8 修复：原为 `pass`。估值缺失会让门控的裁决式判分静默退化为
                 # 0.5（等于把该局当平局），却完全不出现在报告里。
@@ -311,17 +314,24 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
     # **裁决式判分**，把有效样本从"决胜负局"扩大到全部对局。
     # 这属于评测口径扩展，不改变任何规则定义与训练奖励（z 仍为纯终局结果）。
     try:
-        from .eval_expert import evaluate_expert
-        e0 = float(evaluate_expert(st, seat=0, ignore_rule_draw=True))
-        e1 = float(evaluate_expert(st, seat=1, ignore_rule_draw=True))
+        from .eval_expert import evaluate_expert_dual
+        e0, e1, sy0, sy1 = evaluate_expert_dual(st, ignore_rule_draw=True)
         is_dead = abs(e0) + abs(e1) <= 1e-9
         if is_dead and last_live_eval is not None:
             # 终局为结构性死锁（估值恒 0）时，回退到对局中最后一次有效估值：
             # 否则"和棋局按终局估值裁决"在恰好需要它的场合全部退化为 0.5
             # （实测 40 组种子镜像 80 局中有 74 局如此）。
             e0, e1 = last_live_eval
+        # 镜像对称化口径同理回退（sym 恒 0 同样发生在结构性死锁终局）
+        is_dead_sym = abs(sy0) + abs(sy1) <= 1e-9
+        if is_dead_sym and last_live_eval_sym is not None:
+            sy0, sy1 = last_live_eval_sym
         rec["final_eval0"] = round(e0, 3)
         rec["final_eval1"] = round(e1, 3)
+        # P1（2026-09-15）：镜像对称化终局估值。裁决判分优先用它，
+        # 因为原口径含按座位标签的加性偏差，会在零阈值下放大成符号偏置。
+        rec["final_eval_sym0"] = round(sy0, 3)
+        rec["final_eval_sym1"] = round(sy1, 3)
         # C8 附带修复：原实现为算这个布尔值**又调了两次** evaluate_expert
         # （共 4 次），而 is_dead 已经算出来了。这里直接复用。
         rec["last_live_eval_used"] = bool(is_dead)
@@ -333,6 +343,8 @@ def play_game(spec0: str, spec1: str, seed: int, cfg: RuleConfig | None = None,
                   f"({type(exc).__name__}: {exc})，final_eval 置 None", flush=True)
         rec["final_eval0"] = None
         rec["final_eval1"] = None
+        rec["final_eval_sym0"] = None
+        rec["final_eval_sym1"] = None
         rec["last_live_eval_used"] = None
     rec["eval_failures"] = eval_failures
     return rec

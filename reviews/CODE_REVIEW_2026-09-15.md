@@ -31,6 +31,7 @@
 | C10 长函数/死代码 | 中 | 🟡 部分：删除死类；超长函数拆分未做（收益 < 回归风险） |
 | C11 文档漂移 | 中 | ✅ 已修（README 计数/YAML 声明、CHANGELOG） |
 | C12 高危路径零测试 | 中 | ✅ 已修（train_bc / eval_bc / fit_weights / load_p1_arrays） |
+| C13 根循环层内被打断：不置 degraded + TT 误标 EXACT（A/B 实测发现） | 高 | ✅ 已修（`degraded` + `FLAG_LOWER_BOUND` + 拒绝落盘 `-inf`；**决策不变**，A/B 复跑 更浅 0） |
 | P1 经验池每轮全量落盘 | 高 | ✅ 已修（节流 + 原子写） |
 | P2 MCTS batch=1 / 重复 legal_actions | 中 | ✅ 已修（`acts` 透传 + avoid 复用） |
 | P3 position_key 重复构造 | 中 | ✅ 已修（MCTS 根避免重算；hybrid 复用 nxt） |
@@ -148,6 +149,10 @@ P3 热启动链首选的 `models/value_distilled_v2.pt`，导致训练静默退�
 | C10 | 8 处 `except…: pass`、23 处 `except Exception`、20 处 TODO；21 个超长函数 | 全库统计 | 可维护性 | 中 |
 | C11 | 文档漂移：README 测试计数四处自相矛盾（188/225/258/实际 297）；`configs/*.yaml` 全库零读取点，"修改后无需重启生效"为假 | `README.md:13/86/210/317`、`README.md:182-189` | 违反 AGENTS.md:18 | 中 |
 | C12 | 高危路径零测试：`train_bc.py`、`eval_bc.py`、`fit_weights.py`、热启动优先级链（`:1154-1156`）在 tests 中均无命中 | tests 全量检索 | 回归风险 | 中 |
+| C13 | 根循环在**层内**被时限打断时 `self.stopped` 仍为 False（只在 `_negamax` 内置位），该层被当作"已完成"：`degraded` 不置位、部分动作集合覆盖 `max_depth`/`root_scores`，并以 `FLAG_EXACT` 写入 depth-d 根节点 TT 条目（实际只是**下界**） | `search.py` 根循环（原 `:768-847`） | 限时搜索的教师打标、同局面后续搜索的 TT 命中 | 高 |
+
+> C13 是第八批做传统搜索 A/B 实测（`scripts/ab_search_compare.py`）时发现的，
+> 旧版本同样存在，非修复引入。已在第九批修复，详见 `docs/CHANGELOG.md`。
 
 ---
 

@@ -68,6 +68,52 @@ def paired_z_test(per_seed_scores: List[float], null_mean: float = 1.0
     return {"n": n, "mean": mean, "sd": sd, "se": se, "z": z, "p_two_sided": p_two}
 
 
+def paired_delta_test(per_seed_deltas: List[float]) -> Dict[str, object]:
+    """配对 Δ 检验：H0 两引擎等强 ⇒ E[d_i] = 0。
+
+    ``d_i = Δ(r0) - Δ(r1)``，其中 ``Δ = 座位0视角估值 - 座位1视角估值``。
+    在 r0 中候选执先，其优势就是 ``Δ(r0)``；在 r1 中候选执后，其优势是 ``-Δ(r1)``，
+    故 ``d_i`` 即「候选在本组配对里的净估值优势」，>0 表示候选更强。
+
+    为什么需要它（2026-09-15 实测）：官方口径在高和棋率下几乎无信息
+    （200 局仅 16-56 局胜负）；裁决式判分把 Δ 压成 0/0.5/1 只保留**符号**，
+    丢掉了幅度。本检验直接使用 Δ 的**幅度与符号**，
+    t 统计量对幅度敏感、符号检验对离群值稳健，两者互为补充。
+
+    且因为是**配对差分**，任何「座位 0 的固有优势」被自动消掉
+    —— 实测镜像对局（同一模型）下 Δ 的座位偏好很强（先手优势 +90 量级），
+    但配对差分后均值 ≈ 0。
+
+    注意：`t` 的正态近似在小样本（n<20）下偏乐观，报告同时给出符号检验 p 值。
+    """
+    n = len(per_seed_deltas)
+    if n == 0:
+        return {"n": 0, "mean": 0.0, "sd": 0.0, "se": 0.0, "t": 0.0,
+                "p_two_sided": 1.0, "pos": 0, "neg": 0, "sign_p": 1.0}
+    mean = sum(per_seed_deltas) / n
+    if n > 1:
+        var = sum((d - mean) ** 2 for d in per_seed_deltas) / (n - 1)
+        sd = math.sqrt(max(var, 0.0))
+        se = sd / math.sqrt(n)
+    else:
+        sd, se = 0.0, 0.0
+    t = (mean / se) if se > 1e-12 else (
+        0.0 if abs(mean) < 1e-12 else math.copysign(999.0, mean))
+    p_two = math.erfc(abs(t) / math.sqrt(2.0))
+
+    pos = sum(1 for d in per_seed_deltas if d > 0)
+    neg = sum(1 for d in per_seed_deltas if d < 0)
+    m = pos + neg
+    if m == 0:
+        sign_p = 1.0
+    else:
+        # 正态近似 + 连续性校正（0.5）
+        z = max((abs(pos - m / 2.0) - 0.5) / math.sqrt(m / 4.0), 0.0)
+        sign_p = math.erfc(z / math.sqrt(2.0))
+    return {"n": n, "mean": mean, "sd": sd, "se": se, "t": t,
+            "p_two_sided": p_two, "pos": pos, "neg": neg, "sign_p": sign_p}
+
+
 def _elo_to_score(elo: float) -> float:
     """Elo 差 -> 期望得分率（胜1 和0.5 负0 口径）。"""
     return 1.0 / (1.0 + 10.0 ** (-elo / 400.0))
@@ -213,6 +259,7 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
     adj_per_seed: List[float] = []
     adj_totals = {"wins": 0, "draws": 0, "losses": 0}
     adj_margins: List[float] = []
+    delta_per_seed: List[float] = []      # d_i = Δ(r0) - Δ(r1)，配对 Δ 检验用
     totals = {"wins": 0, "draws": 0, "losses": 0}
     reasons: Dict[str, Dict[str, int]] = {}
     seat_split = {"as_first": [0.0, 0], "as_second": [0.0, 0]}
@@ -228,8 +275,14 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
         a0 = adjudicate_record(pair[0], spec_a, margin=adjudicate_margin, seat_a=0)
         a1 = adjudicate_record(pair[1], spec_a, margin=adjudicate_margin, seat_a=1)
         adj_per_seed.append(a0 + a1)
-        if pair[0].get("final_eval0") is not None and pair[0].get("final_eval1") is not None:
+        if pair[0].get("final_eval_sym0") is not None and pair[0].get("final_eval_sym1") is not None:
+            adj_margins.append(abs(pair[0]["final_eval_sym0"] - pair[0]["final_eval_sym1"]))
+        elif pair[0].get("final_eval0") is not None and pair[0].get("final_eval1") is not None:
             adj_margins.append(abs(pair[0]["final_eval0"] - pair[0]["final_eval1"]))
+        d0 = record_eval_delta(pair[0])
+        d1 = record_eval_delta(pair[1])
+        if d0 is not None and d1 is not None:
+            delta_per_seed.append(d0 - d1)
         for sc_a in (a0, a1):
             adj_totals["wins" if sc_a == 1.0 else ("draws" if sc_a == 0.5 else "losses")] += 1
         for sc, rec, seat_idx in ((s0, pair[0], 0), (s1, pair[1], 1)):
@@ -262,10 +315,15 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
     adj_rate = (adj_sum / adj_n) if adj_n else 0.0
     adj_wil = wilson_ci(adj_sum, adj_n)
     adj_paired = paired_z_test(adj_per_seed) if adj_per_seed else None
+    # 估值来源标注：新记录用镜像对称化口径（消座位标签偏差），旧报告回退原口径。
+    adj_source = "symmetric" if any(
+        r.get("final_eval_sym0") is not None and r.get("final_eval_sym1") is not None
+        for r in records) else "raw"
     adjudicated = {
         "totals": dict(adj_totals), "n_games": adj_n,
         "score_rate": adj_rate, "score_rate_wilson": adj_wil,
         "paired": adj_paired,
+        "eval_source": adj_source,
         "median_abs_eval_gap": (sorted(adj_margins)[len(adj_margins) // 2]
                                 if adj_margins else None),
         "margin": adjudicate_margin,
@@ -287,6 +345,7 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
         "paired": paired,
         "sprt": sprt,
         "adjudicated": adjudicated,
+        "paired_delta": paired_delta_test(delta_per_seed),
         "reason_breakdown": reasons,
         "seat_split": {k: {"score_rate": (v[0] / v[1] if v[1] else 0.0),
                            "games": v[1]} for k, v in seat_split.items()},
@@ -306,14 +365,24 @@ def run_gate(spec_a: str, spec_b: str, seeds: List[int],
 
 
 def adjudicate_record(rec: dict, spec_a: str, margin: float = 0.0,
-                      seat_a: Optional[int] = None) -> float:
+                      seat_a: Optional[int] = None,
+                      use_symmetric: bool = True) -> float:
     """A 视角的裁决得分（1/0.5/0）：有胜负按胜负；和棋按终局专家估值裁决。
 
     背景（2026-09-14 诊断）：同源模型间 72-92% 对局判和，专家对专家也 88% 和棋；
     官方得分率判据在如此高和棋率下分辨力极低（200 局仅 16-56 局胜负样本）。
     裁决式判分把全部对局变为有信息的样本（n=200），用于**测量**强度差异。
+
+    估值来源（2026-09-15 修复）：默认 `use_symmetric=True`，优先读
+    `final_eval_sym0 / final_eval_sym1`（镜像对称化口径，见
+    `eval_expert.evaluate_expert_dual`）。原因：原口径 `final_eval0/1` 含
+    **按座位标签的加性偏差**，在零阈值下被放大成系统性符号偏置 —— 镜像自对局
+    （应 ≈0.5）实测裁决得分率 0.600，反而不低于已知更强方的 0.575，使该口径
+    无法分辨真实强度差。对称化后该偏差被严格抵消。
+    记录中缺少对称化字段（旧报告）时自动回退到原口径。
+
     margin：估值差小于该值算和棋（默认 0 = 任意差即判，估值为子力分数量纲）。
-    仅评测口径，不改变规则定义与训练奖励。
+    仅评测口径，不改变规则定义与训练奖励。**不参与 promote 判定。**
     """
     if seat_a is None:                    # 未显式给出时才回退到 spec 名推断（同名会歧义）
         seat_a = 0 if rec.get("a") == spec_a else 1
@@ -321,12 +390,30 @@ def adjudicate_record(rec: dict, spec_a: str, margin: float = 0.0,
     if w is not None and w != -1:
         return 1.0 if w == seat_a else 0.0
     ev0, ev1 = rec.get("final_eval0"), rec.get("final_eval1")
+    if use_symmetric:
+        s0, s1 = rec.get("final_eval_sym0"), rec.get("final_eval_sym1")
+        if s0 is not None and s1 is not None:
+            ev0, ev1 = s0, s1
     if ev0 is None or ev1 is None:
         return 0.5
     ev_a, ev_b = (ev0, ev1) if seat_a == 0 else (ev1, ev0)
     if abs(ev_a - ev_b) <= margin:
         return 0.5
     return 1.0 if ev_a > ev_b else 0.0
+
+
+def record_eval_delta(rec: dict) -> Optional[float]:
+    """从对局记录取「座位 0 视角 − 座位 1 视角」的估值差 Δ。
+
+    优先用镜像对称化字段（final_eval_sym0/1），缺失时回退原口径。
+    两者都缺（估值失败）返回 None。供 `paired_delta_test` 使用。
+    """
+    e0, e1 = rec.get("final_eval_sym0"), rec.get("final_eval_sym1")
+    if e0 is None or e1 is None:
+        e0, e1 = rec.get("final_eval0"), rec.get("final_eval1")
+    if e0 is None or e1 is None:
+        return None
+    return e0 - e1
 
 
 def promote_candidate(report: dict, model_a: Optional[str],
@@ -400,7 +487,8 @@ def format_gate_report(rep: dict) -> str:
     lines.append("")
     if adj:
         aw = adj["score_rate_wilson"]
-        lines.append("  裁决式判分（和棋局按终局专家估值判，测量用/不参与 promote）：")
+        lines.append(f"  裁决式判分（和棋局按终局专家估值判，测量用/不参与 promote；"
+                     f"估值来源={adj.get('eval_source', 'raw')}）：")
         lines.append(f"    战绩 胜 {adj['totals']['wins']} / 和 {adj['totals']['draws']} / "
                      f"负 {adj['totals']['losses']}  （n={adj['n_games']}）")
         lines.append(f"    裁决得分率 {adj['score_rate']:.4f}  Wilson 95%CI "
@@ -410,5 +498,14 @@ def format_gate_report(rep: dict) -> str:
                          f"（margin={adj['margin']}）")
     lines.append(f"  晋级判定 promote = {rep['promote']} "
                  f"(判据: 得分率 Wilson 下界 > 0.5 且 SPRT 不接受 H0)")
+    pd = rep.get("paired_delta")
+    if pd and pd.get("n"):
+        lines.append("")
+        lines.append("  配对 Δ 检验（保留估值差幅度；配对差分自动消掉座位固有优势，"
+                     "测量用/不参与 promote）：")
+        lines.append(f"    d = Δ(r0) - Δ(r1)   n={pd['n']}  mean={pd['mean']:+.3f}  "
+                     f"sd={pd['sd']:.3f}  se={pd['se']:.3f}")
+        lines.append(f"    t={pd['t']:+.3f}  p(双侧)={pd['p_two_sided']:.4f}   "
+                     f"符号 正{pd['pos']}/负{pd['neg']}  符号检验 p={pd['sign_p']:.4f}")
     lines.append("=" * 78)
     return "\n".join(lines)
