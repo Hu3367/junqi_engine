@@ -874,15 +874,21 @@ def should_save_buffer(epoch: int, end_epoch_exclusive: int,
                        every: int = 1) -> bool:
     """经验池落盘节流判据（纯函数，可单测）。
 
-    every is None / <0：每轮保存（历史默认行为，会产生 GB 级文件）；
-    every == 0       ：永不保存，但**最后一轮必须保存**，否则断点续训丢全部经验；
-    every == 1       ：每轮保存；
-    every  > 1       ：每 every 轮保存一次，同样保证最后一轮落盘。
+    every is None      ：每轮保存（历史默认行为，会产生 GB 级文件）；
+    every  < 0         ：**从不保存**（冒烟/验证跑用；断点续训将丢失历史样本）；
+    every == 0         ：仅最后一轮保存；
+    every == 1         ：每轮保存；
+    every  > 1         ：每 every 轮保存一次，且**最后一轮恒写**。
 
     end_epoch_exclusive 为本轮之后即将执行的下一轮编号（即最后一轮 +1）。
+
+    为什么需要"从不保存"：实测单份池可达成 2~3.8 GB，而短程冒烟跑（如 2 轮 ×
+    60 局）在"最后一轮恒写"规则下会重新生成一个 2.4 GB 文件，对验证毫无价值。
     """
-    if every is None or every < 0:
+    if every is None:
         return True
+    if every < 0:
+        return False
     if epoch >= end_epoch_exclusive - 1:        # 最后一轮恒写
         return True
     if every == 0:
@@ -908,6 +914,11 @@ def save_checkpoint(path: str, net: JunqiNet, optimizer, epoch: int, elo: float,
         "python_rng_state": main_rng.getstate(),
         "torch_rng_state": torch.get_rng_state(),
         "buffer_stats": buffer.stats() if buffer is not None else None,
+        # 让检查点自描述：否则 `JunqiNet.load_from_file` 只能用默认超参重建网络，
+        # 遇到非默认主干（blocks/channels 不同）就会因形状不符而 RuntimeError。
+        "in_channels": net.in_channels,
+        "num_blocks": len(net.blocks),
+        "channels": net.in_conv[0].out_channels,
     }
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     torch.save(payload, path + ".tmp")

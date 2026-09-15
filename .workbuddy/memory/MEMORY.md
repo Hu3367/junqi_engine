@@ -27,6 +27,43 @@
   → coreutils（ls/grep/head/tail/wc）不可用，文件/内容检索用 Read/Glob/Grep 工具或 Python。
   → PowerShell 工具的 stdout 不落回上下文，验证 PS 脚本要把输出重定向到文件再读。
 
+## 现有训练产物的真实状态（2026-09-15 清理后，决定重训范围时必看）
+
+用 `python scripts/audit_artifacts.py --probe` 可复现。
+
+**2026-09-15 已做的清理与重置**：
+- 三个作废的自对弈经验池（`models/ models_b3/ models_b3opp/` 下的
+  `candidate_latest_buffer.pkl`）已删除，释放 11.18 GB。
+  `models/evidence_collapsed_20260914/`(3.58 GB) 保留。
+- **`models/best.pt` 已用 `models/value_distilled_v2.pt` 覆盖**（md5 `26675f331…`）。
+  原 best.pt 的权重与 `models/pool/bc_best.pt` 逐位相同（＝BC 基线副本，
+  Value 头退化：平衡 acc 0.330、Draw 恒为 0）；旧内容在 pool/ 下天然保留。
+- 冒烟训练产生的 2.37 GB 池也已删除；`models/` 现无 `.pkl`。
+
+**当前产物状态**：
+- `value_distilled_v2.pt` = `best.pt`：唯一健康 Value 基座（0.735 / 0.288）。
+- `candidate_latest.pt`：修复后首跑（seed 42，2 轮 × 60 局，sims 10）的候选，
+  epoch=2、elo=1456.5、Value 平衡 acc 0.619（未塌缩）；与热启动源 106/106 键均不同
+  → 证明 R1 已修（此前恒为零更新）。
+- `_candidate_gate.pt`：同一轮的门控快照（`net.save()` 格式，可直接喂 gate 的 `--model-a`）。
+- `search_distilled_smoke_20260915.pt`：蒸馏链路冒烟产物（仅 80 局面，无质量意义）。
+- `reports/gate_smoke_20260915.json`：首次有效配对门控报告（24 局，promote=False）。
+- **`datasets/p1_v3` 标签可用**，无需重导。
+
+**待办（下一轮）**：小规模正式复跑自对弈（建议 ≥300 局/轮、sims ≥20）→ 搜索蒸馏
+（建议 1200 局面 / depth 3）→ `gate --seeds 100 --promote-to-best` 正式晋级。
+注意终局分布异常偏向 `immobilized`（71.7%/53.3%，而人类复盘认输 45.6%），
+以及候选对 search2 参考得分仅 0.083~0.167 —— 这两点是"数据质量/棋力"层面的真实问题，
+不是本轮修复范围内的 bug。
+
+## 教训：局部 import 的 NameError（2026-09-15 自查出来）
+
+`junqi/train_value_distill.py` 只在函数内 `import json`，而模块级新增的守卫函数也用了
+`json.load` → `load_p1_arrays` NameError → 会**直接崩掉 train_rl 的每轮重锚与 Value 探针**。
+**判定导入是否可用，必须看 import 的所在作用域，不能用 `'import xxx' in src` 做子串判断**
+（我正是这样误判的）。现已有精确到函数作用域的静态扫描测试守卫。同理，写测试要覆盖
+"带 metadata 的真实数据集"路径，否则会绕过版本守卫分支。
+
 ## 危险操作禁令（血的教训）
 
 - **删除文件一律用 Python 文件系统操作**（`os.remove` / `shutil.rmtree`），

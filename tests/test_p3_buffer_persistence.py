@@ -61,8 +61,14 @@ class TestShouldSaveBuffer(unittest.TestCase):
         self.assertTrue(should_save_buffer(10, 12, 5))
         self.assertTrue(should_save_buffer(12, 12, 5), "最后一轮必须保存")
 
-    def test_invalid_every_falls_back_to_always(self):
-        self.assertTrue(should_save_buffer(3, 10, -1))
+    def test_negative_every_means_never(self):
+        """every<0 = 从不落盘（冒烟跑用；实测单份池 2~3.8 GB）。"""
+        for ep in (1, 5, 10):
+            self.assertFalse(should_save_buffer(ep, 10, -1),
+                             "every<0 表示从不保存，包含最后一轮")
+
+    def test_none_means_always(self):
+        self.assertTrue(should_save_buffer(3, 10, None))
 
 
 class _CkptCase(unittest.TestCase):

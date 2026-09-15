@@ -335,11 +335,29 @@ class JunqiNet(nn.Module):
     def load_from_file(cls, path: str, device: torch.device | str = "cpu",
                        in_channels: int = NUM_CHANNELS, num_blocks: int = 6,
                        channels: int = 128) -> "JunqiNet":
+        """从磁盘加载并**新建**一个网络（供推理/策略构造使用）。
+
+        兼容三种文件形态：
+          · `net.save()` 的包装字典 `{"model_state": ...}`
+          · `save_checkpoint()` 的完整检查点 `{"net": ..., "optimizer": ...}`
+          · 裸 state_dict 或直接 pickle 的 nn.Module
+
+        2026-09-15 修复：原实现不认检查点形态（只判 `"model_state"`），
+        遇到 `candidate_latest.pt` 会把它整个 dict 当 state_dict 喂给
+        `load_state_dict(strict=False)` —— **键名无一匹配、静默载入零个权重**，
+        得到一个随机初始化的网络。这与审查 R2（自博弈"best 对手"实为随机网络）
+        是同一类失效模式，只是发生在推理/评测路径上。
+        """
         obj = torch.load(path, map_location=device, weights_only=False)
         if isinstance(obj, dict) and "model_state" in obj:
             b = obj.get("num_blocks", num_blocks)
             c = obj.get("channels", channels)
             sd = obj["model_state"]
+        elif isinstance(obj, dict) and isinstance(obj.get("net"), dict):
+            # 完整训练检查点（save_checkpoint 产物）
+            b = obj.get("num_blocks", num_blocks)
+            c = obj.get("channels", channels)
+            sd = obj["net"]
         elif isinstance(obj, dict):
             sd = obj
             b = num_blocks
@@ -351,7 +369,15 @@ class JunqiNet(nn.Module):
             return net
 
         net = cls(in_channels=in_channels, num_blocks=b, channels=c)
-        net.load_state_dict(cls.adapt_state_dict(sd, in_channels), strict=False)
+        adapted = cls.adapt_state_dict(sd, in_channels)
+        res = net.load_state_dict(adapted, strict=False)
+        # 兜底告警：若绝大多数权重都没载入，说明给错了文件（例如把检查点/日志
+        # 当权重传进来）。保持 strict=False 的宽容语义，但绝不静默。
+        expected = len(net.state_dict())
+        if expected and len(res.missing_keys) > expected * 0.5:
+            print(f"⚠️ JunqiNet.load_from_file: {path} 有 {len(res.missing_keys)}/"
+                  f"{expected} 个权重键未载入 —— 该文件可能不是模型权重，"
+                  f"得到的网络接近随机初始化", flush=True)
         net.to(device)
         net.eval()
         return net

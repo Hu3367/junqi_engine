@@ -45,6 +45,108 @@ class TestTerminalLabelTable(unittest.TestCase):
         self.assertEqual(terminal_label_from_meta(21, 3)[0], "draw")
 
 
+class TestShippedDatasetLoadable(unittest.TestCase):
+    """回归：版本守卫代码必须真的能在"带 metadata 的真实数据集"上跑通。
+
+    2026-09-15 教训：`train_value_distill.check_p1_version` 用了 `json.load`，
+    但该模块只在某个函数内部 `import json`，模块级没有 —— 于是
+    `load_p1_arrays("datasets/p1_v3", ...)` 直接 NameError，
+    并会连带炸掉 `train_rl` 的每轮 Value 重锚与健康探针。
+    旧测试只用"临时目录 + 无 metadata"的 npz，恰好绕过了这条路径，因此漏检。
+    """
+
+    P1 = os.path.join(BASE, "datasets", "p1_v3")
+
+    def test_real_dataset_loads_or_absent(self):
+        if not os.path.isdir(self.P1):
+            self.skipTest("datasets/p1_v3 不存在")
+        from junqi.train_value_distill import load_p1_arrays
+
+        d = load_p1_arrays(self.P1, "test")          # 必须不抛异常
+        self.assertGreater(d["n_total"], 0)
+        self.assertGreater(d["n_labeled"], 0)
+        self.assertEqual(len(d["x"]), d["n_labeled"])
+        self.assertTrue(set(np.unique(d["y"])) <= {0, 1, 2})
+
+    def test_metadata_present_and_version_ok(self):
+        meta_path = os.path.join(self.P1, "metadata.json")
+        if not os.path.exists(meta_path):
+            self.skipTest("p1_v3 metadata 不存在")
+        from junqi.train_value_distill import check_p1_version
+
+        ok, msg = check_p1_version(json.load(open(meta_path, encoding="utf-8")))
+        self.assertTrue(ok, msg)
+
+    def test_module_level_imports_cover_usage(self):
+        """静态守卫：任何 `X.attr` 用法所在的函数（或模块顶层）必须 import X。
+
+        精确到函数作用域——局部 import 只覆盖它所在的函数，
+        "在 A 函数里 import、在 B 函数里用"正是上述 NameError 的成因。
+        """
+        import ast
+
+        targets = {"json", "os", "math", "random", "time", "re", "hashlib",
+                   "glob", "shutil", "pickle", "sys", "collections",
+                   "subprocess", "tempfile", "inspect", "copy"}
+        findings = []
+        for root, dirs, files in os.walk(os.path.join(BASE, "junqi")):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                path = os.path.join(root, f)
+                src = open(path, encoding="utf-8", errors="ignore").read()
+                try:
+                    tree = ast.parse(src)
+                except SyntaxError:
+                    continue
+
+                def imports_of(node):
+                    out = set()
+                    for n in ast.walk(node):
+                        if isinstance(n, ast.Import):
+                            out |= {(a.asname or a.name).split(".")[0]
+                                    for a in n.names}
+                        elif isinstance(n, ast.ImportFrom):
+                            out |= {a.asname or a.name for a in n.names}
+                    return out
+
+                module_level = set()
+                for n in tree.body:
+                    if isinstance(n, (ast.Import, ast.ImportFrom)):
+                        module_level |= imports_of(n)
+
+                funcs = []
+                for n in ast.walk(tree):
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        funcs.append((n.lineno, n.end_lineno or n.lineno,
+                                      n.name, imports_of(n)))
+
+                def owner(lineno):
+                    hit = None
+                    for lo, hi, name, imps in funcs:
+                        if lo <= lineno <= hi:
+                            hit = (name, imps)
+                    return hit
+
+                for n in ast.walk(tree):
+                    if not (isinstance(n, ast.Attribute)
+                            and isinstance(n.value, ast.Name)):
+                        continue
+                    name = n.value.id
+                    if name not in targets or name in module_level:
+                        continue
+                    holder = owner(n.lineno)
+                    if holder is not None and name not in holder[1]:
+                        findings.append(
+                            f"{os.path.relpath(path, BASE).replace(chr(92), '/')}"
+                            f":{n.lineno} `{name}` 在 {holder[0]}() 中未导入")
+
+        self.assertEqual(findings, [],
+                         "存在『局部 import 覆盖不到』的用法（会 NameError）：\n  "
+                         + "\n  ".join(findings))
+
+
 class TestOutcomeBucketConsistency(unittest.TestCase):
     """C7：统计桶必须与标签同源，不得各自硬编码。"""
 

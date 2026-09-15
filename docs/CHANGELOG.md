@@ -1,5 +1,119 @@
 # CHANGELOG
 
+## [2026-09-15] 第七批 — 清理作废产物 + 修复后首次端到端跑通（含两处新修复）
+
+阶段归属：**P0（正确性验证）+ P3（运营清理）**。用户决策：清理三个 `*_buffer.pkl`、
+用健康基座直接覆盖 `best.pt`、按既定顺序执行重训/蒸馏/门控。
+
+### 一、清理与基线重置
+
+- 删除三个作废的自对弈经验池（R2 使 25% 对手为随机网络 + C6 改了 MCTS 重复阈值语义），
+  释放 **11.18 GB**：`models/`(3835 MB)、`models_b3/`(3822 MB)、`models_b3opp/`(3792 MB)。
+  `models/evidence_collapsed_20260914/`(3.58 GB) 属另一份证据归档，未在授权范围，保留。
+- **`models/best.pt` 已用 `models/value_distilled_v2.pt` 覆盖**
+  （md5 由 `73164845…` → `26675f331…`，与 v2 一致）。原 best.pt 的**权重**与
+  `models/pool/bc_best.pt` 逐位相同（文件 md5 不同仅因 pickle 元信息），因此旧内容天然保留。
+
+### 二、修复后首次端到端验证（2 轮 × 60 局，sims=10，8 workers，RTX 4080 SUPER）
+
+全链路跑通，且**五项判据全部通过**：
+
+| 判据 | 结果 |
+|---|---|
+| R1 候选权重是否真被更新 | ✅ 与热启动源 **106/106 键全部不同**（最大差 3.15e3）——修复前这里恒为 0 |
+| best.pt 是否被轮内门控改动 | ✅ 未改动（md5 不变） |
+| 每轮 Value 重锚是否执行 | ✅ 两轮均 `reanchor=OK`（此前的 `NameError` 会让它直接崩） |
+| 新候选 Value 头是否塌缩 | ✅ 未塌缩，p1_v3/test 平衡 acc **0.619**（线 0.45） |
+| Elo 口径 | ✅ 由得分率按标准公式换算（1500→1471→1456.5） |
+
+其他观测（均为修复生效的正面证据）：
+- 对手配比真实生效：`best 0.33~0.35 / mirror 0.533 / expert 0.05~0.067 / greedy 0.033~0.05 /
+  random 0.017~0.033` —— 修复前 `best` 分支拿到的是随机网络；
+- 门控为**配对同牌**（每阶段 12 局 = 6 seeds × 先后手），Elo 每轮更新；
+- 正式门控单独复跑（`gate --seeds 12 --workers 8`，24 局）：
+  得分率 0.5833、Wilson [0.388, 0.755]、SPRT `continue`、
+  **座位拆分 as_first 0.5833 = as_second 0.5833**（配对同牌消掉先后手差异的直接证据）、
+  `promote=False` → 未触碰 `best.pt`（晋级出口的"未通过不动"语义正确）；
+- 搜索蒸馏冒烟（80 局面 / depth 2 / 2 epochs）跑通并保存候选，未触碰 best.pt。
+
+**需要关注但不属本轮修复的问题**：自对弈终局分布异常偏向 `immobilized`
+（71.7% / 53.3%），`flag` 仅 1.7~5%，与人类复盘的终局分布（认输 45.6% / 协议和棋 26.5%）
+差异很大；候选对 `search2` 参考得分仅 0.083~0.167，远弱于传统搜索——这与基线计划
+§4.1 的判断一致（达到 search2 以上水平要靠搜索蒸馏 + 混合引擎，而非纯 RL）。
+
+### 三、验证过程中发现并修复的两个新问题
+
+1. **`JunqiNet.load_from_file` 不认检查点格式 → 静默随机网络**（与 R2 同族）
+   `save_checkpoint()` 写出的是 `{"net":..., "optimizer":...}`，而 `load_from_file`
+   只判 `"model_state"` 与"裸 dict"：传入 `models/candidate_latest.pt` 会把整个检查点
+   当 state_dict，`strict=False` **键名无一匹配、静默载入零个权重**。
+   评测/策略构造路径一旦踩到就会得到"看似正常、实为随机"的模型。
+   现已识别检查点分支；并在"超过半数键未载入"时打印明确告警。
+   另：`save_checkpoint` 补写 `in_channels / num_blocks / channels`，让检查点自描述
+   （否则非默认主干会因形状不符而 RuntimeError）。架构不符时保持**大声报错**。
+2. **`--buffer-save-every` 缺"从不落盘"档位**（P1 修复的可用性缺口）
+   冒烟跑（2 轮）在"最后一轮恒写"规则下重新生成了 **2.37 GB** 的经验池，对验证毫无价值。
+   现将语义定为：`<0` = 从不写（冒烟/验证用）、`0` = 仅最后一轮、`1` = 每轮、
+   `>1` = 每 N 轮且末轮恒写、`None` = 每轮。本次冒烟产生的池已删除。
+
+### 四、测试
+
+新增 `tests/test_p0_load_checkpoint_format.py`（6 项）；`test_p3_buffer_persistence.py`
+的节流判据按新语义更新。全量：**441 passed / 3 skipped → 449 passed / 3 skipped**。
+
+---
+
+## [2026-09-15] 第六批 — 修复自引入的 NameError + 新增产物核查工具
+
+阶段归属：**P0（正确性）**。起因：回答"修复后是否需要重训"时做的产物核查，
+过程中发现并修掉了一个**上一批自己引入的真 bug**。
+
+### 一、修复：`train_value_distill` 缺模块级 `import json`（回归）
+
+第四批给 `load_p1_arrays` 加了数据集版本守卫 `check_p1_version`，其内部使用
+`json.load`，但该模块**只在某个函数内部** `import json`，模块级没有。
+后果：`load_p1_arrays("datasets/p1_v3", ...)` 直接 `NameError` —— 而这正是
+`train_rl` 每轮 Value 重锚（`reanchor_value_head`）与健康探针（`probe_value_health`）
+的必经路径；`NameError` 又不在 `except (RuntimeError, FileNotFoundError)` 内，
+会**让训练直接崩**。
+
+- 已补模块级 `import json`；
+- 旧测试漏检原因：只用了"临时目录 + 无 metadata"的 npz，恰好绕过版本守卫分支。
+  现已新增三项守卫：真实 `datasets/p1_v3` 可加载、真实 metadata 版本校验通过、
+  以及**静态扫描（精确到函数作用域）**"某处 `X.attr` 用法所在函数未 import X"，
+  防止同类问题再生（该扫描确认 `junqi/` 现已无真实残留）。
+
+### 二、新增 `scripts/audit_artifacts.py`：训练产物有效性核查（只读）
+
+回答"重训前手上这些产物还有多少可信"。三部分：
+A. 权重两两比对（自动区分 `save()` 包装 / 完整 checkpoint / 裸 state_dict）；
+B. Value 头行为探针（p1_v3/test 平衡准确率、MAE、预测分布、塌缩告警）；
+C. `elo_history.jsonl` 逐轮门控与晋升记录。
+
+**核查发现（关键）**：
+
+| 产物 | Value 平衡acc | MAE | 预测分布(W/D/L) | 结论 |
+|---|---|---|---|---|
+| `best.pt` | **0.330**（≈随机 0.333） | 0.871 | 4799 / **0** / 4582 | 退化：Draw 恒为 0 |
+| `value_distilled_v2.pt` | **0.735** | **0.288** | 2339 / 4731 / 2311 | 健康，可用基座 |
+| `candidate_latest.pt`(ep5) | 0.333 | 0.475 | **0 / 0 / 9381** | **完全塌缩**（100% 预测 Loss） |
+| `_candidate_gate.pt` | 0.639 | 0.408 | 2249 / 4753 / 2379 | 相对健康 |
+
+- **`models/best.pt` 与 `models/pool/bc_best.pt` 逐位相同** → 发布模型**从未被训练或
+  晋升更新过**，只是 BC 基线副本（无 aux_head、96 键），而 BC 价值头本就未校准。
+  与 `elo_history.jsonl` 中**每一轮都是 `promoted=False`** 完全吻合。
+- 该工具的比对逻辑有单元测试覆盖（`tests/test_p3_audit_artifacts.py`，12 项），
+  含"只用一侧存在的键必须判为不同"与"形状不符应单列"这两个曾导致误判的场景。
+
+### 三、测试
+
+新增 `tests/test_p3_audit_artifacts.py`（12 项）、`test_p1_dataset_label_consistency.py`
+增 3 项。全量：**426 passed / 3 skipped → 441 passed / 3 skipped**。
+
+> 说明：本批**未改动任何训练语义**，也未触碰 `models/` 下的产物文件（纯只读核查）。
+
+---
+
 ## [2026-09-15] 第五批 — 激活路径易错修复 + PowerShell 编码陷阱
 
 阶段归属：**P0（可运行性）**。承接第四批的启动链路修复。
