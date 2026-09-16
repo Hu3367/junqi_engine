@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from .analysis import fortress_score
 from .config import EvalWeights, RuleConfig, SearchConfig
-from .core_bridge import (eval_expert_auto, make_cpp_qsearch, make_cpp_weights,
-                          qsearch_auto)
+from .core_bridge import (encode_state_blob, eval_expert_auto, make_cpp_qsearch,
+                          make_cpp_search, make_cpp_weights, qsearch_auto)
 from .eval_expert import evaluate_expert
 from .rules import (ATTACKER_WINS, BOTH_DIE, CAMPS, COMPOSITION, HQS,
                     NEIGHBORS, PLAY_POSITIONS, RANK_CN, Rank, battle,
@@ -45,6 +45,11 @@ DEFAULT_USE_CPP_EVAL = True
 # （perf_baseline 逐位一致 + 决策不变），未通过将本常量置回 False。
 # C++ 侧未实现 QTT（纯缓存），故开启后 stats.qnodes 会**高于** Python 路径。
 DEFAULT_USE_CPP_QSEARCH = True
+
+# 切片 3：`_negamax` + 机会节点整棵子树是否走 C++。
+# **根循环（IDS / degraded / avoid / root_scores）仍留在 Python** —— 它承载了
+# 最易错的语义，留在原地可零风险复用既有实现与既有测试。
+DEFAULT_USE_CPP_SEARCH = True
 
 
 @dataclass
@@ -116,7 +121,8 @@ class ExpertSearchEngine:
                  qsearch_depth: int = DEFAULT_QSEARCH_DEPTH,
                  use_qtt: bool = True, qtt_size_power: int = 16,
                  use_cpp_eval: Optional[bool] = None,
-                 use_cpp_qsearch: Optional[bool] = None):
+                 use_cpp_qsearch: Optional[bool] = None,
+                 use_cpp_search: Optional[bool] = None):
         self.w = weights or EvalWeights()
         self.tt = TranspositionTable(size_power=tt_size_power)
         self.rng = random.Random(seed)
@@ -132,6 +138,11 @@ class ExpertSearchEngine:
         self.use_cpp_qsearch = (DEFAULT_USE_CPP_QSEARCH if use_cpp_qsearch is None
                                 else use_cpp_qsearch)
         self._cpp_qs = None
+
+        # 切片 3：C++ 搜索子树（negamax + Star1 机会节点）开关。
+        self.use_cpp_search = (DEFAULT_USE_CPP_SEARCH if use_cpp_search is None
+                               else use_cpp_search)
+        self._cpp_search = None
 
         # QSearch 专用置换表（P1，2026-09-15）。
         # **必须与主表分离**：主表 TTEntry.depth 是"剩余搜索深度"，qsearch 的
@@ -159,6 +170,8 @@ class ExpertSearchEngine:
         self.killers = [[] for _ in range(MAX_SEARCH_DEPTH)]
         self.history.clear()
         self.qtt.clear()
+        if self._cpp_search is not None:
+            self._cpp_search.clear_heuristics()
 
     # ------------------------------------------------------------- 估值派发
 
@@ -184,6 +197,32 @@ class ExpertSearchEngine:
             return eval_expert_auto(state, seat, self.w,
                                     cpp_w=self._cpp_weights())
         return evaluate_expert(state, seat, self.w)
+
+    # ------------------------------------------------------------- C++ 搜索子树（切片 3）
+
+    def _cpp_search_engine(self):
+        """返回复用的 C++ 搜索子树引擎；不可用时关闭开关。"""
+        if self._cpp_search is None:
+            try:
+                self._cpp_search = make_cpp_search(self.w, self.qsearch_depth)
+            except Exception:  # noqa: BLE001
+                self.use_cpp_search = False
+                self._cpp_search = None
+        return self._cpp_search
+
+    def _sync_cpp_search_stats(self):
+        """把 C++ 子树的统计与 stopped 回写到 Python 侧 stats。"""
+        cs = self._cpp_search
+        if cs is None:
+            return
+        self.stats.nodes = cs.nodes
+        self.stats.qnodes = cs.qnodes
+        self.stats.chance_nodes = cs.chance_nodes
+        self.stats.star1_cutoffs = cs.star1_cutoffs
+        self.stats.pvs_researches = cs.pvs_researches
+        self.stats.tt_hits = cs.tt_hits
+        if cs.stopped:
+            self.stopped = True
 
     # ------------------------------------------------------------- 走法排序
 
@@ -576,6 +615,18 @@ class ExpertSearchEngine:
         self.stats.chance_nodes += 1
 
         pos = flip_act.frm
+
+        if self.use_cpp_search:
+            cs = self._cpp_search_engine()
+            if cs is not None:
+                try:
+                    val = cs.chance_flip_blob(encode_state_blob(state),
+                                              pos[0] * 5 + pos[1], depth,
+                                              ply_depth, alpha, beta)
+                    self._sync_cpp_search_stats()
+                    return val
+                except Exception:  # noqa: BLE001
+                    self.use_cpp_search = False
         rem = state.remaining_types()
         total_hidden = sum(rem.values())
         if total_hidden <= 0:
@@ -685,7 +736,21 @@ class ExpertSearchEngine:
 
     def _negamax(self, state: GameState, depth: int, ply_depth: int,
                  alpha: float, beta: float, path_history: set[int]) -> float:
-        """带置换表、静态搜索、杀手/历史启发与 Star1 几率剪枝的 Negamax 搜索。"""
+        """带置换表、静态搜索、杀手/历史启发与 Star1 几率剪枝的 Negamax 搜索。
+
+        切片 3：`use_cpp_search` 时整棵子树交由 C++（Python 只保留根循环）。
+        """
+        if self.use_cpp_search:
+            cs = self._cpp_search_engine()
+            if cs is not None:
+                try:
+                    val = cs.negamax_blob(encode_state_blob(state), depth,
+                                          ply_depth, alpha, beta)
+                    self._sync_cpp_search_stats()
+                    return val
+                except Exception:  # noqa: BLE001
+                    self.use_cpp_search = False
+
         self.stats.nodes += 1
 
         # 超时检查 (每 512 节点检查一次系统时间)
@@ -829,11 +894,21 @@ class ExpertSearchEngine:
         if qsearch_depth is not None:
             self.qsearch_depth = qsearch_depth
 
+        # 切片 3：C++ 子树每轮搜索重置统计与停止位（置换表跨轮保留，与 Python 一致）
+        if self.use_cpp_search and self._cpp_search is not None:
+            self._cpp_search.reset_stats()
+            self._cpp_search.stopped = False
+            self._cpp_search.qsearch_depth = self.qsearch_depth
+
         try:
             if time_limit_ms > 0:
                 self.deadline = start_time + (time_limit_ms / 1000.0)
             else:
                 self.deadline = float("inf")
+
+            if self.use_cpp_search and self._cpp_search is not None:
+                # C++ 用自己的单调钟；这里给的是"从现在起"的预算，与 self.deadline 同刻
+                self._cpp_search.set_deadline_ms(float(time_limit_ms or 0))
 
             acts = state.legal_actions()
             if not acts or state.is_terminal():

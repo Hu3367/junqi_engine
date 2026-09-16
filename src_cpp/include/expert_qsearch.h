@@ -21,6 +21,11 @@ constexpr double EXPERT_WIN_SCORE = 1'000'000.0;
 
 struct ExpertQSearchStats {
     uint64_t qnodes{0};
+    uint64_t nodes{0};
+    uint64_t chance_nodes{0};
+    uint64_t star1_cutoffs{0};
+    uint64_t pvs_researches{0};
+    uint64_t tt_hits{0};
 };
 
 class ExpertQSearch {
@@ -37,10 +42,21 @@ public:
     // 布局见 expert_qsearch.cpp::board_from_blob。
     double qsearch_blob(const std::string& blob, double alpha, double beta, int depth_left);
 
-private:
+protected:
+    // 走法排序上下文（切片 3 的 ExpertSearch 会设置；切片 2 保持默认=不启用）
+    bool cur_has_tt_{false};
+    Action cur_tt_{};
+    int cur_ply_depth_{0};
+
+    // 钩子：走法排序落到"普通静步"之前，先问派生类有没有杀手/历史加分。
+    // 返回 >0 即直接采用；返回 0 表示无，继续用静步分。
+    // 只有切片 3 的 ExpertSearch 会覆写（它维护自己的 killer/history 表）。
+    virtual double _killer_history_bonus(const Action& act) const { (void)act; return 0.0; }
+
     double _qsearch(JunqiBoard& b, double alpha, double beta, int depth_left);
 
-    // 等价于 _score_action(act, state, 0, None)（tt_move=None，无 killer/history）
+    // 等价于 _score_action(act, state, ply_depth, tt_move)。
+    // 切片 2 里以 (0, None) 调用且无 killer/history；切片 3 的派生类会传入完整上下文。
     double _score_action(const JunqiBoard& b, const Action& act) const;
 };
 
@@ -55,5 +71,12 @@ bool has_any_move(const JunqiBoard& b);
 
 // 等价于 junqi/state.py::GameState._flag_attackable([])
 bool flag_attackable_no_hidden(const JunqiBoard& b);
+
+// 由 encode_state_blob 的字节流重建 JunqiBoard（切片 2/3 共用的热路径入口）
+JunqiBoard board_from_blob(const std::string& blob);
+
+// 由 JunqiBoard 直接求专家估值（内部转换后复用 eval_expert_cpp）
+double eval_expert_board(const JunqiBoard& b, int seat, const ExpertWeights& w,
+                         bool ignore_rule_draw);
 
 }  // namespace junqi

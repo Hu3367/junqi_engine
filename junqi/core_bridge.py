@@ -203,8 +203,12 @@ def eval_expert_auto(
 # ------------------------------------------------------- QSearch 快路径（切片 2）
 
 # blob 头部布局，必须与 src_cpp/src/expert_qsearch.cpp::board_from_blob 严格一致：
-#   "<7hi" = turn, ply, quiet, seat0, seat1, flags, no_capture_draw_plies + max_plies
-_BLOB_HEADER = struct.Struct("<7hi")
+#   "<8hi" = turn, ply, quiet, seat0, seat1, flags, no_capture_draw_plies, winner
+#            + max_plies(int32)
+# winner 必须传：Python 根循环会把 `state.apply(a)` 的**已终局**子状态交给 C++，
+# 漏传会让 C++ 把它当成未终局而返回静态估值（曾导致一步扛旗被估成 350 分）。
+# None(未终局) 编码为 -2，与 JunqiBoard::winner 的约定一致。
+_BLOB_HEADER = struct.Struct("<8hi")
 
 _F_MINE_CLEARED = 1
 _F_ALL_FLIPPED = 2
@@ -225,7 +229,7 @@ def encode_state_blob(state: GameState) -> bytes:
     """
     dead = state.dead
     nd = len(dead)
-    buf = bytearray(60 + nd + 18)
+    buf = bytearray(60 + nd + 20)
     for pos, pc in state.board.items():
         buf[pos[0] * 5 + pos[1]] = int(pc.rank) | (_COLOR_BITS.get(pc.color, 0) << 5) | \
                                    (0x40 if pc.revealed else 0)
@@ -256,7 +260,9 @@ def encode_state_blob(state: GameState) -> bytes:
     _BLOB_HEADER.pack_into(buf, k, state.turn, state.ply, state.quiet,
                            _color_code(state.seat_color.get(0)),
                            _color_code(state.seat_color.get(1)),
-                           flags, int(cfg.no_capture_draw_plies), int(cfg.max_plies))
+                           flags, int(cfg.no_capture_draw_plies),
+                           -2 if state.winner is None else int(state.winner),
+                           int(cfg.max_plies))
     return bytes(buf)
 
 
@@ -289,6 +295,18 @@ def qsearch_auto(
         except Exception as e:  # noqa: BLE001
             logger.warning("C++ qsearch failed, falling back to Python: %s", e)
     return None, 0
+
+
+def make_cpp_search(w, qsearch_depth: int) -> Any:
+    """构造 C++ 完整搜索子树引擎（切片 3）。
+
+    引擎对象**跨调用复用**：置换表、杀手着法、历史启发都在它内部，
+    必须像 Python 侧的 self.tt / self.killers / self.history 一样持续存在。
+    """
+    eng = junqi_core.ExpertSearch()
+    eng.weights = make_cpp_weights(w)
+    eng.qsearch_depth = qsearch_depth
+    return eng
 
 
 def search_apk_auto(

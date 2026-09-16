@@ -20,6 +20,7 @@ try:
                 "src_cpp/src/eval_expert.cpp",
                 "src_cpp/src/eval_expert_tables.cpp",
                 "src_cpp/src/expert_qsearch.cpp",
+                "src_cpp/src/expert_search.cpp",
                 "src_cpp/src/apk_engine.cpp",
             ],
             include_dirs=["src_cpp/include"],

@@ -8,6 +8,7 @@
 #include "eval_apk.h"
 #include "eval_expert.h"
 #include "expert_qsearch.h"
+#include "expert_search.h"
 #include "apk_engine.h"
 
 namespace py = pybind11;
@@ -220,6 +221,26 @@ PYBIND11_MODULE(junqi_core, m) {
              py::arg("blob"), py::arg("alpha"), py::arg("beta"), py::arg("depth_left"))
         .def("reset_stats", [](ExpertQSearch& e) { e.stats = ExpertQSearchStats{}; })
         .def_property_readonly("qnodes", [](const ExpertQSearch& e) { return e.stats.qnodes; });
+
+    // ---------------------------------------------------------------- 切片 3：完整搜索子树
+    py::class_<ExpertSearch, ExpertQSearch>(m, "ExpertSearch")
+        .def(py::init<>())
+        .def_readwrite("stopped", &ExpertSearch::stopped)
+        .def("reset_stats", &ExpertSearch::reset_stats)
+        .def("clear_heuristics", &ExpertSearch::clear_heuristics)
+        .def("clear_tt", &ExpertSearch::clear_tt)
+        .def("set_deadline_ms", &ExpertSearch::set_deadline_ms, py::arg("ms"))
+        .def("negamax_blob", &ExpertSearch::negamax_blob, py::arg("blob"),
+             py::arg("depth"), py::arg("ply_depth"), py::arg("alpha"), py::arg("beta"))
+        .def("chance_flip_blob", &ExpertSearch::chance_flip_blob, py::arg("blob"),
+             py::arg("pos"), py::arg("depth"), py::arg("ply_depth"),
+             py::arg("alpha"), py::arg("beta"))
+        .def_property_readonly("nodes", [](const ExpertSearch& e) { return e.stats.nodes; })
+        .def_property_readonly("qnodes", [](const ExpertSearch& e) { return e.stats.qnodes; })
+        .def_property_readonly("chance_nodes", [](const ExpertSearch& e) { return e.stats.chance_nodes; })
+        .def_property_readonly("star1_cutoffs", [](const ExpertSearch& e) { return e.stats.star1_cutoffs; })
+        .def_property_readonly("pvs_researches", [](const ExpertSearch& e) { return e.stats.pvs_researches; })
+        .def_property_readonly("tt_hits", [](const ExpertSearch& e) { return e.stats.tt_hits; });
 
     // 顺序敏感表的一致性自检入口（供 Python 测试比对，防 C++/Python 漂移）
     m.def("expert_road_neighbors", []() {

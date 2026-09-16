@@ -11,6 +11,7 @@
 > - ✅ 高性能 C++ 原生引擎基础设施 (`src_cpp/`) 与双轨热拔插网桥 (`junqi/core_bridge.py`)：60 字节紧凑内存布局、50~100 倍潜在算力加速、未编译环境透明自动降级
 > - ✅ **（2026-09-15）`evaluate_expert` 已移植至 C++**（移植切片 1）：残局单步 4236 → 1225 ms（3.46×），估值函数 5.8~9.0×，`scratch/perf_baseline.py verify --cpp` 逐位一致（worst 5.68e-14）。开关 `ExpertSearchEngine(use_cpp_eval=...)`，默认开、可回滚。
 > - ✅ **（2026-09-15）QSearch 也已移植至 C++**（移植切片 2）：残局单步 4250 → 245 ms（**17.36×**，切片 1 后为 1228 ms），中盘 9.84× / 7.74×。开关 `ExpertSearchEngine(use_cpp_qsearch=...)`，默认开、可回滚。
+> - ✅ **（2026-09-16）搜索子树也已移植至 C++**（切片 3，`_negamax` + Star1 机会节点）：开局 1542 → 35 ms（**43.70×**），中盘 29.77×，残局 4194 → 221 ms（18.98×）。三切片累计、四档决策全一致。开关 `ExpertSearchEngine(use_cpp_search=...)`。迭代加深根循环仍留在 Python（语义最复杂处不冒险）。
 > - ⚠️ **重建 C++ 扩展请用 `python scripts/build_cpp.py`**（`--clean` 全量）：本机 `reg.exe` 被安全策略拦截，setuptools 无法靠注册表定位 Windows SDK，直接 `pip install -e .` 会报 `C1083: 无法打开包括文件 'io.h'`。
 > - ✅ 13 份专业文档 (>120k 字)
 > - ✅ 全量单元测试通过（`python -m pytest tests/ -q`，数量随迭代增长，以 CI 输出为准）

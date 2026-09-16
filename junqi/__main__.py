@@ -140,6 +140,10 @@ def main(argv=None):
     g.add_argument("--out", default="reports", help="报告输出目录")
     g.add_argument("--out-name", default=None,
                    help="报告文件名（不含扩展名）。默认由 spec 名派生，同名会互相覆盖")
+    g.add_argument("--init-set", default=None,
+                   help="起始局面 jsonl（如 eval_sets/midgame.jsonl）。给定后每个种子"
+                        "从该集合按位取一个局面（**配对同牌**），用于避免对称开局"
+                        "全部拖成循环判和导致门控无分辨力。文件行数不足时循环取用")
     g.add_argument("--promote-to-best", action="store_true",
                    help="正式晋级协议：门控判定 promote=True 时把 --model-a 写入 models/best.pt"
                         "（旧模型自动带时间戳备份）；未通过则不改动 best.pt")
@@ -157,6 +161,11 @@ def main(argv=None):
     ds.add_argument("--temperature", type=float, default=120.0, help="教师软分布温度")
     ds.add_argument("--seed", type=int, default=2026, help="随机种子")
     ds.add_argument("--workers", type=int, default=0, help="教师打标并行进程数 (0=单进程)")
+    ds.add_argument("--anchor-weight", type=float, default=0.0,
+                    help="人类策略锚点权重 β（0=旧行为）。损失 = CE(教师软分布) "
+                         "+ β·CE(基座软分布)，防止蒸馏把 BC 策略整体覆盖")
+    ds.add_argument("--tac-min-spread", type=float, default=0.0,
+                    help="教师置信度过滤阈值：根分值 max−median 低于此值的局面不参与训练（0=不过滤）。教师没意见时学不到东西，只会把策略推向均匀分布")
     ds.add_argument("--device", default=None, help="计算设备")
 
     sub.add_parser("test", help="运行单元测试")
@@ -280,10 +289,21 @@ def main(argv=None):
     elif args.cmd == "gate":
         from .eval_gate import format_gate_report, run_gate
         seeds = list(range(args.seed_base, args.seed_base + args.seeds))
+        init_states = None
+        if args.init_set:
+            with open(args.init_set, "r", encoding="utf-8") as f:
+                pool = [ln.strip() for ln in f if ln.strip()]
+            if not pool:
+                raise SystemExit(f"--init-set 文件为空: {args.init_set}")
+            # 必须与 seeds 等长（run_gate 强制一一对应）；不足则循环取用
+            init_states = [pool[i % len(pool)] for i in range(len(seeds))]
+            print(f"[gate] 使用起始局面集 {args.init_set}（{len(pool)} 个局面，"
+                  f"按位取 {len(init_states)} 个，配对同牌）")
         rep = run_gate(args.a, args.b, seeds=seeds, workers=args.workers,
                        max_plies=args.max_plies, model_a=args.model_a,
                        model_b=args.model_b, elo0=args.elo0, elo1=args.elo1,
-                       out_dir=args.out, out_name=args.out_name)
+                       out_dir=args.out, out_name=args.out_name,
+                       init_states=init_states)
         print(format_gate_report(rep))
         json_name = args.out_name or f"gate_{args.a}_vs_{args.b}"
         print(f"JSON 已保存: {os.path.join(args.out, json_name + '.json')}")
@@ -299,7 +319,9 @@ def main(argv=None):
                              lr=args.lr, depth=args.depth,
                              time_limit_ms=args.time_limit_ms,
                              temperature=args.temperature, seed=args.seed,
-                             workers=args.workers, device=args.device)
+                             workers=args.workers, device=args.device,
+                             anchor_weight=args.anchor_weight,
+                             tac_min_spread=args.tac_min_spread)
     elif args.cmd == "test":
         import unittest
         suite = unittest.defaultTestLoader.discover("tests")

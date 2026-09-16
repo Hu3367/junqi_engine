@@ -21,6 +21,7 @@ set(CORE_SOURCES
     src/eval_expert.cpp
     src/eval_expert_tables.cpp
     src/expert_qsearch.cpp
+    src/expert_search.cpp
     src/apk_engine.cpp
 )
 

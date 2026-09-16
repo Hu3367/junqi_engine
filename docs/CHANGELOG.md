@@ -97,6 +97,76 @@ python scripts/build_cpp.py --clean    # 全量
 
 ---
 
+## [2026-09-16] 第十四批 — 切片 3：`_negamax` + Star1 机会节点 → C++（P4 / P1）
+
+阶段归属：**P4（工程基础设施）/ P1（传统搜索性能）**。
+依据 `docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md` 第五节"切片 3"。
+
+### 一、做了什么（混合边界）
+
+把 `_negamax`（TT + PVS + 路径重复检测 + 杀手/历史）与 `_evaluate_chance_flip`
+（Star1 + 解析期望）整棵子树搬进 C++。
+
+**边界刻意留在 Python**：迭代加深的**根循环**不动 —— 它承载 `degraded`、
+`avoid`、`exact_root_scores`、`root_scores`、`_is_tactical` 等最易错的语义，
+留在原地可零风险复用既有实现与既有测试。Python 只需把
+`_negamax` / `_evaluate_chance_flip` 两个方法派发到 C++。
+
+| 文件 | 说明 |
+|---|---|
+| `src_cpp/include/expert_search.h`、`src_cpp/src/expert_search.cpp` | `ExpertSearch : public ExpertQSearch`（新增 ~430 行） |
+| `junqi/core_bridge.py` | `make_cpp_search` |
+| `junqi/search.py` | `ExpertSearchEngine(use_cpp_search=...)`，默认 `DEFAULT_USE_CPP_SEARCH = True` |
+
+### 二、性能（`scratch/bench_cpp_slice3.py`，depth=2，**四档决策全部一致**）
+
+| 局面 | 纯 Python | 切片 1 | 切片 2 | **切片 3** | 总加速 |
+|---|---|---|---|---|---|
+| opening (ply=0) | 1542 ms | 419 ms | 415 ms | **35 ms** | **43.70×** |
+| midgame (ply=30) | 664 ms | 181 ms | 60 ms | **22 ms** | **29.77×** |
+| midgame2 (ply=30) | 385 ms | 97 ms | 50 ms | **12 ms** | **31.99×** |
+| endgame (ply=90) | 4194 ms | 1221 ms | 239 ms | **221 ms** | **18.98×** |
+
+切片 3 的收益集中在**开局与中盘**（机会节点 + `_negamax` 主导），
+残局仅 1.08×（那里早被切片 2 的 qsearch 吃掉了）。
+开局从切片 2 的 415 ms 降到 35 ms（**11.8×**），印证了切片 2 结尾的判断。
+
+### 三、⚠ 踩到并修掉的一个真 bug：blob 漏传 `winner`
+
+`encode_state_blob` 最初没有编码 `winner`，于是 Python 根循环交给 C++ 的
+**已终局**子状态（典型是"一步扛旗"）被 C++ 当成未终局，返回静态估值而非胜负分。
+
+- **症状**：`tests/test_p1_apk_search.py::test_pvs_search_execution` 失败 ——
+  一步扛旗的动作在 depth=1 被估成 **350 分**而不是 999999，决策随之改变。
+- **为什么切片 2 没暴露**：Python `_negamax` 会先做终局判断再转 qsearch，
+  故进入 C++ qsearch 的根状态必定非终局；切片 3 的 `negamax_blob` 直接接收
+  Python `apply` 产生的子状态，才让问题浮出水面。
+- **修复**：头部由 `<7hi>` 扩到 `<8hi>`（新增 winner，`None` 编码为 -2），
+  并加回归用例 `test_terminal_state_is_seen_as_terminal_by_cpp` +
+  `test_instant_flag_win_at_depth_1`。
+
+同时注意：**pybind11 要求基类先注册**。`ExpertSearch` 一度被写在
+`ExpertQSearch` 之前，导致 `import junqi_core` 抛
+`generic_type: type "ExpertSearch" referenced unknown base type`。
+更隐蔽的是 `core_bridge.HAS_CPP_CORE` 会变 False，**所有 C++ 路径静默退回 Python**，
+使等价性测试"通过"但毫无意义。已在验证脚本里加 `assert HAS_CPP_CORE` 守卫。
+
+### 四、验证
+
+- **子树直接比对**（绕过根循环，最强证据）：
+  `negamax_blob` vs `_negamax`、`chance_flip_blob` vs `_evaluate_chance_flip`，
+  depth 1~2、全窗口，逐位一致。
+- **端到端**：depth 1/2/3 × 多局面，四档模式决策 + 分值全一致。
+- **基线**：`scratch/perf_baseline.py verify` → `EQUIVALENT`。
+- **测试**：`tests/test_p4_cpp_search.py`（8 项，新增）；全量 **534 passed / 3 skipped**。
+  `tests/test_p1_qsearch_tt.py` 再补 `use_cpp_search=False`
+  （两个开关都要关，否则 C++ 子树根本不会调用 Python `_qsearch`）。
+- **限时路径**（`scratch/bench_cpp_timed.py`，800 ms）：更深 4 / 一致 0 / **更浅 0**。
+  开局 **depth 2 → 8**（顶到 `max_depth` 上限）、中盘 +3、+2，残局 +2。
+  仅残局决策变化（更深 ⇒ 更 informed），属预期改善。
+
+---
+
 ## [2026-09-15] 第十三批 — 切片 2：`QSearch` + `legal_actions` → C++（P4 / P1）
 
 阶段归属：**P4（工程基础设施）/ P1（传统搜索性能）**。

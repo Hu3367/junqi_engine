@@ -181,6 +181,11 @@ void apply_expert(JunqiBoard& b, const Action& act) {
 // ---------------------------------------------------------------- 走法排序
 
 double ExpertQSearch::_score_action(const JunqiBoard& b, const Action& act) const {
+    // 1. 置换表最佳着法（最高优先级）—— 仅当派生类设置了 cur_has_tt_ 时启用
+    if (cur_has_tt_ && act.kind == cur_tt_.kind && act.frm == cur_tt_.frm &&
+        (act.kind != ActionKind::MOVE || act.to == cur_tt_.to)) {
+        return 1'000'000.0;
+    }
     Color my = b.my_color();
 
     if (act.kind == ActionKind::MOVE) {
@@ -329,7 +334,11 @@ double ExpertQSearch::_score_action(const JunqiBoard& b, const Action& act) cons
             }
         }
 
-        // killer / history 不参与（见头文件说明）
+        // 4-5. 杀手着法 / 历史启发（切片 3 的派生类提供）
+        double kh = _killer_history_bonus(act);
+        if (kh > 0.0) return kh;
+
+        // 6. 普通移动 (Quiet Move)：偏好向铁路或中心靠拢
         int r = act.to / COLS, c = act.to % COLS;
         double center_bias = 4.0 - std::abs(static_cast<double>(r) - 5.5) -
                              std::abs(static_cast<double>(c) - 2.0);
@@ -481,13 +490,14 @@ double ExpertQSearch::qsearch(const JunqiBoard& root, double alpha, double beta,
 // blob 布局（与 junqi/core_bridge.py::encode_state_blob 严格对应）：
 //   [0, 60)          : 每格一字节  rank | (color << 5) | (revealed ? 0x40 : 0)
 //   [60, 60+nd)      : 每个阵亡子一字节  rank | (color << 5)
-//   [60+nd, +18)     : 头部 "<7hi" —— turn, ply, quiet, seat0, seat1, flags,
-//                      no_capture_draw_plies (int16) + max_plies (int32)
+//   [60+nd, +20)     : 头部 "<8hi" —— turn, ply, quiet, seat0, seat1, flags,
+//                      no_capture_draw_plies, winner (int16) + max_plies (int32)
+//                      winner: -2 = 未终局（Python 的 None）
 // flags 位：0 需挖完雷 1 需全翻 2 仅工兵扛旗 3 允许自杀攻击
 //          4 大本营锁子 5 工兵铁路转弯 6 工兵可越子 7 首翻已完成
 JunqiBoard board_from_blob(const std::string& blob) {
     const size_t n = blob.size();
-    const size_t hdr = 18;
+    const size_t hdr = 20;
     size_t nd = (n >= 60 + hdr) ? (n - 60 - hdr) : 0;
 
     JunqiBoard b;
@@ -522,8 +532,9 @@ JunqiBoard board_from_blob(const std::string& blob) {
     b.seat_color[1] = (seat1 < 0) ? Color::NONE : ((seat1 == 0) ? Color::RED : Color::BLUE);
     int flags = rd16(5);
     int ncp = rd16(6);
+    int winner = rd16(7);
     int32_t max_plies;
-    std::memcpy(&max_plies, hp + 14, 4);
+    std::memcpy(&max_plies, hp + 16, 4);
 
     b.cfg.flag_needs_mines_cleared = (flags & 1) != 0;
     b.cfg.flag_needs_all_flipped = (flags & 2) != 0;
@@ -535,6 +546,7 @@ JunqiBoard board_from_blob(const std::string& blob) {
     b.first_flip_done = (flags & 128) != 0;
     b.cfg.no_capture_draw_plies = ncp;
     b.cfg.max_plies = max_plies;
+    b.winner = winner;
     return b;
 }
 
@@ -542,6 +554,13 @@ double ExpertQSearch::qsearch_blob(const std::string& blob, double alpha, double
                                    int depth_left) {
     JunqiBoard b = board_from_blob(blob);
     return _qsearch(b, alpha, beta, depth_left);
+}
+
+
+double eval_expert_board(const JunqiBoard& b, int seat, const ExpertWeights& w,
+                         bool ignore_rule_draw) {
+    ExpertState st = expert_state_from_board(b);
+    return eval_expert_cpp(st, seat, w, ignore_rule_draw);
 }
 
 }  // namespace junqi
