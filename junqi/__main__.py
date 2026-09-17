@@ -123,6 +123,8 @@ def main(argv=None):
     dv.add_argument("--seed", type=int, default=2026, help="随机种子")
     dv.add_argument("--depth", type=int, default=3, help="专家搜索深度")
     dv.add_argument("--time-limit-ms", type=int, default=300, help="专家搜索单步时间预算（毫秒）")
+    dv.add_argument("--workers", type=int, default=0, help="专家打标并行进程数 (0=单进程/自动)")
+    dv.add_argument("--sync-pool", action="store_true", help="蒸馏成功后同步更新对手池权重 models/pool/value_distilled.pt")
     dv.add_argument("--device", default=None, help="计算设备")
 
     g = sub.add_parser("gate", help="P0: 统计严谨的模型晋级评测门控（配对同牌/座位互换/Wilson+SPRT）")
@@ -285,7 +287,8 @@ def main(argv=None):
                                 batch_size=args.batch_size, lr=args.lr,
                                 val_ratio=args.val_ratio, seed=args.seed,
                                 depth=args.depth, time_limit_ms=args.time_limit_ms,
-                                device=args.device)
+                                workers=args.workers, device=args.device,
+                                sync_pool=args.sync_pool)
     elif args.cmd == "gate":
         from .eval_gate import format_gate_report, run_gate
         seeds = list(range(args.seed_base, args.seed_base + args.seeds))

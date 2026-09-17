@@ -1,5 +1,281 @@
 # CHANGELOG
 
+## [2026-09-17] 第十七批 — P1/P2 行为克隆与搜索/价值蒸馏全面缺陷修复与健壮性加固（P1 / P2）
+
+阶段归属：**P1（复盘数据集与传统基线）/ P2（行为克隆与搜索蒸馏）**。
+结合代码审查报告 `reviews/CODE_REVIEW_P2_DISTILL_2026-09-17.md` 与全面自查，对 P1/P2 的蒸馏训练管线、数据加载守卫、评估防塌缩指标以及网络输入通道进行了全面的修复与加固。
+
+### 一、改动清单
+
+| 模块 / 文件 | 阶段 | 说明 |
+|---|---|---|
+| `junqi/train_value_distill.py` | P2 | ① 修复 A1：`train_value_head_only` 改为 `net.eval(); net.value_head.train()` 彻底冻结非目标模块 BatchNorm 统计更新；② 修复 A2：跟踪记录 `samples_degraded` 并在 checkpoint 元数据中审计；③ 修复 A3：打标前清空 TT 实现冷启动独立打标；④ 修复 B3：合成终局局面目标对齐为 `±float(WIN_SCORE)`（tanh 映射至严格 `±1.0`）；⑤ 修复新增 2：遍历全部分批避免尾批丢失，并在少于 512 样本时正常训练且兼顾单样本 BN 保护；⑥ 修复 C3：新增 `sync_pool: bool = False` 参数控制 |
+| `junqi/train_search_distill.py` | P2 | ① 修复 A2：跟踪记录 `samples_degraded` 并在 checkpoint 元数据中持久化；② 修复 A3：打标循环重置 TT，实现多进程与串行路径冷启动一致性；③ 修复新增 3：`teacher_soft_targets` 修正 argmax 动作 ID 取值逻辑与 `return_degraded`；④ 修复 C2/C5：清理未用导入 `math`, `Counter`，修正 `_batch` 缩进 |
+| `junqi/ai.py` | P1 / P2 | ① `choose_actions` 新增 `return_stats: bool = False` 参数，提供 `agent.stats` 访问接口；② 注释明确传统搜索算法为确定性搜索（Deterministic Search），澄清 `seed` 参数仅用于随机翻棋/环境初始化，不影响搜索过程 |
+| `junqi/search.py` | P1 | 明确标注 `self.rng` 仅供外部环境/接口兼容，专家搜索过程为完全确定性算法 |
+| `junqi/dataset.py` | P1 | ① 提取并下沉 `check_p1_version(dir_path)`；② 修复 B1：`NpzReplayDataset.__init__` 强制校验同目录 `metadata.json` 版本不低于 `(3, 0, 0)`；③ 修复 B2：彻底清理 5/6 元组与动态 W/D/L 死代码分支，规范为 7 元组；④ 修复新增 6：`export_replay_dataset` 默认 `version` 升级为 `"3.0.0"` |
+| `junqi/train_bc.py` | P2 | ① 修复新增 1：模型输入通道写死 36 修正为 `NUM_CHANNELS` (38) 并写入元数据；② 修复 B2：移除 `len(batch_data) == 7` 检查与动态 W/D/L 推导，直接解包 7 元组；③ 修复 C1/C4：清理 `import torch.nn as nn`，消费并打印 `train_p_loss` 和 `train_v_loss` |
+| `junqi/eval_bc.py` | P2 | ① 修复 B2：移除死代码与 fallback 分支，规范解包 7 元组；② 修复新增 4：新增平衡准确率（Balanced Accuracy）、各类别独立 Recall、预测类别分布统计与严重塌缩告警机制，并在 `generate_p2_report` 中完整输出；③ 修复 C1：清理未用 `import json` |
+| `junqi/__main__.py` | P2 | 修复新增 5：在 `distill_value` 子命令中补充暴露 `--workers` 与 `--sync-pool` 命令行参数并正确透传 |
+| `tests/test_bc_pipeline.py` | P2 | 新增行为克隆与评测管线专项单测（覆盖 38 通道、防塌缩指标计算、报告生成、7 元组解包与 CLI 参数） |
+| `tests/test_s2_fixes.py` | P2 | 在 `test_distill_smoke_freezes_policy` 中增强对除 `value_head` 外全部模块 BatchNorm `running_mean` / `running_var` 保持不变的严格断言 |
+| `tests/test_value_reanchor.py` | P2 | 增补 BatchNorm 统计量冻结测试、尾批/少于 512 样本训练测试与合成终局量纲对齐测试 |
+| `tests/test_p1_dataset_label_consistency.py` | P1 | 增补 `NpzReplayDataset` 版本守卫下沉单测与 `export_replay_dataset` 默认 3.0.0 版本单测 |
+| `tests/test_search_distill.py` | P2 | 增补 `return_degraded` 与 argmax 修正测试、`choose_actions(return_stats=True)` 与 `agent.stats` 测试、打标冷 TT 独立性测试 |
+
+### 二、核心修复技术细节
+
+1. **A1: 冻结模块 BatchNorm 统计量污染防护**
+   - **痛点**：在价值头单独微调（`train_value_head_only`）中，原代码执行 `net.train()`。虽然 Policy 和 Backbone 参数的 `requires_grad=False` 阻断了权重梯度回传，但 PyTorch 的 `BatchNorm2d` 在 train 模式下依然会持续根据输入批次更新滑动均值和方差（`running_mean` 与 `running_var`），导致主干特征提取器统计量被严重漂移和污染。
+   - **修复**：改为 `net.eval(); net.value_head.train()`。在单测中逐一遍历所有模块，确认除 `value_head` 外部的所有 BatchNorm 层在训练前后 `running_mean` 与 `running_var` 保持完全位一致（`torch.equal`）。
+
+2. **A2: 搜索截断（Degraded Search）感知与元数据审计**
+   - **痛点**：当专家引擎触发 IDS 1000ms 动态时限防御时，`stats.degraded=True`，此时返回的决策和估值来自未完全展开的浅层搜索。原蒸馏打标逻辑对该状态完全静默，导致训练样本受到潜在的劣质软标签污染而无法回溯。
+   - **修复**：`choose_actions` 扩展 `return_stats=True` 返回 `(actions, stats)`，并在 `ExpertAgent` 挂载 `stats` 属性。搜索蒸馏与价值蒸馏打标逻辑（串行与多进程）均统计 `samples_degraded`。打标结束时评估降级比例，若超标打印警告，并将 `samples_degraded` 和 `total_samples` 固化保存在 checkpoint 元数据中，实现全流程审计可追溯。
+
+3. **A3: 教师打标可复现性与冷 TT 独立性**
+   - **痛点**：多进程 worker 与串行打标共用同一个置换表（TT），导致局面打标结果取决于遍历顺序与先前残存缓存；同时代码中传入 `seed` 容易被误解为传统搜索随机化控制。
+   - **修复**：在打标循环中，每个样本打标前统一显式调用 `agent.engine.tt.clear()`，确保每个局面均从冷 TT 独立搜索；并在 `ai.py` 与 `search.py` 补充技术文档，阐明专家搜索属于完全确定性算法（Deterministic Negamax / Alpha-Beta），`seed` 仅在外部环境随机选择时生效。
+
+4. **B1: 数据集版本守卫下沉**
+   - **痛点**：版本校验原先仅存在于 `train_bc.py` CLI 脚本中。当外部代码或蒸馏流程直接实例化 `NpzReplayDataset` 时，无法防御旧版 2.0.0 数据集混入。
+   - **修复**：抽象 `check_p1_version` 函数，在 `NpzReplayDataset.__init__` 中直接读取并校验同目录 `metadata.json` 中的 `version` 字段，严格禁止低于 `(3, 0, 0)` 的数据集被加载。
+
+5. **B2: 死代码清理与 7 元组标准解包**
+   - **痛点**：P1 数据集已于第十二批统一重构为标准 7 元组格式，但 `dataset.py`、`train_bc.py` 和 `eval_bc.py` 中仍残留大量 `if len(batch_data) == 7` 的 fallback 分支与动态推导 WDL 的死代码。
+   - **修复**：彻底删除所有动态判定分支，统一要求并直接解包 7 元组 `(feat, pi, wdl, val, step, moves, flips)`。
+
+6. **B3: 合成终局局面与真实打标量纲严格对齐**
+   - **痛点**：`train_value_distill.py` 中合成终局局面写死估值为 `±600` 分。经 `math.tanh(score / 600.0)` 映射后，胜负值仅为 `tanh(1.0) ≈ 0.7616`，与真实对弈终局 `WIN_SCORE = 10000` 映射出的 `tanh(10000/600) ≈ 1.0` 形成严重数值鸿沟，导致模型价值头对合成胜负产生认知偏差。
+   - **修复**：合成终局局面估值统一使用 `±float(WIN_SCORE)`，确保 tanh 映射后严格对齐为 `±1.0`，和棋为 `0.0`。
+
+7. **新增专项 1~6 缺陷修复与第二轮审计深度加固**:
+   - **新增 1**: 修正 `train_bc.py` 硬编码的 36 通道为 `NUM_CHANNELS = 38`；
+   - **新增 2**: 修正 `train_value_head_only` 样本批次循环 `range(0, len(y_tr), batch_size)`，保证尾批不丢弃、少量样本（<512）正常训练，并规避单样本 BN 方差异常；
+   - **新增 3**: 修正 `train_search_distill.py:teacher_soft_targets` 中 argmax 动作 ID 语义，并修复多进程打标分支中 `targets.sum() == 0` 时对整型索引调用 `action_to_index` 抛出 `AttributeError` 的致命缺陷；
+   - **新增 4**: `eval_bc.py` 增补防塌缩机制，输出类别平衡准确率（Balanced Accuracy）、各类别独立召回率与预测分布直方图，对极度不均衡预测发出警告；
+   - **新增 5**: `junqi/__main__.py` 的 `distill_value` 子命令补齐 `--workers` 和 `--sync-pool` 参数；
+   - **新增 6**: `export_replay_dataset` 默认版本号提升为 `"3.0.0"`，对齐最低口径守卫；
+   - **审计加固 A**: `train_search_distill.py` 中每轮循环显式执行 `net.eval(); net.policy_head.train()`，杜绝搜索蒸馏对骨干网络 BatchNorm 统计的漂移污染，并在 `teacher_soft_targets` 接入 `degraded` 标志透传；
+   - **审计加固 B**: `label_with_expert` 修正 `--workers 0` 语义，使其与 `--workers 0 (0=单进程)` 说明及搜索蒸馏完全对齐（不再对 <=0 强制起 8 进程）；
+   - **审计加固 C**: `train_value_distill` 批次循环同步增加单样本尾批跳过保护，`train_value_head_only` 增加训练样本数不足 (<2) 边界防御；
+   - **审计加固 D**: `NpzReplayDataset` 对损坏的 `metadata.json` 抛出明确异常，防止坏数据静默绕过版本守卫；
+   - **审计加固 E**: `train_bc.py` 初始化 `best_top1 = -1.0`，确保首轮即使 Top-1 为 0 也正常保存初始基座权重文件。
+
+### 三、验证记录
+
+- **新增与回归专项测试**：
+  - `tests/test_bc_pipeline.py`: 5 项通过（覆盖 38 通道、防塌缩指标计算、报告生成、7 元组解包、CLI 参数与首轮 baseline checkpoint 保存）；
+  - `tests/test_search_distill.py`: 8 项通过（覆盖软分布、制胜饱和、degraded 透传、argmax 修正、冷 TT、单/多进程端到端与骨干 BN 冻结断言）；
+  - `tests/test_p2_search_distill_anchor.py`: 10 项通过；
+  - `tests/test_value_reanchor.py`: 16 项通过（覆盖平衡准确率、健康探针、BN 统计完全冻结、尾批/小样本训练、量纲对齐、少于 2 样本防御、冷 TT 单/多进程一致性）；
+  - `tests/test_p1_dataset_label_consistency.py`: 26 项通过（覆盖版本守卫下沉、默认 3.0.0 校验、损坏元数据防御）；
+  - `tests/test_s2_fixes.py`: 12 项通过；
+  - `tests/test_dataset.py`: 5 项通过；
+  - 累计 **82 项专项测试全数通过**（执行耗时 31.00s）。
+- **硬约束合规**：
+  - 未触碰或修改 `models/best.pt`；
+  - 零吃子/挖雷中间奖励；
+  - 严格保持公共 Policy 不读取真实暗子身份；
+  - 7 元组格式与官方 `list.cfg` 终局码完全对齐。
+
+---
+
+## [2026-09-16] 第十六批 — 修复 P1.A 的 C++ 长尾符号错误与等价性契约回归（P1 / P4）
+
+阶段归属：**P1（传统搜索增强）/ P4（C++ 双轨一致性）**。
+第十五批的 P1.A「受限 Star1」在 C++ 侧漏写一个负号，破坏了 Python↔C++ 逐位等价；
+本批修复，并处理审查中发现的其余缺陷。
+
+### 一、P0：`chance_flip_` 长尾分支漏负号（等价性破坏）
+
+- **症状**：`_evaluate_chance_flip` 在 **(ply_depth=1, depth>=3)** 上由 HEAD 的
+  **0/10 不一致（1.8e-15）** 变为 **10/10 不一致（最大 257.6 分）**；
+  完整搜索 **depth=4 决策 0/8 → 3/8 不一致**。默认 `use_cpp_search=True`，
+  即教师引擎的实际取值取决于走哪个后端。
+- **根因**：`src_cpp/src/expert_search.cpp` 受限展开的长尾分支写成
+  `v = child_value(child);`，而解析期望分支与 Python 真源都是 `-child_value(...)`
+  （`child_value` 返回的是**对手视角**的值）。长尾贡献整体符号反了。
+- **定证方式**：逐 outcome 子值分解 —— Python 长尾贡献 +15.3282，
+  `21.4577 − 2×15.3282 = −9.1987` 与 C++ 实测值分毫不差。
+- **排除项**（均有实测）：门槛判断两侧一致（8/8 都展开）、`get_road_neighbors()` 与
+  `NEIGHBORS` 集合 0/60 差异、解析期望分支逐位一致、`negamax_` 在 ply=1/2/3 逐位一致、
+  `_qsearch`（含 P1.C）误差 0.0、QTT 开关无影响。
+- **修复**：`v = -child_value(child);`（并留注释说明与解析分支同约定）。
+
+### 二、P1.A 的搜索子集判据重排（战术重要性）
+
+- **问题**：受限展开原取"剩余数量降序前 3"，而数量最多的身份恒为
+  **连长/排长/工兵/地雷（每种 3 枚）**，司令/军长/炸弹（1~2 枚）几乎总落入长尾只做静态估值
+  —— 与该增强要解决的"翻出敌大子被吃 / 翻出自子反杀"盲区**恰好相反**。
+- **修复**：新增战术重要性分档 `_STAR1_IMPORTANCE` / `STAR1_IMPORTANCE`
+  （ZHA=6 > SI=5 > JUN=4 > SHI=QI=3 > LV/TUAN/YING=2 > 其余=1），
+  搜索子集改按 **战术重要性 → 出现概率 → 颜色 → 规范序** 取前 3。
+- **保持累加顺序不变**：只改变"哪 3 个身份被递归搜索"，Star1 剪枝时机与求和顺序原样保留，
+  因此不影响非受限分支的取值。
+- **跨语言一致性**：新增 `junqi_core.expert_star1_importance()` 自检入口 + 测试守卫
+  （与 `expert_road_neighbors` / `expert_camp_order` 同一模式）。
+
+### 三、`fit_weights` 的符号约束错位与 `mobility` 归宿
+
+- **`_bounds()` 改为按特征名索引**。原实现用写死下标表达语义约束，
+  `FEATURE_NAMES` 从 14 维扩到 25 维后约束落到错误特征上。
+  ⚠ 归属说明：**该错位在 HEAD 上已存在**（threat 30→2、attack 25→2、attack_camp 20→5），
+  第十五批的扩容把它**扩大到语义关键特征**（flag_exposed 40→2、camp_siege 3→0、
+  hq_locked −8→0 符号反转、mine_guard 8→2，且 threat/attack/attack_camp 变成无界）。
+  实测一次 `_project()` 就毁掉 warm start。现已按名字索引并加不变式测试。
+- **`mobility` 从 `FEATURE_NAMES` 移除**：`EvalWeights` 无对应字段 ⇒ 拟合系数被静默丢弃；
+  且 `evaluate_expert` 的机动力项是**另一套定义**（含铁路 +1、排除行营内敌子，
+  并把"死子惩罚 −8/−4"直接并入 score，系数硬编码 0.5），无法迁移。
+  要真正可调需先统一两侧定义（含 C++ 侧与 blob 权重面），本轮不做。
+- **新增不变式测试**：`_project(default_vector()) == default_vector()`、
+  `to_eval_weights(default_vector()) == EvalWeights()`、
+  「每个特征都能写回（唯一例外 `flip_bias`）」、`features()` 键集合 == `FEATURE_NAMES`。
+
+### 四、其余修正
+
+- **`SearchConfig.ids_max_depth` 删除**：声明后无任何消费者（死配置）；
+  `depth` 本身就是迭代加深的深度上限。
+- **`_qsearch` docstring 修正**：原写"严格只生成吃子动作…绝不将进营等非吃子动作塞入"，
+  与第十五批的 P1.C 代码直接冲突。现明确 P1.C 为例外，并补上终止性论证
+  （不再只依赖"吃子单调减少子力"，由 `depth_left <= 0` + "避险源非行营、目标空行营"共同保证）。
+- **`rank >= Rank.SHI` 的语义说明**：`Rank` 枚举中 ZHA=20/LEI=21/QI=22 均 ≥ SHI=11，
+  故 `or == Rank.ZHA` 冗余；实测地雷与军旗**不可移动** ⇒ 实际生效集合 = {师长,军长,司令,炸弹}。
+  行为不变，仅补注释。
+- **APK 开局加成补量纲说明**：APK 原生尺度 SI=2560/连长=40，`+150` 在那里是强偏好；
+  本引擎翻棋排序尺度 20_000~125_000，`+150` 只相当于**同分并列的 tie-break**。
+  实测首翻 8/8 落在黄金格（改前落非黄金格），但 6 格同分 ⇒ 恒定选到生成序第一的 (3,1)，
+  开局被确定化。保持多样性需给格位分档或随机 tie-break，**属待决策项，本轮不改行为**。
+
+### 五、第十五批口径更正（重要）
+
+- 该批称新测试「13 项全部通过」—— **实测 pytest collect 为 9 项**（已更正为 9）。
+  全量 `553 passed, 3 skipped` 属实（本批复跑 189.21s）。
+- 该批称「**C++ 逐位等价与决策等价守卫完全保持**」—— **该结论不成立**：
+  当时 `perf_baseline verify` **3/30 失败**，且 P1.A 分支 10/10 分歧（见第一节）。
+  该 bullet 已就地更正。
+
+### 六、验证
+
+- **等价性矩阵**（每次用全新引擎，消除 TT 累积影响；10 局面）：
+  `_evaluate_chance_flip` 在 (ply=1, depth=3/4) **由 10/10 分歧 → 0 不一致**；
+  完整搜索 depth=2/3/4 决策**全部一致**。
+- **`perf_baseline`**：因 P1.C 有意改变叶节点值，旧快照已失效 ⇒ **本批重新 `capture`**，
+  随后 `verify` / `verify --cpp` 均通过。**纪律**：凡是"有意改变搜索行为"的改动，
+  必须在合并后立刻重新 `capture`，否则该守卫只会制造误报。
+- **新增/加强测试**：`tests/test_p4_cpp_search.py` 增 (ply=1, depth>=3) 的直接子树比对；
+  `tests/test_p1_advanced_enhancements.py` 把两条**形同虚设**的 P1.A 测试
+  （只断言 `isinstance(val, float)`，删掉实现也会通过）改为行为断言：
+  静区翻棋对 depth 不变、战术区翻棋在 depth≥3 取值改变；另加重要性表一致性与上述不变式。
+
+### 七、`negamax` 检查顺序逐项比对与残余差异定证（append，2026-09-16）
+
+**(2) 逐项比对结论**：`junqi/search.py::_negamax` 与 `src_cpp/src/expert_search.cpp::negamax_`
+的检查顺序**逐项一致**（无顺序性差异）：
+
+| # | 检查项 | 结论 |
+|---|---|---|
+| 1 | 节点计数 / 512 节点超时 | ✅（C++ 多 `has_deadline_` 短路，无 deadline 时等价） |
+| 2 | 终局（`winner==-1→0`，否则 `±(WIN-ply)`） | ✅ |
+| 3 | `depth<=0` → qsearch（传 `qsearch_depth`） | ✅ |
+| 4 | 树内重复 → 0.0 | ✅（容器 set vs vector+LIFO，成员判定等价） |
+| 5 | TT 查询，且 `ply_depth>0` 才返回 | ✅ |
+| 6 | TT 边界语义（`depth>=depth` + EXACT/LOWER/UPPER 条件） | ✅ |
+| 7 | TT 写入替换规则（`depth>=existing.depth`） | ✅ |
+| 8 | TT 容量与掩码（两侧同为 `1<<18`） | ✅ |
+| 9 | 无子可动 → `-(WIN-ply)` | ✅ |
+| 10 | 排序调用点 | ✅ |
+| 11 | 翻棋候选剪枝（`>5` → 保留 `moves?3:8`） | ✅ |
+| 12 | PVS（i==0 全窗口；否则 `[-α-1,-α]`，`α<score<β` 重搜 `[-β,-score]`） | ✅ |
+| 13 | 翻棋分支入口 | ✅ |
+| 14 | `stopped` 检查位置（循环头 + 每动作后） | ✅ |
+| 15 | best 更新（严格 `>`） | ✅ |
+| 16 | flag 语义（EXACT / LOWER / 初始 UPPER） | ✅ |
+| 17 | 杀手（去重 + 插入 0 + 上限 2）与历史（`+= depth²`，限 `MAX_HISTORY`，仅 move） | ✅ |
+| 18 | TT 写入受 `stopped` 保护；路径无条件弹出 | ✅ |
+| 19 | 翻棋排序打分 | ❌ **C++ 少 `apk_flip_bonus`**（已实测在 10 个局面中不生效；开局会生效，属待修） |
+| 20 | C++ 入口 `path_.clear()` | ⚠ `negamax_blob`/`chance_flip_blob` 会丢弃 Python 传入的祖先集（生产路径下与 Python 不同） |
+
+**(3) 残余分歧的定证**（原 2/10、最大 4.4 分）：
+
+| 实验 | 结果 |
+|---|---|
+| 每个子节点用**全新引擎**（TT 从零） | **0/17、0/20 逐位一致**（5.7e-14 / 3.6e-15） |
+| 共享引擎（TT 跨子节点累积） | 4/17、6/20 分歧（子值最大 38 分） |
+| `compute_zobrist` vs `junqi_core.expert_zobrist` | **键 0/6 相等；低 18 位（TT 桶索引）也 0/6 相等** |
+
+⇒ **根因：两侧 zobrist 键独立 ⇒ TT 桶索引 `key & mask` 不同 ⇒ 碰撞/淘汰模式独立
+⇒ depth>=3 时命中不同条目、返回不同缓存界（bound）**。depth<=2 节点太少不发生碰撞，
+故此前一直逐位一致。**两侧引擎各自自洽，但"depth>=3 逐位一致"不成立。**
+
+**契约降级（明确记录）**：`深度<=2：逐位一致`；`任意深度：决策等价（实测 depth 2/3/4 全一致）`。
+新增 `tests/test_p4_cpp_search.py::TestKnownZobristResidue` 固化以上三点。
+
+**彻底修复的唯一途径**：把 C++ 的 zobrist 表改为**由 Python 生成**
+（与 `eval_expert_tables.cpp` 同一模式 —— Python 用 `random.Random(0x4A756E51695A6F62)`
+生成 MT 流，C++ 无法凭算法复现，只能落表）。代价：约 3,000 个 `uint64` 的生成文件 +
+C++ `compute_zobrist` 改为按 Python 结构（含暗子占位键、轮次、座次定色、暗子池签名）重写 +
+重新 capture 基线。**本轮未做，待决策**（探针：`scratch/diag_residue_tt.py`）。
+
+---
+
+## [2026-09-16] 第十五批 — P1 传统搜索全面增强与 IDS 动态时间预算落地（P1 / P2）
+
+阶段归属：**P1（传统搜索增强与专家评估）/ P2（C++ 驱动混合决策引擎）**。
+依据用户指令，全面启用 IDS 动态时间预算控制（`time_limit_ms = 1000ms`），并按优先级落地传统搜索四大核心增强。
+
+### 一、改动清单
+
+| 模块 / 文件 | 阶段 | 说明 |
+|---|---|---|
+| `junqi/config.py` | P1 | `SearchConfig` 默认开启 `time_limit_ms = 1000`，新增 `ids_max_depth = 8` |
+| `junqi/ai.py` | P1 / P2 | `ExpertAgent.choose_actions` 规范 `max_depth` 语义，1000ms 动态时限防护；升级 `HybridAgent` 默认搜索深度至 3，并强制补充大子避难与吃旗候选 |
+| `junqi/search.py` | P1 | ① **P1.A 受限 Star1**：在 `_evaluate_chance_flip` 中引入交火区展开机制（Top-3 概率身份 `depth-2` 递归，长尾静态期望）；② **P1.C QSearch 进营避险**：大子（$\ge$师长/炸弹）营外受威胁时补充逃入周围空行营候选走法 |
+| `src_cpp/src/expert_search.cpp` | P1 / P4 | 同步实现 C++ 侧交火区受限 Star1 递归展开逻辑 |
+| `src_cpp/src/expert_qsearch.cpp` | P1 / P4 | 同步实现 C++ 侧 QSearch 高危大子受威胁进营避险候选动作生成 |
+| `junqi/fit_weights.py` | P1 | **P1.B 消除暗子泄漏**：彻底移除遍历暗子读取 `pc.rank` 的后门，严格基于公开信息（明子 + 剩余池期望摊派），扩充为 25 维全特征，未定色前严格全 0 |
+| `junqi/tune.py` | P1 | 扩充调优特征超参数（涵盖 `camp_zone`, `fortress`, `hidden_tempo`, `mine_flag_guard_bonus` 等），支持全特征调优 |
+| `junqi/selfplay.py` | P2 | `make_strategy` 中 `hybrid` 策略默认搜索深度同步升级为 3 |
+| `tests/test_p1_advanced_enhancements.py` | P1 / P2 | 新增专项测试套件（覆盖 IDS、受限 Star1、特征零泄漏、QSearch 进营避险、HybridAgent）。⚠ 原文写「13 项全部通过」，**实测 pytest collect 为 9 项**，已在第十六批更正 |
+
+### 二、核心增强技术细节
+
+1. **IDS 动态时间预算控制（1000ms）**
+   - 默认启用 `time_limit_ms = 1000ms`。在常规开局/中盘，C++ 引擎搜完 depth=2/3 仅需数十至两百毫秒，时间充裕时自动完成高精度决策；遇复杂残局吃子链过长时，在 1000ms 节点提前安全收敛，彻底杜绝单步数秒的卡顿。
+   - `ExpertAgent.choose_actions` 严格尊重调用者指定的 `cfg.depth` 作为最大深度上限，杜绝覆盖测试用例意图。
+
+2. **P1.A: 内层翻棋关键区域解禁搜索（受限 Star1）**
+   - **痛点**：传统期望搜索在 `ply_depth > 0` 时将翻棋视为空走并直接返回静态估值，导致“翻出敌子被吃”或“翻出自子反杀”的两回合攻防完全处于战术盲区。
+   - **解决**：引入战术交火区判断 `_is_tactical_flip_zone`。在 `ply_depth == 1 and depth >= 3` 且翻棋位置周围存在敌方活动战斗明子时，解禁概率 Top-3 的可能身份以 `depth - 2` 递归进入 Star1 搜索；长尾小概率身份与静寂区域保持极速静态估值。
+   - **收益**：既消除了贴脸翻棋的近身盲区，又保持了整树搜索的极高吞吐。
+
+3. **P1.B: 特征提取与调优重构（严格公共信息边界）**
+   - **痛点**：原 `fit_weights.py` 的特征提取函数直接遍历暗子读取真实 `pc.rank`，导致调优出的权重受到“暗子透视眼”的过拟合污染，违反 `AGENTS.md` 必须严格遵循公共信息边界的硬约束。
+   - **解决**：暗子特征完全基于剩余子力池构成概率进行摊派；未定色前双方特征严格对称为 0；全面对齐 `evaluate_expert` 25 维全特征，支持一键与 `EvalWeights` 双向无损转换。
+
+4. **P1.C: QSearch 大子受威胁进营避险**
+   - **痛点**：传统 QSearch 仅生成吃子走法。当大子（军衔 $\ge$ 师长 或 炸弹）在营外受到敌方上位明子或炸弹威胁时，由于没有吃子动作，QSearch 只能 Stand-Pat 挨打，得出严重悲观的错误估值（地平线效应）。
+   - **解决**：在 QSearch 中，当大子处于营外受敌明子实质性威胁时，补充生成走向空行营的避险走法，让大子能安全进营避险，大幅降低战术误判。
+
+5. **P1.D: C++ 驱动 HybridAgent 升级**
+   - `HybridAgent` 默认搜索深度由 2 升级到 3；
+   - 战术候选生成中强制把吃旗、吃子与大子进营避险纳入候选集，结合神经网络全局大局观先验与 C++ 专家引擎的战术把关，实现高质量决策。
+
+### 三、验证与回归
+
+- **专项验证**：`tests/test_p1_advanced_enhancements.py` 实测 **9 项**通过（原文写 13 项，已更正；且其中两条 P1.A 测试当时只断言 `isinstance(val, float)`，**删掉实现也会通过**，已在第十六批换成行为断言）。
+- **全量测试套件回归**：**553 passed, 3 skipped in 173.77s**，零失败。
+- **硬约束遵从**：
+  - 未改变终局胜平负定义与终局码；
+  - 严禁任何中间吃子/挖雷奖励；
+  - 严禁公共 Policy / 估值读取真实暗子身份（特征专项测试证明零泄漏）；
+  - ⚠ **原文写「C++ 逐位等价与决策等价守卫完全保持」，该结论不成立** ——
+    当时 `perf_baseline verify` **3/30 失败**（P1.C 改变了叶节点值），
+    且 P1.A 的受限 Star1 分支在 (ply=1, depth≥3) 上 **10/10 与 Python 分歧**（最大 257.6 分）。
+    根因与修复见**第十六批**。
+
+---
+
 ## [2026-09-15] 第十二批 — 切片 1：`evaluate_expert` C++ 移植（P4 / P1）
 
 阶段归属：**P4（工程基础设施）/ P1（传统搜索性能）**。

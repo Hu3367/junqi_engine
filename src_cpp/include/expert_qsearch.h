@@ -4,12 +4,19 @@
 // 对应 Python 真源：junqi/search.py::ExpertSearchEngine._qsearch
 // 依赖：legal_actions（rules.cpp）/ battle / evaluate_expert（切片 1）
 //
-// 与 Python 的两处**有意**差异（都不影响返回值，只影响统计）：
-//   1. 不实现 QTT（QSearch 置换表）。C++ 单节点成本 ~µs 级，QTT 的收益
-//      已不足以抵掉 zobrist + 查表成本；且它是纯缓存，去掉不改变返回值。
-//      代价：stats.qnodes 会比 Python 路径高（不再有 27.5% 的缓存豁免）。
-//   2. _score_action 不读 killer/history（它们在搜索过程中动态变化，
-//      跨语言同步不划算）。走法顺序只影响剪枝效率，**不影响 minimax 值**。
+// 与 Python 的一处**有意**差异（只影响统计，不影响返回值）：
+//   不实现 QTT（QSearch 置换表）。C++ 单节点成本 ~µs 级，QTT 的收益
+//   已不足以抵掉 zobrist + 查表成本；且它是纯缓存，去掉不改变返回值。
+//   代价：stats.qnodes 会比 Python 路径高（不再有 27.5% 的缓存豁免）。
+//
+// ⚠ 已更正的旧注释：本文件此前写着「`_score_action` 不读 killer/history…
+//   走法顺序只影响剪枝效率，**不影响 minimax 值**」——**这句是错的**，两处都不成立：
+//   1. 切片 3 已把 killer/history 接上（`order_actions` 设置 `cur_ply_depth_`，
+//      `ExpertSearch::_killer_history_bonus` 覆写后在基类 `_score_action` 中被调用）；
+//   2. 本引擎有 **TT + PVS**，走法顺序会改变被搜索的集合、TT 存入/命中的条目，
+//      从而改变返回的**缓存界**（bound）—— 顺序**确实**会影响返回值。
+//      实测（2026-09-16）：两侧 zobrist/TT 桶索引独立 ⇒ depth>=3 子树值可差 O(10) 分
+//      （决策不变）。详见 docs/CHANGELOG 第十六批 §七。
 #include <cstdint>
 
 #include "board.h"

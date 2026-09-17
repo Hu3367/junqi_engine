@@ -295,24 +295,40 @@ class ExpertAgent:
         qdepth = getattr(self.cfg, "qsearch_depth", 16)
         self.engine = ExpertSearchEngine(weights=self.w, tt_size_power=tt_size_power, seed=seed,
                                          qsearch_depth=qdepth)
+        # 注：专家搜索核心（Expectiminimax + alpha-beta）为完全确定性算法，
+        # self.rng 保留仅用于兼容外部可能访问 agent.rng 的场景；搜索结果不受 seed 影响。
         self.rng = random.Random(seed)
 
     @property
     def nodes(self) -> int:
         return self.engine.stats.nodes
 
+    @property
+    def stats(self):
+        return self.engine.stats
+
     def choose_actions(self, state: GameState, topn: int = 1,
-                       avoid: set | None = None) -> list[tuple[Action, float]]:
-        """返回 [(action, score)] 列表，按分数降序。"""
+                       avoid: set | None = None,
+                       return_stats: bool = False):
+        """返回 [(action, score)] 列表，按分数降序。
+
+        若 return_stats=True，则返回 (scored, stats)。
+        """
         acts = state.legal_actions()
         if not acts or state.is_terminal():
-            return []
+            from .search import SearchStats
+            res = []
+            return (res, SearchStats()) if return_stats else res
         if len(acts) == 1:
-            return [(acts[0], 0.0)]
+            from .search import SearchStats
+            res = [(acts[0], 0.0)]
+            return (res, SearchStats()) if return_stats else res
+
+        max_depth = max(1, self.cfg.depth)
 
         best_act, best_score, stats = self.engine.search(
             state,
-            max_depth=max(1, self.cfg.depth),
+            max_depth=max_depth,
             time_limit_ms=self.cfg.time_limit_ms,
             avoid=avoid,
             qsearch_depth=getattr(self.cfg, "qsearch_depth", 16),
@@ -322,17 +338,20 @@ class ExpertAgent:
         )
 
         if topn <= 1 or best_act is None:
-            return [(best_act or acts[0], best_score)]
-
+            res = [(best_act or acts[0], best_score)]
         # 如果需要 topn 个候选走法，优先返回根节点真实搜索估值
-        if stats.root_scores:
-            return stats.root_scores[:topn]
+        elif stats.root_scores:
+            res = stats.root_scores[:topn]
+        else:
+            # C4 修复：无根节点搜索分（首层超时降级）时，原实现回退到
+            # `engine._score_action` —— 那是量级 1e5 的 **move-ordering** 分，
+            # 还额外给 best_act 加了 100_000，直接当估值分返回会彻底破坏量纲。
+            # 现在只诚实地返回"当前最优 + 0 分"，绝不伪造候选与分值。
+            res = [(best_act, 0.0)]
 
-        # C4 修复：无根节点搜索分（首层超时降级）时，原实现回退到
-        # `engine._score_action` —— 那是量级 1e5 的 **move-ordering** 分，
-        # 还额外给 best_act 加了 100_000，直接当估值分返回会彻底破坏量纲。
-        # 现在只诚实地返回"当前最优 + 0 分"，绝不伪造候选与分值。
-        return [(best_act, 0.0)]
+        if return_stats:
+            return res, stats
+        return res
 
     def select_action(self, state: GameState, avoid: set | None = None) -> Optional[Action]:
         """返回最优单步决策动作 (统一 Agent 规范)。"""
@@ -455,7 +474,7 @@ class HybridAgent:
     """
 
     def __init__(self, model_path: str = "models/bc_best.pt",
-                 search_depth: int = 2, top_k: int = 6,
+                 search_depth: int = 3, top_k: int = 6,
                  prior_weight: float = 0.25,
                  weights: EvalWeights | None = None,
                  device: str | None = None, seed: int | None = None):
@@ -494,12 +513,22 @@ class HybridAgent:
         sorted_by_nn = sorted(acts, key=lambda a: policy_map.get(a, 0.0), reverse=True)
         cand_set = set(sorted_by_nn[:self.top_k])
 
-        # 3. 补充战术走法（吃旗、吃子、解救大子走法强制纳入候选）
+        # 3. 补充关键战术走法（吃旗、吃子、大子进营候选）
+        #
+        # 与 qsearch 的 P1.C 同源，但**刻意不做"是否真被威胁"的判定**：候选集只影响耗时，
+        # 每个候选随后都会被精确搜索打分，因此这里取"宽进"是可接受的；
+        # 而 qsearch 里必须收紧（否则静步会放大整棵静态搜索的分支）。
+        # rank 阈值：Rank 枚举中 ZHA=20/LEI=21/QI=22 均 ≥ SHI=11，故 `or == ZHA` 冗余；
+        # 实测地雷与军旗不可移动，实际生效集合 = {师长, 军长, 司令, 炸弹}。
         for a in acts:
             if a.kind == "move":
                 tgt = state.board.get(a.to)
                 if tgt and tgt.revealed:
                     cand_set.add(a)
+                elif is_camp(a.to) and not is_camp(a.frm):
+                    mover = state.board.get(a.frm)
+                    if mover and mover.revealed and (mover.rank >= Rank.SHI or mover.rank == Rank.ZHA):
+                        cand_set.add(a)
 
         candidates = list(cand_set)
 

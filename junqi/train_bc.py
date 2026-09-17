@@ -16,11 +16,11 @@ from typing import Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from .dataset import DEFAULT_P1_DIR, NpzReplayDataset
+from .encoder import NUM_CHANNELS
 from .net import JunqiNet
 
 
@@ -41,17 +41,13 @@ def evaluate_model(model: JunqiNet, val_loader: DataLoader,
 
     with torch.no_grad():
         for batch_data in val_loader:
-            if len(batch_data) == 7:
-                states, masks, actions, values, val_classes, has_values, phases = batch_data
-                val_classes = val_classes.to(device)
-            else:
-                states, masks, actions, values, has_values, phases = batch_data
-                val_classes = None
+            states, masks, actions, values, val_classes, has_values, phases = batch_data
 
             states = states.to(device)
             masks = masks.to(device)
             actions = actions.to(device)
             values = values.to(device)
+            val_classes = val_classes.to(device)
             has_values = has_values.to(device)
             phases = phases.to(device)
 
@@ -66,14 +62,7 @@ def evaluate_model(model: JunqiNet, val_loader: DataLoader,
             loss_v = torch.tensor(0.0, device=device)
             if has_values.sum() > 0:
                 if pred_val.shape[-1] == 3:
-                    if val_classes is None:
-                        # 动态构造 3 分类目标
-                        target_c = torch.where(values > 0.5, torch.tensor(0, device=device),
-                                               torch.where(values < -0.5, torch.tensor(2, device=device),
-                                                           torch.tensor(1, device=device)))
-                    else:
-                        target_c = val_classes
-                    loss_v = F.cross_entropy(pred_val[has_values], target_c[has_values])
+                    loss_v = F.cross_entropy(pred_val[has_values], val_classes[has_values])
                 else:
                     pred_v_sub = pred_val.squeeze(-1)[has_values]
                     target_v_sub = values[has_values]
@@ -154,13 +143,13 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
                             pin_memory=(dev.type == "cuda"))
 
     # 3. 初始化网络与优化器
-    model = JunqiNet(in_channels=36, num_blocks=num_blocks, channels=channels).to(dev)
+    model = JunqiNet(in_channels=NUM_CHANNELS, num_blocks=num_blocks, channels=channels).to(dev)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
-    best_top1 = 0.0
+    best_top1 = -1.0
     best_metrics = {}
     history = []
 
@@ -178,17 +167,13 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
         ep_start = time.time()
 
         for batch_data in train_loader:
-            if len(batch_data) == 7:
-                states, masks, actions, values, val_classes, has_values, _ = batch_data
-                val_classes = val_classes.to(dev)
-            else:
-                states, masks, actions, values, has_values, _ = batch_data
-                val_classes = None
+            states, masks, actions, values, val_classes, has_values, _ = batch_data
 
             states = states.to(dev)
             masks = masks.to(dev)
             actions = actions.to(dev)
             values = values.to(dev)
+            val_classes = val_classes.to(dev)
             has_values = has_values.to(dev)
 
             optimizer.zero_grad()
@@ -201,13 +186,7 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
             loss_v = torch.tensor(0.0, device=dev)
             if has_values.sum() > 0:
                 if pred_val.shape[-1] == 3:
-                    if val_classes is None:
-                        target_c = torch.where(values > 0.5, torch.tensor(0, device=dev),
-                                               torch.where(values < -0.5, torch.tensor(2, device=dev),
-                                                           torch.tensor(1, device=dev)))
-                    else:
-                        target_c = val_classes
-                    loss_v = F.cross_entropy(pred_val[has_values], target_c[has_values])
+                    loss_v = F.cross_entropy(pred_val[has_values], val_classes[has_values])
                 else:
                     loss_v = F.mse_loss(pred_val.squeeze(-1)[has_values], values[has_values])
                 n_v = has_values.sum().item()
@@ -233,6 +212,8 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
 
         t_top1 = train_correct_top1 / train_total if train_total else 0.0
         t_loss = train_loss / train_total if train_total else 0.0
+        t_p_loss = train_p_loss / train_total if train_total else 0.0
+        t_v_loss = train_v_loss / v_samples if v_samples else 0.0
         v_top1 = val_metrics["top1_acc"]
         v_top3 = val_metrics["top3_acc"]
         v_loss = val_metrics["val_loss"]
@@ -240,6 +221,8 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
         log_entry = {
             "epoch": epoch,
             "train_loss": t_loss,
+            "train_policy_loss": t_p_loss,
+            "train_value_loss": t_v_loss,
             "train_top1": t_top1,
             "val_loss": v_loss,
             "val_top1": v_top1,
@@ -251,7 +234,7 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
         history.append(log_entry)
 
         print(f"Epoch [{epoch:02d}/{epochs:02d}] ({ep_duration:.1f}s) - "
-              f"Train Loss: {t_loss:.4f}, Top1: {t_top1*100:.2f}% | "
+              f"Train Loss: {t_loss:.4f} (P: {t_p_loss:.4f}, V: {t_v_loss:.4f}), Top1: {t_top1*100:.2f}% | "
               f"Val Loss: {v_loss:.4f}, Top1: {v_top1*100:.2f}%, Top3: {v_top3*100:.2f}% | "
               f"Phase Top1: (开:{val_metrics['phase_top1']['opening']*100:.1f}%, "
               f"中:{val_metrics['phase_top1']['midgame']*100:.1f}%, "
@@ -267,7 +250,7 @@ def train_bc(train_npz: str = f"{DEFAULT_P1_DIR}/train.npz",
                 "optimizer_state": optimizer.state_dict(),
                 "num_blocks": num_blocks,
                 "channels": channels,
-                "in_channels": 36,
+                "in_channels": NUM_CHANNELS,
                 "action_size": 3650,
                 "epoch": epoch,
                 "val_top1": v_top1,

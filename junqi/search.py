@@ -34,6 +34,39 @@ MAX_HISTORY = 100_000
 MAX_SEARCH_DEPTH = 64
 DEFAULT_QSEARCH_DEPTH = 16
 
+# 受限 Star1 展开的「战术重要性」分档。
+#
+# 为什么需要它（2026-09-16 实测）：受限展开原先取"剩余数量降序前 3"作为搜索子集，
+# 而数量最多的身份恒为 连长/排长/工兵/地雷（每种 3 枚），司令/军长/炸弹（1~2 枚）
+# 几乎总落入长尾只做静态估值 —— 与该增强要解决的"翻出敌大子被吃"盲区恰好相反。
+# 改为按"战术重要性 → 出现概率 → 颜色 → 规范序"取前 3。
+#
+# ⚠ `_STAR1_KIND_ORDER` 与 `_STAR1_IMPORTANCE` 必须与
+#   src_cpp/src/expert_search.cpp::kStar1Importance 完全一致
+#   （C++ 侧有 expert_star1_importance() 自检入口 + 测试守卫）。
+_STAR1_KIND_ORDER = (Rank.SI, Rank.JUN, Rank.SHI, Rank.LV, Rank.TUAN, Rank.YING,
+                     Rank.LIAN, Rank.PAI, Rank.GONG, Rank.ZHA, Rank.LEI, Rank.QI)
+_STAR1_IMPORTANCE = {Rank.SI: 5, Rank.JUN: 4, Rank.SHI: 3, Rank.LV: 2,
+                     Rank.TUAN: 2, Rank.YING: 2, Rank.LIAN: 1, Rank.PAI: 1,
+                     Rank.GONG: 1, Rank.ZHA: 6, Rank.LEI: 1, Rank.QI: 3}
+_STAR1_KIND_INDEX = {r: i for i, r in enumerate(_STAR1_KIND_ORDER)}
+
+# APK 开局库增强（2026-09-16）
+# 官方 libjunqi.so 的中心行营黄金翻棋格 (对齐 0x5a3c0)
+APK_CENTER_CAMP_FLIP_POSITIONS: Set[Tuple[int, int]] = frozenset({
+    (3, 1), (3, 3), (4, 2),   # 上半场中心行营辐射位
+    (7, 2), (8, 1), (8, 3),   # 下半场中心行营辐射位
+})
+
+# APK 开局优先翻棋加分（纯开局无子时生效）。
+# ⚠ 量纲说明：APK 原生估价尺度是 SI=2560 / 连长=40，那里的 +150 是**强偏好**；
+#   本引擎的翻棋排序尺度是 safety_score 20_000 + camp_expansion 最高 120_000，
+#   故 +150 在这里只相当于 **同分并列时的 tie-break**（占 0.75%）。
+#   实测效果：纯开局首翻 8/8 落在黄金格（改前落非黄金格），但 6 个黄金格同分，
+#   实际恒定选到生成序第一的 (3,1) ⇒ 开局被确定化。要保持多样性需给格位分档或
+#   允许随机 tie-break，属待决策项，本轮不改行为。
+APK_FLIP_ROOT_BONUS = 150.0
+
 # 切片 1（C++ 移植）：evaluate_expert 是否走 C++ 快路径。
 # 默认值由等价性验收结果决定 —— 见
 # docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md 第五节"切片 1"。
@@ -125,6 +158,8 @@ class ExpertSearchEngine:
                  use_cpp_search: Optional[bool] = None):
         self.w = weights or EvalWeights()
         self.tt = TranspositionTable(size_power=tt_size_power)
+        # 注：专家搜索核心（Expectiminimax + alpha-beta）为完全确定性算法，
+        # self.rng 保留仅用于兼容外部调用；搜索过程不依赖伪随机数。
         self.rng = random.Random(seed)
         self.qsearch_depth = qsearch_depth
 
@@ -387,7 +422,15 @@ class ExpertSearchEngine:
             r, c = pos
             safety_score = 0.0
             opp = other(my) if my else None
-
+            
+            # APK 开局库增强 (2026-09-16): 优先翻中心行营周围的黄金暗子格
+            # 仅在纯开局阶段 (全盘无己方明子) 时生效，对齐官方 libjunqi.so 的 0x5a3c0 逻辑
+            apk_flip_bonus = 0.0
+            revealed_friendly_pieces = sum(1 for p in state.board.values() 
+                                          if p.revealed and p.color == my)
+            if revealed_friendly_pieces == 0 and pos in APK_CENTER_CAMP_FLIP_POSITIONS:
+                apk_flip_bonus = APK_FLIP_ROOT_BONUS
+            
             # 1. 依托行营辐射拓荒 (实证：96.2% 邻营翻棋，开局首翻即据点)
             # 用户核心战略：依托己方已控行营，向周围暗子辐射拓荒翻棋
             # 翻出自子可立即协同，翻出敌子被营内子单向就近扑杀无损失 (开局 50.1% 吃子源自行营扑杀)
@@ -457,7 +500,9 @@ class ExpertSearchEngine:
             else:
                 safety_score = 20_000.0
 
-            return safety_score + camp_expansion_bonus + territory_bias
+            # 合并 APK 开局库偏好 (纯开局阶段黄金格优先翻棋)
+            total_score = safety_score + camp_expansion_bonus + territory_bias + apk_flip_bonus
+            return total_score
 
         return 0.0
 
@@ -498,10 +543,14 @@ class ExpertSearchEngine:
                  depth_left: int = DEFAULT_QSEARCH_DEPTH) -> float:
         """静态搜索 (Quiescence Search)：专用于在叶子节点解决吃子与战术震荡。
 
-        对齐原版 APK 0x5a678 + 0x591d8:
-        1. 严格只生成吃子动作与吃旗动作（Captures Only），绝不将进营等非吃子动作塞入；
-        2. Delta Pruning 剪枝加速；
-        3. 延伸至更深交火线（默认 16 ply），彻底消除地平线反杀盲区。
+        对齐原版 APK 0x5a678 + 0x591d8，并叠加 P1.C 增强：
+        1. 生成吃子/吃旗动作（Captures Only）。**P1.C 例外**：已明大子在营外被实质威胁时，
+           额外生成"退入空行营避险"的静步候选（见下方生成段与 rank 阈值说明）；
+        2. Delta Pruning 剪枝加速。局部 delta 只作用于"有被吃目标"的走法，避险静步不受它影响；
+           全局 big_delta 上界仍成立 —— 避险的收益不超过被救子力自身价值；
+        3. 延伸至更深交火线（默认 16 ply），彻底消除地平线反杀盲区；
+        4. **终止性**不再只依赖"吃子必然减少子力"这一单调量，由 `depth_left <= 0` 守卫
+           与"避险源必须非行营、目标必须为空行营"共同保证（避险次数有上限）。
         """
         # 切片 2：整棵静态搜索子树交给 C++（一次序列化，零每节点桥接开销）。
         # C++ 侧不实现 QTT（纯缓存，不改变返回值），故 qnodes 会比 Python 路径高。
@@ -561,7 +610,7 @@ class ExpertSearchEngine:
                 self.qtt.store(zkey, depth_left, alpha, FLAG_UPPER_BOUND)
             return alpha
 
-        # 仅生成吃子动作（吃敌方明子或吃旗）
+        # 生成吃子动作（吃敌方明子或吃旗）与高危大子进营避难动作 (P1.C 增强)
         acts = state.legal_actions()
         tactical_moves: list[Action] = []
         my = state.my_color()
@@ -573,6 +622,23 @@ class ExpertSearchEngine:
             # 吃明子 (包含吃旗)
             if target is not None and target.revealed and target.color != my:
                 tactical_moves.append(a)
+            elif is_camp(a.to) and not is_camp(a.frm):
+                # P1.C 增强：高危大子逃入行营避险。
+                # rank 阈值说明：Rank 枚举里 ZHA=20、LEI=21、QI=22 都 ≥ SHI=11，
+                # 所以 `>= Rank.SHI` 实际选中 {师长..司令, 炸弹, 地雷, 军旗}；
+                # `or == ZHA` 因此是冗余的。实测地雷与军旗**不可移动**（legal_actions 为空），
+                # 故实际生效集合 = {师长, 军长, 司令, 炸弹}。这里保留宽条件不影响行为，
+                # 但若将来放开雷/旗移动规则，需重新确认语义。
+                mover = state.board.get(a.frm)
+                if mover is not None and mover.revealed and (mover.rank >= Rank.SHI or mover.rank == Rank.ZHA):
+                    is_threatened = any(
+                        (e := state.board.get(np)) is not None and e.revealed and e.color != my
+                        and e.rank not in (Rank.QI, Rank.LEI)
+                        and battle(e.rank, mover.rank) in ("attacker_wins", "both_die")
+                        for np in NEIGHBORS[a.frm]
+                    )
+                    if is_threatened:
+                        tactical_moves.append(a)
 
         if not tactical_moves:
             if zkey is not None:
@@ -634,11 +700,23 @@ class ExpertSearchEngine:
             child = state.apply(flip_act)
             return -self._negamax(child, depth - 1, ply_depth + 1, -beta, -alpha, path_history)
 
-        # 几率前沿截断 (Chance-Node Depth Truncation):
-        # 仅在根节点 (ply_depth == 0) 对候选动作展开全概率对抗子树；
-        # 在博弈树深层 (depth <= 1 或 ply_depth >= 1)，直接由公共信念状态求精确解析期望，
-        # 彻底杜绝深层连续几率节点引发的 (24)^d 组合指数爆炸，保障毫秒级下棋速度
-        if depth <= 1 or ply_depth >= 1:
+        # 几率前沿截断判断 (P1.A 增强):
+        # 1. depth <= 1 或 ply_depth >= 2: 无足够搜索预算，直接由公共状态求精确解析期望；
+        # 2. ply_depth == 1 (根节点的下一回合):
+        #    - 若处于战术交火区且 depth >= 3: 允许受限 Star1 展开 (Top-3 概率身份以 depth - 2 递归，其余长尾做静态估值)；
+        #    - 其余远离战场的翻棋保持极速解析期望，彻底杜绝深层 (24)^d 指数爆炸。
+        def _is_tactical_flip_zone(flip_p: tuple[int, int]) -> bool:
+            for np_ in NEIGHBORS[flip_p]:
+                if is_camp(np_):
+                    return True
+                nb = state.board.get(np_)
+                if nb is not None and nb.revealed and nb.rank not in (Rank.LEI, Rank.QI):
+                    return True
+            return False
+
+        allow_restricted_star1 = (ply_depth == 1 and depth >= 3 and _is_tactical_flip_zone(pos))
+
+        if (depth <= 1 or ply_depth >= 1) and not allow_restricted_star1:
             expected = 0.0
             for (clr, rk), cnt in rem.items():
                 prob = cnt / total_hidden
@@ -687,7 +765,22 @@ class ExpertSearchEngine:
         v_max = 600.0
         v_min = -600.0
 
-        for clr, rk, prob in outcomes:
+        max_search_outcomes = 3 if allow_restricted_star1 else len(outcomes)
+        sub_depth = (depth - 2) if allow_restricted_star1 else (depth - 1)
+
+        # 受限展开时的**搜索子集**（理由见文件顶部 _STAR1_IMPORTANCE）。
+        # 只改变"哪 3 个身份被递归搜索"：累加顺序与 Star1 剪枝时机保持原样。
+        search_slots: Optional[set[int]] = None
+        if allow_restricted_star1:
+            ranked = sorted(
+                range(len(outcomes)),
+                key=lambda i: (-_STAR1_IMPORTANCE[outcomes[i][1]],
+                               -outcomes[i][2],
+                               0 if outcomes[i][0] == "r" else 1,
+                               _STAR1_KIND_INDEX[outcomes[i][1]]))
+            search_slots = set(ranked[:max_search_outcomes])
+
+        for idx, (clr, rk, prob) in enumerate(outcomes):
             # Star1 几率剪枝检查
             # 1. Fail-Low 截断: 即使后续全取最好也无法达到 alpha
             if expected_value + remaining_prob * v_max <= alpha:
@@ -725,8 +818,20 @@ class ExpertSearchEngine:
             if not child.hidden_positions() and not child._has_any_move():
                 child.winner, child.win_reason = state.turn, "immobilized"
 
-            # 递归搜索子节点：几率子节点使用全窗口搜索，杜绝父节点期望剪枝窗引起子节点提前截断失真
-            v = -self._negamax(child, depth - 1, ply_depth + 1, -WIN_SCORE, WIN_SCORE, path_history)
+            # 递归搜索子节点或长尾静态估值
+            if search_slots is None or idx in search_slots:
+                v = -self._negamax(child, sub_depth, ply_depth + 1, -WIN_SCORE, WIN_SCORE, path_history)
+            else:
+                if child.is_terminal():
+                    if child.winner == -1:
+                        child_val = 0.0
+                    else:
+                        win = WIN_SCORE - child.ply
+                        child_val = win if child.winner == child.turn else -win
+                else:
+                    child_val = self._eval(child, child.turn)
+                v = -child_val
+
             expected_value += prob * v
             remaining_prob -= prob
 

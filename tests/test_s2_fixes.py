@@ -209,6 +209,12 @@ class TestS2Distillation(unittest.TestCase):
                 self.assertTrue(
                     torch.equal(distilled.state_dict()[k], base.state_dict()[k]),
                     f"蒸馏不得改动冻结参数 {k}")
+            # A1 守卫：断言所有冻结模块（非 value_head）的 BatchNorm running 统计严格不变
+            for name, buf in distilled.named_buffers():
+                if "value_head" not in name and ("running_mean" in name or "running_var" in name):
+                    self.assertTrue(
+                        torch.equal(buf, base.state_dict()[name]),
+                        f"蒸馏不得改动冻结模块 BatchNorm 统计 {name}")
 
 
 if __name__ == "__main__":

@@ -52,10 +52,43 @@ else:
     from .state import Action, GameState
 
 
+def check_p1_version(metadata: dict) -> tuple[bool, str]:
+    """校验数据集版本是否达到 `MIN_P1_VERSION`（R6 修复的守卫）。
+
+    p1_v1 / p1_v2 生成于 2026-09-06，早于 2026-09-13 的 "code 24 断线不得赋
+    Value" 修正，两者的 Value 标签口径不同。混用会出现"同一份指标、两套真值"
+    的静默不一致，因此低于 3.0.0 直接拒绝。
+    """
+    ver = str((metadata or {}).get("version", "") or "")
+    try:
+        parts = tuple(int(x) for x in ver.split(".")[:3])
+    except ValueError:
+        parts = (0,)
+    ok = parts >= tuple(MIN_P1_VERSION)
+    if ok:
+        return True, f"数据集版本 {ver} 通过（≥ {'.'.join(map(str, MIN_P1_VERSION))}）"
+    return False, (f"数据集版本 {ver} 低于最低要求 "
+                   f"{'.'.join(map(str, MIN_P1_VERSION))}：该版本生成于 code 24 "
+                   f"标签口径修正之前，请改用 {DEFAULT_P1_DIR} 或重新导出")
+
+
 class NpzReplayDataset(Dataset):
     """从 npz 加载行为克隆样本的 PyTorch 数据集（支持 38 通道与 3 分类 Value）。"""
 
-    def __init__(self, npz_path: str):
+    def __init__(self, npz_path: str, check_version: bool = True):
+        if check_version:
+            dir_path = os.path.dirname(npz_path) or "."
+            meta_path = os.path.join(dir_path, "metadata.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    raise ValueError(f"加载数据集 {npz_path} 失败: 元数据损坏 {meta_path}: {e}")
+                ok, msg = check_p1_version(meta)
+                if not ok:
+                    raise ValueError(f"加载数据集 {npz_path} 失败: {msg}")
+
         data = np.load(npz_path)
         self.states = data["states"]        # (N, C, 12, 5) float32
         self.masks = data["masks"]          # (N, 3650) bool
@@ -314,7 +347,7 @@ def process_single_game(game: SavGame, cfg: RuleConfig,
 
 def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
                           split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
-                          seed: int = 2026, version: str = "2.0.0",
+                          seed: int = 2026, version: str = "3.0.0",
                           max_games: Optional[int] = None,
                           list_cfg_path: Optional[str] = None,
                           min_plies: int = 20) -> DatasetStats:

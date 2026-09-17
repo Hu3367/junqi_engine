@@ -24,6 +24,17 @@ constexpr int MAX_KILLERS = 2;
 constexpr int MAX_HISTORY = 100'000;
 constexpr int MAX_SEARCH_DEPTH = 64;
 
+// 受限 Star1 展开的「战术重要性」分档（下标 = RANK_VALS 规范序 SI..QI，即
+// 0=SI,1=JUN,2=SHI,3=LV,4=TUAN,5=YING,6=LIAN,7=PAI,8=GONG,9=ZHA,10=LEI,11=QI）。
+//
+// 受限展开原先取"剩余数量降序前 3"，而数量最多的身份恒为 连长/排长/工兵/地雷，
+// 司令/军长/炸弹（1~2 枚）几乎总落入长尾只做静态估值 —— 与该增强要解决的
+// "翻出敌大子被吃"盲区恰好相反（2026-09-16 实测）。
+//
+// ⚠ 必须与 junqi/search.py::_STAR1_IMPORTANCE 完全一致，
+//   有 `expert_star1_importance()` 自检入口 + 测试守卫。
+constexpr int STAR1_IMPORTANCE[12] = {5, 4, 3, 2, 2, 2, 1, 1, 1, 6, 1, 3};
+
 // 走法排序上下文（对应 _score_action 的 tt_move / killers / history 参数）
 struct OrderCtx {
     bool has_tt_move{false};

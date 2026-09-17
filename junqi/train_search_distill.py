@@ -18,11 +18,9 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import random
 import time
-from collections import Counter
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -40,37 +38,43 @@ DEFAULT_TEACHER_TEMPERATURE = 120.0
 
 # ---------------------------------------------------------------- 教师打标
 
-def _teacher_label_worker(task: tuple) -> List[Tuple[int, float]]:
-    """子进程教师打标：返回 [(action_index, score)]（走子方视角根节点搜索分）。"""
+def _teacher_label_worker(task: tuple) -> Tuple[List[Tuple[int, float]], bool]:
+    """子进程教师打标：返回 ([(action_index, score)], degraded)（走子方视角根节点搜索分）。"""
     from .ai import ExpertAgent
     state_json, depth, time_limit_ms, seed = task
     st = GameState.from_json(state_json)
     agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms), seed=seed)
-    scored = agent.choose_actions(st, topn=len(st.legal_actions()))
+    agent.engine.tt.clear()
+    scored, stats = agent.choose_actions(st, topn=len(st.legal_actions()), return_stats=True)
     out = []
     for a, s in scored:
         idx = action_to_index(a)
         if idx >= 0:
             out.append((idx, float(s)))
-    return out
+    return out, bool(stats.degraded)
 
 
 def teacher_soft_targets(state: GameState, depth: int = 3,
                          time_limit_ms: int = 300,
                          temperature: float = DEFAULT_TEACHER_TEMPERATURE,
                          seed: int = 2026,
-                         root_scores: Optional[List[Tuple[Action, float]]] = None
-                         ) -> Tuple[np.ndarray, int]:
+                         root_scores: Optional[List[Tuple[Action, float]]] = None,
+                         return_degraded: bool = False,
+                         degraded: bool = False
+                         ) -> Tuple[np.ndarray, int] | Tuple[np.ndarray, int, bool]:
     """单局面教师软分布：softmax(root_scores / T) 投影到全动作空间。
 
     返回 (targets [ACTION_SPACE_SIZE] float32, teacher_top1_index)。
+    若 return_degraded=True，额外返回 degraded: bool。
     根节点分数含终局 ±WIN_SCORE 时 softmax 自然饱和到制胜/防败动作。
     """
     from .ai import ExpertAgent
     if root_scores is None:
         agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms),
                             seed=seed)
-        scored = agent.choose_actions(state, topn=len(state.legal_actions()))
+        agent.engine.tt.clear()
+        scored, stats = agent.choose_actions(state, topn=len(state.legal_actions()), return_stats=True)
+        degraded = bool(stats.degraded)
     else:
         scored = root_scores
 
@@ -79,6 +83,8 @@ def teacher_soft_targets(state: GameState, depth: int = 3,
         # 无根节点评分（罕见）：均匀回退到合法动作
         mask = legal_action_mask(state)
         targets[mask] = 1.0 / max(int(mask.sum()), 1)
+        if return_degraded:
+            return targets, -1, degraded
         return targets, -1
 
     scores = np.array([min(max(s, -WIN_SCORE), WIN_SCORE) for _, s in scored],
@@ -90,8 +96,18 @@ def teacher_soft_targets(state: GameState, depth: int = 3,
         idx = action_to_index(a)
         if idx >= 0:
             targets[idx] = p
-    top1 = int(np.argmax([action_to_index(a) for a, _ in scored]))
-    return targets, int(np.argmax(targets)) if targets.sum() > 0 else top1
+
+    # 新增 3 修复：正确计算 top1 动作索引（若 targets 无质量则回退到 scored 首个最高分动作）
+    if targets.sum() > 0:
+        top1 = int(np.argmax(targets))
+    elif scored:
+        top1 = action_to_index(scored[0][0])
+    else:
+        top1 = -1
+
+    if return_degraded:
+        return targets, top1, degraded
+    return targets, top1
 
 
 def teacher_confidence(scored, min_spread: float = 0.0) -> float:
@@ -194,13 +210,15 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
     labels: List[Tuple[np.ndarray, int]] = []
     # 每样本训练权重（教师置信度过滤；min_spread<=0 时恒为 1）
     weights: List[float] = []
+    samples_degraded = 0
     if workers and workers > 1 and len(states) > 10:
         import multiprocessing as mp
         tasks = [(st.to_json(), depth, time_limit_ms, seed + i)
                  for i, st in enumerate(states)]
         with mp.Pool(processes=workers) as pool:
             results = pool.map(_teacher_label_worker, tasks)
-        for st, scored in zip(states, results):
+        samples_degraded = sum(1 for _, deg in results if deg)
+        for st, (scored, deg) in zip(states, results):
             targets = np.zeros(3650, dtype=np.float32)
             if scored:
                 scores = np.array([min(max(s, -WIN_SCORE), WIN_SCORE)
@@ -211,7 +229,7 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
                 for (idx, _), p in zip(scored, probs):
                     if idx >= 0:
                         targets[idx] = p
-                top1 = int(np.argmax(targets))
+                top1 = int(np.argmax(targets)) if targets.sum() > 0 else (scored[0][0] if scored else -1)
             else:
                 mask = legal_action_mask(st)
                 targets[mask] = 1.0 / max(int(mask.sum()), 1)
@@ -223,13 +241,21 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
         agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms),
                             seed=seed)
         for i, st in enumerate(states):
-            scored = agent.choose_actions(st, topn=len(st.legal_actions()))
+            # A3-1: 保证单进程与多进程冷 TT 行为一致
+            agent.engine.tt.clear()
+            scored, stats = agent.choose_actions(st, topn=len(st.legal_actions()), return_stats=True)
+            deg = bool(stats.degraded)
+            if deg:
+                samples_degraded += 1
             targets, top1 = teacher_soft_targets(
-                st, root_scores=scored, temperature=temperature)
+                st, root_scores=scored, temperature=temperature, degraded=deg)
             labels.append((targets, top1))
             weights.append(teacher_confidence(scored, tac_min_spread))
             if (i + 1) % 100 == 0:
                 print(f"[蒸馏] 教师打标进度 {i + 1}/{len(states)}")
+
+    print(f"[蒸馏] 教师打标完成: 有效局面 {len(states)}, 时限截断 (degraded) {samples_degraded} "
+          f"({samples_degraded / max(len(states), 1):.1%})")
 
     kept = sum(1 for w in weights if w > 0.0)
     if tac_min_spread > 0:
@@ -245,13 +271,13 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
     val_idx, train_idx = idx_all[:n_val], idx_all[n_val:]
 
     def _batch(indices):
-            xs = torch.from_numpy(np.stack([feats[i] for i in indices])).float().to(device)
-            ms = torch.from_numpy(np.stack([legal_action_mask(states[i])
-                                            for i in indices])).bool().to(device)
-            ts = torch.from_numpy(np.stack([labels[i][0] for i in indices])).float().to(device)
-            ws = torch.tensor([weights[i] for i in indices],
-                              dtype=torch.float32, device=device)
-            return xs, ms, ts, ws
+        xs = torch.from_numpy(np.stack([feats[i] for i in indices])).float().to(device)
+        ms = torch.from_numpy(np.stack([legal_action_mask(states[i])
+                                        for i in indices])).bool().to(device)
+        ts = torch.from_numpy(np.stack([labels[i][0] for i in indices])).float().to(device)
+        ws = torch.tensor([weights[i] for i in indices],
+                          dtype=torch.float32, device=device)
+        return xs, ms, ts, ws
 
     # 4. 仅训练 Policy 头（主干与价值头冻结）
     net = JunqiNet.load_from_file(base_model, device=device)
@@ -315,6 +341,7 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
 
     best_kl, best_sd = float("inf"), None
     for ep in range(1, epochs + 1):
+        net.eval()
         net.policy_head.train()
         rng.shuffle(train_idx)
         tot_loss, nb = 0.0, 0
@@ -353,6 +380,7 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
         "channels": net.in_conv[0].out_channels,
         "base_model": base_model,
         "distill_states": len(states),
+        "samples_degraded": samples_degraded,
         "teacher_depth": depth,
         "teacher_temperature": temperature,
         "anchor_weight": anchor_weight,
@@ -363,7 +391,8 @@ def train_search_distill(base_model: str = "models/bc_best.pt",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }, out_path)
     print(f"[蒸馏] 完成：最佳验证 KL={best_kl:.4f}，候选已保存 {out_path}（未触碰 best.pt）")
-    return {"states": len(states), "val_kl": best_kl, "out_path": out_path}
+    return {"states": len(states), "val_kl": best_kl, "out_path": out_path,
+            "samples_degraded": samples_degraded}
 
 
 def main():

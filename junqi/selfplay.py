@@ -153,7 +153,7 @@ def make_strategy(spec: str, seed=None,
         return AgentStrategy(depth=0, samples=6, temperature=25.0, seed=seed,
                              weights=weights)
     if spec.startswith("hybrid"):
-        depth = int(spec.replace("hybrid", "") or 2)
+        depth = int(spec.replace("hybrid", "") or 3)
         return HybridStrategy(depth=depth, model_path=model_path, weights=weights, device=device, seed=seed)
     if spec.startswith("expert"):
         depth = int(spec.replace("expert", "") or 2)

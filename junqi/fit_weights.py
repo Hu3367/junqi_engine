@@ -19,36 +19,49 @@ import random
 
 from .config import EvalWeights, RuleConfig
 from .replay import SPECIAL_EVENT, board_from_table, cell_rc, load_dir
-from .rules import COMPOSITION, NEIGHBORS, RANK_CN, Rank, battle, is_camp, is_hq
+from .rules import CAMPS, COMPOSITION, NEIGHBORS, RANK_CN, Rank, battle, is_camp, is_hq, other
 from .state import Action, GameState
 
 RANKS = [Rank.SI, Rank.JUN, Rank.SHI, Rank.LV, Rank.TUAN, Rank.YING,
-         Rank.LIAN, Rank.PAI, Rank.GONG, Rank.ZHA, Rank.LEI, Rank.QI]
+          Rank.LIAN, Rank.PAI, Rank.GONG, Rank.ZHA, Rank.LEI, Rank.QI]
 
+# ⚠ 不变式：本列表必须与 EvalWeights 的字段**一一对应**（`to_eval_weights` 按名字写回），
+# 且 `default_vector()` 必须落在 `_bounds()` 内、是 `_project()` 的**不动点**。
+# 三项都由 `tests/test_p1_advanced_enhancements.py` 守卫。
+#
+# `mobility` 曾被列在此处，但 `EvalWeights` 没有对应字段 ⇒ 拟合出的系数会被静默丢弃；
+# 更关键的是 evaluate_expert 的机动力项是**另一套定义**（含铁路 +1、排除行营内的敌子，
+# 且把"死子惩罚 −8/−4"直接并入 score），系数无法迁移。
+# 因此这里不列 mobility；要真正可调需先把两侧定义统一（见 docs/CHANGELOG 第十五批）。
 FEATURE_NAMES = [f"p_{r.name}" for r in RANKS] + [
-    "camp_occ", "camp_siege", "hq_locked", "flag_exposed",
-    "threat", "attack", "attack_camp", "flip_bias"]
+    "camp_occ", "camp_zone", "camp_siege", "hq_locked", "flag_exposed",
+    "mine_guard", "fortress", "hidden_tempo",
+    "threat", "attack", "attack_camp", "flip_bias"
+]
 
-# gain 类特征量纲大，预缩放保持梯度均衡
-FEATURE_SCALE = {**{f"p_{r.name}": 1.0 for r in RANKS},
-                 "camp_occ": 1.0, "camp_siege": 1.0, "hq_locked": 1.0,
-                 "flag_exposed": 1.0, "threat": 100.0, "attack": 100.0,
-                 "attack_camp": 100.0, "flip_bias": 1.0}
+# 特征量纲缩放字典
+FEATURE_SCALE = {
+    **{f"p_{r.name}": 1.0 for r in RANKS},
+    "camp_occ": 1.0, "camp_zone": 1.0, "camp_siege": 1.0, "hq_locked": 1.0,
+    "flag_exposed": 1.0, "mine_guard": 1.0,
+    "fortress": 10.0, "hidden_tempo": 1.0,
+    "threat": 100.0, "attack": 100.0, "attack_camp": 100.0, "flip_bias": 1.0
+}
 
 CAPTURE_UNIT = 50.0     # 威胁/机会特征的单位折算
 
 
-def _capture_pressure(state, attackers, target_color) -> float:
+def _capture_pressure(state: GameState, attackers: list[tuple[tuple[int, int], Piece]], target_color: str) -> float:
     """attackers 侧对相邻敌明子（非旗）的可得价值总量（同尽记半价）。"""
     total = 0.0
     for pos, m in attackers:
-        if m.rank == Rank.QI:
+        if m.rank == Rank.QI or m.rank == Rank.LEI:
             continue
         for np_ in NEIGHBORS[pos]:
             if is_camp(np_):
                 continue
             e = state.board.get(np_)
-            if e is None or e.color != target_color or e.rank == Rank.QI:
+            if e is None or not e.revealed or e.color != target_color or e.rank == Rank.QI:
                 continue
             res = battle(m.rank, e.rank)
             if res == "attacker_wins":
@@ -58,82 +71,161 @@ def _capture_pressure(state, attackers, target_color) -> float:
     return total
 
 
-def features(state: GameState, seat: int) -> dict:
-    """全知口径线性特征（seat 视角，正=有利）。与 evaluate() 项一一对应。"""
-    my = state.seat_color[seat]
-    opp = "b" if my == "r" else "r"
-    f = {name: 0.0 for name in FEATURE_NAMES}
-    my_flag = opp_flag = None
-    mine, theirs = [], []
-    for pos, pc in state.board.items():
-        side = 1.0 if pc.color == my else -1.0
-        f[f"p_{pc.rank.name}"] += side
-        (mine if side > 0 else theirs).append((pos, pc))
-        if pc.rank == Rank.QI:
-            if side > 0:
-                my_flag = pos
-            else:
-                opp_flag = pos
-        if is_camp(pos):
-            f["camp_occ"] += side
-            for np_ in NEIGHBORS[pos]:
-                e = state.board.get(np_)
-                if e is not None and e.color != pc.color:
-                    f["camp_siege"] += side
-        if is_hq(pos) and pc.rank != Rank.QI:
-            f["hq_locked"] += side
+def features(state: GameState, seat: int) -> dict[str, float]:
+    """严格遵循公共信息边界的专家特征（seat 视角，正=有利）。
 
-    def can_take(flag_color, atk):
+    符合 AGENTS.md 与基线方案硬约束：
+    1. 首翻定色前完全对称（特征严格全为 0.0）；
+    2. 绝不遍历或窥探暗子的真实身份与颜色；
+    3. 暗子仅以公共剩余池（remaining_types）的期望份额计入物质分；
+    4. 对齐 evaluate_expert 的核心几何与战术特征。
+    """
+    f = {name: 0.0 for name in FEATURE_NAMES}
+    my = state.seat_color.get(seat)
+    if my is None or not state.first_flip_done:
+        return f
+
+    opp = other(my)
+
+    # 1. 物质项（明子 + 公共暗子池期望份额）
+    # 明子贡献
+    revealed_mine: list[tuple[tuple[int, int], Piece]] = []
+    revealed_opp: list[tuple[tuple[int, int], Piece]] = []
+    for pos, pc in state.board.items():
+        if pc.revealed:
+            side = 1.0 if pc.color == my else -1.0
+            f[f"p_{pc.rank.name}"] += side
+            if pc.color == my:
+                revealed_mine.append((pos, pc))
+            else:
+                revealed_opp.append((pos, pc))
+
+    # 公共暗子池期望份额贡献 (精确摊派，无透视)
+    rem = state.remaining_types()
+    for (clr, rk), cnt in rem.items():
+        side = 1.0 if clr == my else -1.0
+        f[f"p_{rk.name}"] += side * cnt
+
+    # 2. 行营控制与营内围杀
+    for pos, pc in revealed_mine:
+        if is_camp(pos):
+            f["camp_occ"] += 1.0
+            for np in NEIGHBORS[pos]:
+                e = state.board.get(np)
+                if e is not None and e.revealed and e.color == opp and battle(pc.rank, e.rank) in ("attacker_wins", "both_die"):
+                    f["camp_siege"] += 1.0
+        if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
+            f["hq_locked"] += 1.0
+
+    for pos, pc in revealed_opp:
+        if is_camp(pos):
+            f["camp_occ"] -= 1.0
+            for np in NEIGHBORS[pos]:
+                m = state.board.get(np)
+                if m is not None and m.revealed and m.color == my and battle(pc.rank, m.rank) in ("attacker_wins", "both_die"):
+                    f["camp_siege"] -= 1.0
+        if is_hq(pos) and pc.rank != Rank.QI and state.cfg.hq_locks_pieces:
+            f["hq_locked"] -= 1.0
+
+    # 3. 行营势力范围 (贴近空行营的活动明子净差)
+    zone_net = 0.0
+    for cp in CAMPS:
+        if cp in state.board:
+            continue
+        for np_ in NEIGHBORS[cp]:
+            e = state.board.get(np_)
+            if e is not None and e.revealed and e.rank not in (Rank.LEI, Rank.QI):
+                zone_net += 1.0 if e.color == my else -1.0
+    f["camp_zone"] = zone_net
+
+    # 4. 军旗暴露与地雷守护
+    my_flag = next(((p, pc) for p, pc in revealed_mine if pc.rank == Rank.QI), None)
+    opp_flag = next(((p, pc) for p, pc in revealed_opp if pc.rank == Rank.QI), None)
+
+    def can_take(flag_color: str, atk: Rank) -> bool:
         if atk == Rank.LEI:
             return False
         if state.cfg.flag_gong_only and atk != Rank.GONG:
             return False
         if state.cfg.flag_needs_mines_cleared:
-            mines_left = COMPOSITION[Rank.LEI] - sum(
-                1 for p_, pc_ in state.board.items()
-                if pc_.color == flag_color and pc_.rank == Rank.LEI)
+            mines_left = COMPOSITION[Rank.LEI] - sum(1 for d in state.dead if d.color == flag_color and d.rank == Rank.LEI)
             if mines_left > 0:
                 return False
         return True
 
-    def threatened(flag_pos, flag_color, attackers):
-        return any(flag_pos in NEIGHBORS[ap] and can_take(flag_color, e.rank)
-                   for ap, e in attackers)
-
-    if my_flag and threatened(my_flag, my, theirs):
+    if my_flag and any(my_flag[0] in NEIGHBORS[ap] and can_take(my, e.rank) for ap, e in revealed_opp):
         f["flag_exposed"] -= 1.0
-    if opp_flag and threatened(opp_flag, opp, mine):
+    if opp_flag and any(opp_flag[0] in NEIGHBORS[ap] and can_take(opp, m.rank) for ap, m in revealed_mine):
         f["flag_exposed"] += 1.0
 
-    # 威胁（敌子可吃我方，负向）与机会（我方可吃敌子，分营内/营外发起）
-    f["threat"] = -_capture_pressure(state, theirs, my)
-    f["attack"] = _capture_pressure(
-        state, [(p, pc) for p, pc in mine if not is_camp(p)], opp)
-    f["attack_camp"] = _capture_pressure(
-        state, [(p, pc) for p, pc in mine if is_camp(p)], opp)
+    if my_flag:
+        f["mine_guard"] += sum(1.0 for pos, pc in revealed_mine if pc.rank == Rank.LEI and pos in NEIGHBORS[my_flag[0]])
+    if opp_flag:
+        f["mine_guard"] -= sum(1.0 for pos, pc in revealed_opp if pc.rank == Rank.LEI and pos in NEIGHBORS[opp_flag[0]])
+
+    # 5. 死区势能差 (若有军旗暴露)
+    if my_flag or opp_flag:
+        from .analysis import fortress_score
+        fs_my = fortress_score(state, seat) if my_flag else 0.0
+        fs_opp = fortress_score(state, 1 - seat) if opp_flag else 0.0
+        f["fortress"] = fs_my - fs_opp
+
+    # 6. 暗子时差 (活动明子数净差)
+    my_active = sum(1 for p, pc in revealed_mine if pc.rank not in (Rank.LEI, Rank.QI))
+    opp_active = sum(1 for p, pc in revealed_opp if pc.rank not in (Rank.LEI, Rank.QI))
+    f["hidden_tempo"] = float(my_active - opp_active)
+
+    # 7. 战术威胁与机会
+    f["threat"] = -_capture_pressure(state, revealed_opp, my)
+    f["attack"] = _capture_pressure(state, [(p, pc) for p, pc in revealed_mine if not is_camp(p)], opp)
+    f["attack_camp"] = _capture_pressure(state, [(p, pc) for p, pc in revealed_mine if is_camp(p)], opp)
+
     return f
 
 
-def default_vector() -> list:
-    """现有 EvalWeights 默认值作为 warm start（与特征顺序对齐）。"""
+def default_vector() -> list[float]:
+    """现有 EvalWeights 默认值作为 warm start（按**特征名**取值，不用下标）。
+
+    不变式（有测试守卫）：
+    1. `default_vector()` 必须落在 `_bounds()` 内 ⇒ 是 `_project()` 的**不动点**；
+    2. `to_eval_weights(default_vector())` 必须逐字段等于 `EvalWeights()`。
+    """
     w = EvalWeights()
-    vec = [float(w.piece[r]) for r in RANKS]
-    vec += [w.camp_occ, w.camp_siege, w.hq_locked, w.flag_exposed,
-            w.threat * 100.0, w.attack * 100.0, w.attack_camp * 100.0, 0.0]
-    return vec
+    f: dict[str, float] = {f"p_{r.name}": float(w.piece[r]) for r in RANKS}
+    f.update({
+        "camp_occ": w.camp_occ,
+        "camp_zone": w.camp_zone,
+        "camp_siege": w.camp_siege,
+        "hq_locked": w.hq_locked,
+        "flag_exposed": w.flag_exposed,
+        "mine_guard": w.mine_flag_guard_bonus / 10.0,
+        "fortress": w.fortress / 10.0,
+        "hidden_tempo": w.hidden_tempo,
+        "threat": w.threat * 100.0,
+        "attack": w.attack * 100.0,
+        "attack_camp": w.attack_camp * 100.0,
+        "flip_bias": 0.0,   # 翻子整体倾向：仅分析用，不写回 EvalWeights
+    })
+    return [f[name] for name in FEATURE_NAMES]
 
 
-def to_eval_weights(vec: list) -> EvalWeights:
+def to_eval_weights(vec: list[float]) -> EvalWeights:
+    """把优化参数向量映射回 EvalWeights 对象（按特征名查表，杜绝下标错位）。"""
+    v = dict(zip(FEATURE_NAMES, vec))
     w = EvalWeights()
-    for i, r in enumerate(RANKS):
-        w.piece[r] = max(1.0, round(vec[i], 1))
-    w.camp_occ = round(vec[12], 2)
-    w.camp_siege = round(vec[13], 2)
-    w.hq_locked = round(vec[14], 2)
-    w.flag_exposed = round(vec[15], 2)
-    w.threat = round(vec[16] / 100.0, 4)
-    w.attack = round(vec[17] / 100.0, 4)
-    w.attack_camp = round(vec[18] / 100.0, 4)
+    for r in RANKS:
+        w.piece[r] = max(1.0, round(v[f"p_{r.name}"], 1))
+    w.camp_occ = round(v["camp_occ"], 2)
+    w.camp_zone = round(v["camp_zone"], 2)
+    w.camp_siege = round(v["camp_siege"], 2)
+    w.hq_locked = round(v["hq_locked"], 2)
+    w.flag_exposed = round(v["flag_exposed"], 2)
+    w.mine_flag_guard_bonus = round(v["mine_guard"] * 10.0, 2)
+    w.fortress = round(v["fortress"] * 10.0, 2)
+    w.hidden_tempo = round(v["hidden_tempo"], 2)
+    w.threat = round(v["threat"] / 100.0, 4)
+    w.attack = round(v["attack"] / 100.0, 4)
+    w.attack_camp = round(v["attack_camp"] / 100.0, 4)
     return w
 
 
@@ -182,24 +274,39 @@ def score_of(w, cands):
     return [sum(wv * fv for wv, fv in zip(w, cand)) for cand in cands]
 
 
-# 语义符号约束：(特征索引, 下界, 上界)——学到的权重必须落在合理区域
-def _bounds():
-    b = {}
-    for i, r in enumerate(RANKS):
-        b[i] = (1.0, 300.0)
-    b[12] = (0.0, 60.0)      # camp_occ ≥0
-    b[13] = (0.0, 40.0)      # camp_siege ≥0（与 attack_camp 部分共线，防符号翻转）
-    b[14] = (-60.0, 0.0)     # hq_locked ≤0
-    b[15] = (0.0, 200.0)     # flag_exposed ≥0
-    b[16] = (0.0, 2.0)       # threat ≥0
-    b[17] = (0.0, 2.0)       # attack ≥0
-    b[18] = (0.0, 5.0)       # attack_camp ≥0
-    b[19] = (-20.0, 20.0)    # flip_bias 自由
+# 语义符号约束：按**特征名**给出 (下界, 上界)，区间表达在**向量单位**
+# （= 特征原始值 / FEATURE_SCALE，即 train()/_project() 实际作用的单位）。
+#
+# ⚠ 曾用写死下标表达这些约束，`FEATURE_NAMES` 扩容后约束被施加到**错误的特征**上：
+#   flag_exposed 被夹到 2（应为 0~200）、camp_siege / hq_locked 符号反转、
+#   mine_guard 被夹到 2，而 threat / attack / attack_camp 变成完全无界。
+#   实测一次 `_project()` 就把 warm start 毁掉 ⇒ 一律按名字索引。
+_BOUND_BY_NAME: dict[str, tuple[float, float]] = {
+    "camp_occ": (0.0, 60.0),        # 占营为正贡献
+    "camp_zone": (-20.0, 40.0),     # 行营势力范围净差，可正可负
+    "camp_siege": (0.0, 40.0),      # ≥0（与 attack_camp 部分共线，防符号翻转）
+    "hq_locked": (-60.0, 0.0),      # ≤0（大子被困大本营是坏形）
+    "flag_exposed": (0.0, 200.0),   # ≥0（特征自身已带符号，权重为正）
+    "mine_guard": (0.0, 40.0),      # ≥0（地雷护旗为正贡献）
+    "fortress": (0.0, 30.0),        # ≥0（死区势能差，越大越好）
+    "hidden_tempo": (0.0, 30.0),    # ≥0（活动明子多者占优）
+    "threat": (0.0, 60.0),          # ≥0（特征为负向量）
+    "attack": (0.0, 200.0),         # ≥0
+    "attack_camp": (0.0, 200.0),    # ≥0
+    "flip_bias": (-20.0, 20.0),     # 自由（翻子整体倾向）
+}
+
+
+def _bounds() -> dict[int, tuple[float, float]]:
+    b: dict[int, tuple[float, float]] = {i: (1.0, 300.0) for i in range(len(RANKS))}
+    for name, rng in _BOUND_BY_NAME.items():
+        b[FEATURE_NAMES.index(name)] = rng
     return b
 
 
 def _project(w):
-    for j, (lo, hi) in _bounds().items():
+    all_bounds = _bounds()
+    for j, (lo, hi) in all_bounds.items():
         w[j] = min(hi, max(lo, w[j]))
     return w
 

@@ -1,274 +1,91 @@
-# junqi_engine 项目长期记忆（跨会话约定）
+# junqi_engine 长期记忆（决策结论与陷阱）
 
-## 环境与启动（最容易踩坑）
+> 详细历史见 `docs/CHANGELOG.md`、`docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md`、`.workbuddy/memory/<日期>.md`。
+> 本文件只留**决策相关的结论与陷阱**。
 
-- **虚拟环境不在工程内**：位于同级 `E:\Local code\军棋\venv_junqi_engine`（2026-09-15 移出，
-  原 `junqi_engine/venv/`）。Python 3.11.9 + torch 2.5.1+cu121 + pytest 9.1.1。
-  `venv/` 在 `.gitignore` 内，移动不影响版本控制。
-- **激活虚拟环境**：`.\activate_env.ps1`（PowerShell）或 `activate_env.cmd`（cmd）——
-  根目录脚本自动定位，不必记 `..`。手写路径注意是 **`..\venv_junqi_engine\...`**
-  （上一级，不是 `.\`）；激活后脚本会做 `import torch` 依赖自检。
-- **一律用工程根 `run.bat <子命令>` 启动**（自动定位解释器，无需先激活）：
-  `run.bat test` / `run.bat gui` / `run.bat train_rl --epochs 5 --games 24`。
-  等价完整路径：`../venv_junqi_engine/Scripts/python.exe -m junqi <子命令>`。
-- **不要用 PATH 上的 `python`**：PATH 上是系统 Python（3.13/3.14，**无 torch/numpy**）。
-  用它跑 `python -m junqi ...` 会在包导入阶段失败（`junqi/__init__.py` 经 ai/hybrid_engine
-  连带 `import torch`）。现在会给出中文可操作提示，但根本解法是用 run.bat。
-- **⚠️ 残留 `(venv)` 激活陷阱**：venv 被移动/删除后，旧会话仍显示 `(venv)`，
-  但 PATH 首项指向已失效目录 → `python` 静默落到别的解释器 → 报 `No module named 'torch'`。
-  处置：`deactivate` 或**重开终端**，再用 `activate_env.ps1` 激活。
-  `activate_env.*` 已内置检测与清理。
-- **⚠️ PowerShell 5.1 编码陷阱**：PS 5.1 对**无 BOM** 的 UTF-8 `.ps1` 按本地编码（GBK）读取，
-  中文注释会变乱码并抛出"缺少右 }"这类假语法错误。
-  → **仓库内任何含非 ASCII 的 `.ps1` 必须带 UTF-8 BOM**（已有测试守卫）。
-- **本 bash 环境 shim 已损坏**：`dirname: command not found`、`cd: null directory`；
-  且 **shell 里带反斜杠的 Python `-c` 字符串会被吞掉**（会让 `str.count()` 恒为 0）。
-  → 含路径的脚本请写成文件再执行；路径用正斜杠或 `chr(92)` 拼接。
-  → coreutils（ls/grep/head/tail/wc）不可用，文件/内容检索用 Read/Glob/Grep 工具或 Python。
-  → PowerShell 工具的 stdout 不落回上下文，验证 PS 脚本要把输出重定向到文件再读。
-- **Edit 工具会模糊匹配并插入错误缩进**（2026-09-15 踩过）：`old_string` 缩进写少 4 个空格
-  仍会"匹配成功"，然后把整段按**错的**缩进写回 → `IndentationError`。
-  → **每次 Edit 后读回确认缩进**，尤其复用旧代码块当锚点时。
-  → 改 `junqi/selfplay.py::play_game` 时注意 `s0`/`s1` 已是**策略对象**，局部变量别重名。
-- **⚠️ 重建 C++ 扩展一律用 `python scripts/build_cpp.py`**（`--clean` 全量），
-  **不要用 `pip install -e .`**：本机 `reg.exe` 被安全策略拦截，setuptools 靠注册表
-  定位 Windows SDK 会失败 → 先报 `C1083: 无法打开包括文件 'io.h'`（缺 ucrt 头），
-  再报 `LNK1158: cannot run 'rc.exe'`。build_cpp.py 自动探测 SDK/MSVC/rc.exe
-  并注入 `INCLUDE`/`LIB`/`PATH`（distutils 会读这两个环境变量）。
+## 环境
+- venv 在工程外 `E:\Local code\军棋\venv_junqi_engine`（Py3.11+torch2.5.1）。**别用 PATH 上的 python**，一律 `run.bat <子命令>`。
+- 重建 C++ 扩展用 `python scripts/build_cpp.py --clean`，**不要 `pip install -e .`**（reg.exe 被拦 → io.h/rc.exe 找不到）。
+- 含非 ASCII 的 `.ps1` 必须带 UTF-8 BOM（PS5.1 否则按 GBK 读 → 乱码+假语法错误）。
+- 本 bash 环境 shim 损坏（dirname/cp/ls 不可用、PowerShell stdout 不回传）⇒ 脚本写成文件再跑。
+- Edit 工具会模糊匹配并插错缩进 ⇒ 每次 Edit 后读回确认。
 
-## C++ 移植（切片 1 已交付，2026-09-15）
+## C++ 移植（三切片已收官）
+- 边界：C++ 持有 `evaluate_expert`/`legal_actions`/`_score_action`/`_qsearch`/`_negamax`/`_evaluate_chance_flip`；迭代加深根循环与根语义（degraded/avoid/root_scores/_is_tactical）留在 Python。开关 `use_cpp_eval/qsearch/search` 默认全开、异常永久降级。提速 19~43×。
+- `src_cpp/src/eval_expert_tables.cpp` 是 `scripts/gen_expert_tables.py` 的生成物；改 Python 几何常量必须重跑（`--check` 守卫）。⚠️ `get_road_neighbors()` 与 Python `NEIGHBORS` 集合一致但**顺序不同**。
+- 热路径只用 `core_bridge.encode_state_blob`（紧凑 blob）。`state_to_cpp` ≈50µs 不可用于热路径。**blob 必须传 winner**（None→-2），漏传会把已终局子状态当未终局。
+- ⚠️ pybind11 基类须先注册（ExpertQSearch 先于 ExpertSearch），否则 import 失败 → HAS_CPP_CORE=False → C++ 静默退回 Python、等价性测试假通过 ⇒ **验证脚本必须 `assert HAS_CPP_CORE`**。
+- C++ 侧刻意不做 QTT；`tests/test_p1_qsearch_tt.py` 须**同时**关 use_cpp_qsearch 与 use_cpp_search 才覆盖 Python `_qsearch`。
+- ⚠️ 新增搜索分支必须与同函数既有约定逐条对齐：P1.A 长尾分支曾漏负号 → (ply=1, depth≥3) 10/10 分歧、最大 257.6 分。
+- ⚠️ 等价性契约边界：单节点语义（子节点用全新引擎）逐位一致；但 depth≥3 子树可差 O(10) 分（两侧 zobrist 键独立 ⇒ TT 碰撞/淘汰模式独立）。契约为 `depth≤2 逐位一致 + 任意深度决策等价`，由 `tests/test_p4_cpp_search.py::TestKnownZobristResidue` 固化；彻底对齐需把 C++ zobrist 改为 Python 生成（约 3000 uint64，**未做**）。任何改变递归层次/入口的改动后必须重跑 ply×depth 矩阵（`scratch/probe_review_clean_ab.py`）。
+- ⚠️ 翻棋排序打分两侧不等（C++ `_score_action` FLIP 分支少 `apk_flip_bonus`）。"走法顺序不影响 minimax 值"的旧注释在 TT+PVS 下**不成立**。
 
-- 计划与验收见 `docs/05-ExecutionPlans/CPP_EXPERT_ENGINE_PORT_PLAN.md`；
-  CHANGELOG「第十二批」有完整实测数据。状态：切片 1 完成，切片 2/3 待决策。
-- `evaluate_expert` + `fortress_score` + `is_dead_draw` 已移植到
-  `src_cpp/src/eval_expert.cpp`；残局单步 4236→1225ms（3.46×），估值 5.8~9.0×。
-  开关 `ExpertSearchEngine(use_cpp_eval=...)`，默认开，异常自动永久降级回 Python。
-- **顺序敏感常量表是生成物**：`src_cpp/src/eval_expert_tables.cpp` 由
-  `scripts/gen_expert_tables.py` 从 Python 真源生成（NEIGHBORS 的 set 迭代序、
-  `sorted(CAMPS, key=中营优先)` 的 frozenset 迭代序）。**改了 Python 端几何常量必须重跑
-  生成器**，`--check` 会校验是否过期（有测试守卫）。
-  ⚠️ 别复用 `src_cpp` 里既有的 `get_road_neighbors()` —— 它按 (上,左,下,右) 构造，
-  **顺序与 Python NEIGHBORS 不同**（(0,1)：C++ [0,6,2] vs Python [0,2,6]），
-  而 `my_reach[0]` 取首元素 ⇒ 是语义差异不是浮点误差。
-- **阵亡子必须显式序列化，不可由棋盘反推**：`_evaluate_chance_flip` 的子状态会替换
-  暗子身份但 dead 不变，`board ∪ dead = 完整编制` 不变式**不成立**（实测 12 次派生为负）。
-  有测试 `test_dead_counts_are_not_derivable_from_board` 固定此事实。
-- **桥接成本实测（修正了原计划预估）**：C++ 计算 2.4~3.8 µs（优于原估 5 µs），
-  序列化 + pybind 编组 6.0~6.4 µs（原估 1~2 µs，慢 3 倍）。
-  ⇒ 别再花力气做序列化微优化，收益在切片 2/3（整棵子树搬进 C++ 后该开销归零）。
-- 浮点顺序敏感度已量化：idx 升序 vs board dict 序，max_abs 差 **5.684e-14**
-  （default）/ 2.274e-13（apk），比 1e-9 阈值低 4 个量级 ⇒ 无需传迭代序。
-  残留：节点数可能差 <2%（并列比较翻转），决策不变。
+## "改动是否影响引擎"必须 A/B 实测
+- 工具 `scripts/ab_search_compare.py --ref-commit <旧提交>`。读代码推断会得出**相反**结论。
+- 改 `search.py` 后复跑 `scratch/perf_baseline.py verify`（capture 须在改动前做）；要**同时**比节点数与决策，只看 max_depth 会误判。
+- 有意改变搜索行为后必须**立刻重新 capture**，否则守卫只制造误报。
+- 证明"非本次引入"只能用 HEAD 对照（工程只读复制到 `E:/Local code/军棋/_review_base` 覆写后重编），**不要 stash/pop 用户工作区**。
 
-## C++ 移植（切片 2 已交付，2026-09-15）
+## 评测门控纪律
+- 先证明靶场有分辨力：同模型空测应恰 0.5000 且决定率不为 0。
+- `gate --init-set` 必需（随机发牌/中盘开局下自对局 100% 循环判和；`eval_sets/endgame.jsonl` 把决定率拉到 30%）。
+- 多重比较：单次 60 局的 p 不能单独下结论；分辨 0.05 得分率差需 ~1500 局。
+- 指标可比性：`val_KL` 跨 T 不可比；跨轮用 `val_teacher_top1`/`val_base_top1`/`eval_bc`。
+- 蒸馏前先验证教师前提：`gate --a expert3 --b nn --model-b models/best.pt`（实测 40 局零负、0.7125）。
+- 镜像配对对确定性策略无区分力（得分率恒 0.5000），分辨力用 `paired_delta_test`。`mirror_state` 只翻位置+交换座位标签，**不换颜色**。
 
-- 残局 4250 → 245ms（**17.36×**，切片 1 后为 1228ms）；中盘 9.84×/7.74×；开局 3.60×
-  （qnodes=0，其 424ms 全在机会节点/`_negamax` ⇒ 切片 3 目标）。
-  开关 `ExpertSearchEngine(use_cpp_qsearch=...)`，默认开。
-- **走法顺序不必对齐**（重要简化）：探针 300 局面 → 集合不一致 **0**、顺序不一致 269
-  （Python 铁路走法返回 `set`，迭代序由 tuple 哈希决定）。alpha-beta **返回值与遍历
-  顺序无关**，只需集合一致 ⇒ 不必改 Python 侧 `legal_actions`。
-- **C++ 侧刻意不实现 QTT**：纯缓存，µs 级节点下收益为负。代价 `qnodes` 更高
-  （36721 vs 25780），有测试固定该事实防误判回归。`tests/test_p1_qsearch_tt.py`
-  已改为显式 `use_cpp_qsearch=False` 继续覆盖 Python 侧 QTT。
-- **`JunqiBoard::apply` 与 Python `GameState.apply` 有差异**：BOTH_DIE 撞军旗时 Python
-  判攻方胜，C++ 未判。切片 2 用独立的 `apply_expert()` 对齐，**没改 board.cpp**（会影响 APK 引擎）。
-- **热路径跨语言必须用单个紧凑 blob**（`core_bridge.encode_state_blob`：
-  60B 棋盘 + 阵亡子 + 18B 头 `<7hi`）。`state_to_cpp` 要 50 次 set_piece ≈ 50µs，
-  **绝不能用在热路径**。
-- **工作量校准**：计划估 150 行、实际 ~570 行（还依赖 `apply` 与 235 行的
-  `_score_action`）。**后续切片按 3~4× 倍率估算。**
+## P2 搜索蒸馏：已证伪，停止调参
+四项干预（T 120→20、基座锚点、教师置信度过滤、修靶场）让中间指标单调改善（人类 top1 0.204→0.408、基座 0.529），但对局强度无稳健提升（门控 0.46~0.57，CI ±0.12）。原因：① 教师优势来自搜索深度，单次前向 Policy 表达不了；② C++ 提速 19~43× 反使直接跑搜索更划算；③ 蒸馏是"用人类模仿换搜索模仿"，无净收益。**建议直接加深 hybrid 搜索（无需训练），不要再用扫温度/锚点系数。** 相关代码已落地且默认关闭：`--anchor-weight`(0)、`--tac-min-spread`(0)、`gate --init-set`、`val_base_top1`。
 
-## C++ 移植（切片 3 已交付，2026-09-16 —— 移植收官）
+## SearchStats.degraded
+`time_limit_ms>0` 的调用方**应先查 `stats.degraded`**。True ⇒ score 是真实值**下界**（仍是合法决策，别丢弃）、`root_scores` 被截断、未搜完的层只写 `FLAG_LOWER_BOUND`（绝不写 EXACT）、本层零动作完成时不写 TT 不记 `max_depth`。`self.stopped`（子搜索超时）是另一条路径：整层作废。
+**⚠️ 生产链路仍无消费者**：`ExpertAgent.choose_actions` 不暴露 stats ⇒ 蒸馏教师把**截断**的
+`root_scores` 全量 softmax 重归一化（把概率给"恰好搜到的动作"）、价值伪标签把下界当精确分。
+`search.py:985/1168-1170` 两处注释都要求消费方查 degraded，实际无人查。
 
-- **形态是"混合边界"（重要）**：C++ 拥有 `_negamax`（TT/PVS/路径重复/杀手历史）
-  与 `_evaluate_chance_flip`（Star1 + 解析期望）；**迭代加深根循环留在 Python**。
-  理由：`degraded`/`avoid`/`exact_root_scores`/`root_scores`/`_is_tactical`
-  语义最易错，原地复用比移植划算。实测只花 ~430 行（预估 1500~2000），
-  **这一招同时省了工作量与风险**。
-  开关 `ExpertSearchEngine(use_cpp_search=...)`，默认开。
-- 性能：开局 **1542→35ms（43.70×）**、中盘 29.77×、midgame2 31.99×、
-  残局 4194→221ms（18.98×）。收益集中在开局/中盘（残局早被切片 2 吃掉）。
-- **⚠ blob 必须传 `winner`**（`<8hi>` 头部，None→-2）。漏传会让 C++ 把**已终局**
-  子状态当未终局：一步扛旗被估成 350 分。切片 2 不暴露（其入口状态必非终局），
-  切片 3 的 `negamax_blob` 直收 Python `apply` 子状态才引爆。
-- **⚠ pybind11 要求基类先注册**（`ExpertQSearch` 必须在 `ExpertSearch` 前）。
-  否则 `import junqi_core` 失败 → `HAS_CPP_CORE=False` → **C++ 路径静默全退回
-  Python，等价性测试假通过**。⇒ **验证脚本必须 `assert HAS_CPP_CORE`**。
-- 验证：子树直接比对逐位一致；`perf_baseline verify --cpp` EQUIVALENT；
-  全量 534 passed / 3 skipped。`test_p1_qsearch_tt.py` 需**同时**关
-  `use_cpp_qsearch` 与 `use_cpp_search` 才能覆盖 Python `_qsearch`。
-- **不再搬 IDS 根循环**（收益有限、风险高），除非出现新瓶颈证据。
+## 蒸馏/克隆链路的已定证陷阱（2026-09-17 审查，详见 `reviews/CODE_REVIEW_P2_DISTILL_2026-09-17.md`）
 
-## 评测门控使用纪律（2026-09-16 血的教训，务必先读）
+- **⚠️ `requires_grad=False` 不等于冻结**：BatchNorm 的 `running_mean/var` 在 `training=True`
+  时**无条件更新**。`train_value_head_only` 用 `net.train()` ⇒ 主干/策略头 BN 统计被改写
+  （实测 `policy_head.1.running_mean` Δ=0.455，而权重 Δ=0），策略输出分布随之漂移
+  ⇒ "冻结主干与策略头"的承诺不成立。**正确写法**（同文件另一处）：`net.eval()` +
+  `net.value_head.train()`。改任何"冻结后训练某头"的代码前先查这一点。
+- **⚠️ `seed` 在搜索链路上是死参数**：`ExpertSearchEngine.rng`（`search.py:161`）与
+  `ExpertAgent.rng`（`ai.py:298`）全仓**只赋值、从不读取** ⇒ 专家搜索完全确定性。
+  `--seed` 只影响**局面采样**，不影响教师打分。别用它论证可复现性。
+- **⚠️ 教师打标 serial≠mp**：serial 复用一个 agent（TT 跨轮保留、2^18 条目），
+  mp 每 task 新建 ⇒ TT 淘汰模式依赖局面顺序 ⇒ 同 seed 下 `--workers 0` 与 `>1` 教师分布不同。
+  要等价需**逐局面 `tt.clear()`**（与"单节点等价性＝全新引擎"口径一致）。
+- **W/D/L 码表散落 4 份**（`dataset.py:69`、`train_bc.py:68/203`、`eval_bc.py:78`），后 3 处
+  **不可达**（`__getitem__` 恒返 7 元组 ⇒ `len(batch_data)==7` 恒真）。违反"唯一真源"硬约束。
+- **`train_bc`/`eval_bc` 绕过 `check_p1_version`**（走 `NpzReplayDataset` 裸 `np.load`；
+  该守卫只有 `load_p1_arrays` 一个调用点）⇒ 可静默在 code-24 口径不同的旧数据集上训练。
+- **`train_value_distill` 两分支回归目标量纲不一致**：预打标用真实 `expert_score`
+  ⇒ `tanh(1e6/600)=1.0`；采样分支写死 `±600.0` ⇒ `tanh(1)=0.7616`，差 **0.2384**，
+  系统性压低价值头置信度（`600.0` 像是把 `SCORE_SCALE` 当成了分数）。
+- **实测否定的优化点（勿重复劳动）**：`_batch` 每批重算 `legal_action_mask` 实测仅
+  **0.040ms/次**（1200×6 epoch ≈ 0.3s），相对教师打标（≈6 min）可忽略，**不要优化**。
 
-- **任何"A 比 B 强/弱"的结论，先证明靶场有分辨力**：跑**同模型空测**，
-  应恰好 **0.5000** 且**决定率不为 0**。曾因忽略此步，用 100% 循环判和的
-  低分辨率靶场得出"显著更弱"，实验重做后被推翻。
-- **`gate --init-set` 是必需的**（2026-09-16 新增）：随机发牌或中盘开局下
-  `hybrid2` 自对局 **100% 循环判和**（胜负口径零分辨力）；
-  只有 **`eval_sets/endgame.jsonl`** 能把决定率拉到 **30%**。
-- **多重比较**：单次 60 局的 marginal p（0.01~0.05）不能单独下结论。
-  要分辨 0.05 的得分率差，量级上需 **~1500 局**。
-- **指标可比性**：`val_KL` 跨 T 不可比（目标分布不同），
-  开启置信度过滤后也不可跨轮比（验证集含被置零样本）；
-  跨轮请用 `val_teacher_top1` / `val_base_top1` / `eval_bc`。
-- **蒸馏前先验证前提**：教师是否真的强于学生？`gate --a expert3 --b nn
-  --model-b models/best.pt` 实测教师 **40 局零负、得分率 0.7125** ⇒ 前提成立。
-  以后任何蒸馏/自博弈改进都应先做这一步。
+## 训练产物状态
+- 复现：`python scripts/audit_artifacts.py --probe`。
+- `models/best.pt` = `value_distilled_v2.pt`（唯一健康 Value 基座 0.735/0.288）；原 best 与 `models/pool/bc_best.pt` 逐位相同（Value 头退化：Draw 恒 0）。三个作废经验池与冒烟池已删，`datasets/p1_v3` 标签可用。
+- 待办：小规模正式复跑自对弈（≥300 局/轮、sims ≥20）→ 蒸馏 → `gate --seeds 100 --promote-to-best`。终局偏 `immobilized`、候选对 search2 得分 0.083~0.167 是棋力真问题、非 bug。
 
-## P2 搜索蒸馏：已证伪，停止调参（2026-09-16）
+## 危险操作禁令
+- **删除文件一律用 Python 文件系统操作，禁止 `git rm`**（曾被 SIGTERM 中断留下 `.git/index.lock`，`junqi/`+`scripts/` 共 96 文件消失；恢复：删 stale lock → `git checkout HEAD -- junqi scripts`）。
+- 不跑长 `&&` 链的 git 写命令；git 前后确认无 `.git/index.lock`。
+- 不用 `dangerouslyDisableSandbox`；不主动删 `models/`、`军旗复盘/`、`datasets/`。
 
-四项干预（温度 120→20、加基座锚点、教师置信度过滤、修靶场）让**中间指标单调改善**
-（人类测试集 top1 0.204→0.408，基座 0.529），但**对局强度无稳健提升**
-（所有门控 0.46~0.57，CI ±0.12）。
-
-**三条结构性原因**：
-1. 教师优势来自**搜索深度**，单次前向 Policy 表达不了；
-2. **C++ 提速 19~43× 反而削弱了这条路线**：搜索便宜了，混合代理直接跑搜索更划算；
-3. 蒸馏是"用人类模仿换搜索模仿"，当前配方下这笔交易无净收益。
-
-**建议**：把算力用在边际收益明确处 —— 直接加深 `hybrid` 的搜索（无需训练），
-或改为预测**静态策略能表达**的目标（终局结果、即时必胜/必败模式）。
-**不要再扫温度/锚点系数。**
-
-代码侧改动均已落地且**默认关闭、向后兼容**：
-`distill_search --anchor-weight`（默认 0）、`--tac-min-spread`（默认 0）、
-`gate --init-set`、监测量 `val_base_top1`。
-
-## 现有训练产物的真实状态（2026-09-15 清理后，决定重训范围时必看）
-
-用 `python scripts/audit_artifacts.py --probe` 可复现。
-
-**2026-09-15 已做的清理与重置**：
-- 三个作废的自对弈经验池（`models/ models_b3/ models_b3opp/` 下的
-  `candidate_latest_buffer.pkl`）已删除，释放 11.18 GB。
-  `models/evidence_collapsed_20260914/`(3.58 GB) 保留。
-- **`models/best.pt` 已用 `models/value_distilled_v2.pt` 覆盖**（md5 `26675f331…`）。
-  原 best.pt 的权重与 `models/pool/bc_best.pt` 逐位相同（＝BC 基线副本，
-  Value 头退化：平衡 acc 0.330、Draw 恒为 0）；旧内容在 pool/ 下天然保留。
-- 冒烟训练产生的 2.37 GB 池也已删除；`models/` 现无 `.pkl`。
-
-**当前产物状态**：
-- `value_distilled_v2.pt` = `best.pt`：唯一健康 Value 基座（0.735 / 0.288）。
-- `candidate_latest.pt`：修复后首跑（seed 42，2 轮 × 60 局，sims 10）的候选，
-  epoch=2、elo=1456.5、Value 平衡 acc 0.619（未塌缩）；与热启动源 106/106 键均不同
-  → 证明 R1 已修（此前恒为零更新）。
-- `_candidate_gate.pt`：同一轮的门控快照（`net.save()` 格式，可直接喂 gate 的 `--model-a`）。
-- `search_distilled_smoke_20260915.pt`：蒸馏链路冒烟产物（仅 80 局面，无质量意义）。
-- `reports/gate_smoke_20260915.json`：首次有效配对门控报告（24 局，promote=False）。
-- **`datasets/p1_v3` 标签可用**，无需重导。
-
-**待办（下一轮）**：小规模正式复跑自对弈（建议 ≥300 局/轮、sims ≥20）→ 搜索蒸馏
-（建议 1200 局面 / depth 3）→ `gate --seeds 100 --promote-to-best` 正式晋级。
-注意终局分布异常偏向 `immobilized`（71.7%/53.3%，而人类复盘认输 45.6%），
-以及候选对 search2 参考得分仅 0.083~0.167 —— 这两点是"数据质量/棋力"层面的真实问题，
-不是本轮修复范围内的 bug。
-
-## 判断"改动是否影响引擎"必须做 A/B 实测（2026-09-15 血的教训）
-
-用 `python scripts/ab_search_compare.py --ref-commit <旧提交>`：导出旧版 `junqi` 包 →
-两个独立进程跑同一批固定局面 → 输出"默认深度 / 限时深度 / APK 引擎"三分项对照。
-**读代码推断会得出相反结论**：C1 想修"限时搜索浪费预算"，第一版用实测比值外推，
-实测反而在 endgame 局面少搜一层（1000ms 预算只用 171ms）。改成
-`下一层估计 = max(本层耗时, 累计耗时/2)`（不做比值外推）后才正确。
-
-已确立的基线（改动 `search.py` 后必须复跑）：
-- 默认 `depth=2, time_limit=0` 必须**完全一致**（动作/分值/节点数）；
-- 限时 `1000ms` 判据见下条，**不要只看 `max_depth`**；
-- 当前状态：默认 17/17 一致、APK 17/17 一致、限时 更深 3 / 一致 14 / 更浅(仅记录口径) 0
-  / 更浅(回归) 0、决策变化 3 处（均在"更深"的局面上）。
-
-**⚠️ 只看 `max_depth` 会误判（2026-09-15 第二次踩到）**：修 C13 时我额外把降级结果
-"退回上一次完整层"，工具报 5 处"更浅(回归)"；逐层追踪后确认是**真回归**——
-`deal0` 处女局面 d=1 的全部翻棋候选**同分 0.0**（无信息），d=2 才有区分度。
-工具现已改为同时比对**节点数 + 决策（动作/分值）**，并把"节点与决策都没变、只有
-`max_depth` 记法不同"单列为"更浅(仅记录口径)"。判定改动的正确顺序始终是：
-**逐层 trace / A/B 实测 → 结论**，绝不靠读代码推断。
-
-## `SearchStats.degraded` 的正确含义（2026-09-15，C13 后）
-
-`time_limit_ms > 0` 的调用方**应先查 `stats.degraded`**。为 True 表示预算不足
-（根循环在层内被打断，或首层未完成），此时：
-- `score` 来自"最后一次有产出的层"，是该层部分最优——真实值的**下界**估计，
-  仍是合法决策，**不要**因此丢弃它（退回浅一层会丢信息）；
-- `root_scores` 是**截断**的候选集合（不覆盖全部合法动作），逐个分值与排序有效，
-  GUI top-N 与蒸馏 softmax 应结合本标记判断；
-- 未搜完的层**只写 `FLAG_LOWER_BOUND`** 进 TT，绝不写 `EXACT`
-  （根节点局面键可能作为子树在后续搜索中被查询，写 EXACT 会污染真实分数与 PV）；
-- 本层一个动作都没搜完时**不写 TT、不记 `max_depth`**（旧实现会把 `-inf` 写成 EXACT）。
-`self.stopped`（子搜索内部超时）是另一条路径：整层作废，语义不变。
-**遗留**：`degraded` 目前在生产链路无消费者，`ExpertAgent.choose_actions` 不暴露
-`stats`；要让它影响训练数据需改教师侧（`train_search_distill`），未做，先问用户。
-
-## 教训：局部 import 的 NameError（2026-09-15 自查出来）
-
-`junqi/train_value_distill.py` 只在函数内 `import json`，而模块级新增的守卫函数也用了
-`json.load` → `load_p1_arrays` NameError → 会**直接崩掉 train_rl 的每轮重锚与 Value 探针**。
-**判定导入是否可用，必须看 import 的所在作用域，不能用 `'import xxx' in src` 做子串判断**
-（我正是这样误判的）。现已有精确到函数作用域的静态扫描测试守卫。同理，写测试要覆盖
-"带 metadata 的真实数据集"路径，否则会绕过版本守卫分支。
-
-## 评测口径的真相（2026-09-15 实测，别重复踩坑）
-
-- **镜像标定对确定性策略无区分力**：`eval_gate._run_pair` 的两局（同牌、先后手互换）在
-  **确定性策略下逐字段完全相同** ⇒ 配对必然抵消任何座位优势 ⇒ 裁决得分率**恒为 0.5000**。
-  这是结构性必然，**不能当作"裁判无偏"的证据**。要检验 arbiter 偏差必须用有随机性的策略
-  （只有 nn_mcts 的 r0≠r1）。一般化：配对下 `P(A=1,B=0) − P(A=0,B=1) = P(A) − P(B) ≡ 0`。
-- **`evaluate_expert` 在真实对局终局上精确镜像对称**（`Δ − Δ_sym ≡ 0`，实测 60/60）。
-  此前基于 `gate_calib_mirror_fixed` 0.6000 的"座位标签偏差"归因**已被推翻** ——
-  n=80 时 Wilson 半宽 ±0.105，0.6 与 0.5 **不显著**。真问题是**统计功效**。
-- 分辨力优先用 `eval_gate.paired_delta_test`（`d = Δ(r0) − Δ(r1)`，保留幅度 + 配对差分
-  自动消座位优势），优于把 Δ 压成 0/0.5/1 的二元裁决；`run_gate` 报告已有 `paired_delta` 段。
-- `state.mirror_state` **只翻转位置 + 交换座位标签，不换颜色**；换颜色会得到"恰好取负"的
-  假象，那是测量陷阱不是对称化。
-
-## 危险操作禁令（血的教训）
-
-- **删除文件一律用 Python 文件系统操作**（`os.remove` / `shutil.rmtree`），
-  **禁止用 `git rm`**：2026-09-15 用 `git rm -r` 时命令被 SIGTERM 中断，遗留
-  `.git/index.lock`，随后 `junqi/` 与 `scripts/` 共 96 个文件从工作区消失。
-  恢复靠：删 stale lock → `git checkout HEAD -- junqi scripts`（本环境会自动提交，
-  所以 HEAD 含最新改动）。核验文件是否还在用关键词检查，不要只信 `git status`。
-- **不跑长 `&&` 链的 git 写命令**；git 操作前后确认无 `.git/index.lock`。
-- 不用 `dangerouslyDisableSandbox`；不主动删除 `models/`、`军旗复盘/`、`datasets/` 等数据。
-
-## 项目硬约束（来自 AGENTS.md / AI_TRAINING_AND_HUMAN_PLAY_PLAN.md）
-
-- 改代码前先读 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md`，并声明本次修改所属阶段 P0–P4。
-- **先加/改测试，再改实现**；完成后报告：改动文件、实验种子、测试结果、未解决风险。
-- 禁止：真实暗子身份进公共 Policy；吃子/挖雷等中间奖励；三个独立阶段模型；
-  只看 loss 覆盖 `best.pt`；P0 未过就长训练。
-- Value 标签严格按官方 `list.cfg` 终局码：1/21/22/23 → ±1；40/42/43 → 0；
-  20/24 → 不赋 Value（`dataset.terminal_label_from_meta` 是唯一真源，
-  统计口径必须走 `outcome_bucket_from_meta`，禁止各写一遍码表）。
-- 数据集默认目录 `datasets/p1_v3`（`dataset.DEFAULT_P1_DIR`），
-  低于 3.0.0 的旧数据集会被 `check_p1_version` 拒载。
-- 门控唯一真源是 `junqi/eval_gate.py::run_gate`（配对同牌 + Wilson + 三元 SPRT）；
-  训练主循环的 `train_rl.evaluate_gate` 只是它的薄封装。
+## 项目硬约束（AGENTS.md / AI_TRAINING_AND_HUMAN_PLAY_PLAN.md）
+- 改代码前先读方案并**声明阶段 P0–P4**；**先加/改测试再改实现**；报告改动文件、种子、测试结果、未解决风险。
+- 禁止：真实暗子身份进公共 Policy；吃子/挖雷等中间奖励；三个独立阶段模型；只看 loss 覆盖 `best.pt`；P0 未过就长训练。
+- Value 标签严格按官方 `list.cfg`：1/21/22/23→±1；40/42/43→0；20/24→不赋。`dataset.terminal_label_from_meta` 是唯一真源，统计走 `outcome_bucket_from_meta`，**禁止各写一份码表**。数据集默认 `datasets/p1_v3`，<3.0.0 被 `check_p1_version` 拒载。
+- 门控唯一真源 `junqi/eval_gate.py::run_gate`（配对同牌 + Wilson + 三元 SPRT）。
 
 ## 架构要点
-
-- 在线传统搜索引擎是 **`junqi/search.py::ExpertSearchEngine`**（`ai.py` / `hybrid_engine.py` 复用）。
-  · **它有两张置换表，且必须分离**：`self.tt`（主表，`depth` = 剩余搜索深度）与
-    `self.qtt`（QSearch 专用，`depth_left` = 剩余吃子链长度）。共用一张表会让 qsearch 写入的
-    `depth_left=10` 条目被 `_negamax` 的 `depth=2` 查询命中（`entry.depth >= depth` ⇒ 10>=2）
-    → **返回错误分数**。`use_qtt=False` 可完全退回原实现。
-  · **`qsearch_depth` 不要凭直觉下调**：残局 `depth=2` 下 `qd=4` 会改变决策，
-    而 `depth=3` 下 `qd=4` 与 `16` 决策相同 —— 两档结论矛盾，敏感性随深度/局面变化，
-    未经对局级 A/B 不得改默认值 16。
-  · 改动 `search.py` 后跑 `scratch/perf_baseline.py verify`（**capture 必须在改动前做**）。
-    残局加速基准（2026-09-15）：QTT 开启 6038ms → 4188ms（1.44×），qnodes −27.5%。
-  `junqi/expert/` 已于 2026-09-15 **彻底删除**（不可导入、fan-in 0），
-  记录见 `docs/06-References/DEPRECATED_EXPERT_PACKAGE.md`。不要重建同名包。
-- `junqi/net.py::save()` 写出的是**包装字典** `{"model_state": ...}`，不是裸 `state_dict`。
-  `torch.load` 之后必须先 `JunqiNet.unwrap_state_dict()`，否则 `load_state_dict(strict=False)`
-  会静默零载入（这正是历史上"best 对手是随机网络"的根因）。
-- 热启动**禁止** `net = JunqiNet.load_from_file(...)` 重绑变量（会让 optimizer 脱钩、
-  权重零更新）；用 `train_rl.warmstart_candidate(net, optimizer, path, ...)`。
-- `StratifiedReplayBuffer` 样本契约：policy `(state, mask, target, phase)`、
-  value `(state, z_cls, is_world)`，索引写死。
-- `scripts/archive/` 与 `tests/utils/` 是**归档脚本**（见各自 README），
-  不是 API、不进 pytest 收集范围；不要在其上继续开发。
-- `junqi/benchmark.py::create_benchmark_suite`、`run_training` 等 21 个函数 >120 行，
-  属已知结构性债务；拆分需单独评估，不要顺手改。
+- `junqi/search.py::ExpertSearchEngine`：`self.tt`(depth) 与 `self.qtt`(depth_left) **必须分离**（共用会让 qsearch 条目被 `_negamax` 命中 → 错分）；`qsearch_depth` 默认 16，**未经对局级 A/B 不得下调**；`_qsearch` 声明 **Captures Only**，引入非吃子动作须同步更新声明与终止性论证。`junqi/expert/` 已删除，不要重建。
+- `junqi/net.py::save()` 写**包装字典** `{"model_state": ...}`；load 后必须先 `JunqiNet.unwrap_state_dict()`，否则 `strict=False` 静默零载入（历史"best 对手是随机网络"根因）。
+- 热启动**禁止**重绑 `net = JunqiNet.load_from_file(...)`（optimizer 脱钩、权重零更新），用 `train_rl.warmstart_candidate(...)`。
+- `StratifiedReplayBuffer` 契约：policy `(state, mask, target, phase)`、value `(state, z_cls, is_world)`。
+- `junqi/fit_weights.py` 全部**按特征名索引**（曾 25 维错位）。三条不变式有测试守卫：`_project(default_vector())==default_vector()`、`to_eval_weights(default_vector())==EvalWeights()`、每特征都能写回（例外仅 `flip_bias`）。**`mobility` 不能列入**（EvalWeights 无此字段，且 `evaluate_expert` 的机动力项是另一套定义、系数硬编码）。
+- `scripts/archive/`、`tests/utils/` 是归档目录，不进 pytest 收集，不要在其上继续开发。

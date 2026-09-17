@@ -230,8 +230,26 @@ double ExpertSearch::chance_flip_(JunqiBoard& b, uint8_t pos, int depth, int ply
         return eval_expert_board(child, static_cast<int>(child.turn), w, false);
     };
 
+    // 战术交火区检测与几率前沿受限展开判断 (P1.A 增强)
+    bool in_tactical = false;
+    const auto& rn = get_road_neighbors()[pos];
+    for (uint8_t i = 0; i < rn.count; ++i) {
+        uint8_t np = rn.neighbors[i];
+        if (is_camp_idx(np)) {
+            in_tactical = true;
+            break;
+        }
+        const Piece& pc = b.cells[np];
+        if (!pc.is_empty() && pc.revealed && pc.rank != Rank::LEI && pc.rank != Rank::QI) {
+            in_tactical = true;
+            break;
+        }
+    }
+
+    bool allow_restricted_star1 = (ply_depth == 1 && depth >= 3 && in_tactical);
+
     // 几率前沿截断：深层直接求解析期望，杜绝 (24)^d 组合爆炸
-    if (depth <= 1 || ply_depth >= 1) {
+    if ((depth <= 1 || ply_depth >= 1) && !allow_restricted_star1) {
         double expected = 0.0;
         for (int c = 0; c < 2; ++c) {
             for (int k = 0; k < 12; ++k) {
@@ -262,7 +280,34 @@ double ExpertSearch::chance_flip_(JunqiBoard& b, uint8_t pos, int depth, int ply
     double expected_value = 0.0;
     double remaining_prob = 1.0;
 
-    for (const auto& o : outcomes) {
+    constexpr size_t kRestrictedStar1Slots = 3;
+    int sub_depth = allow_restricted_star1 ? (depth - 2) : (depth - 1);
+
+    // 受限展开时的**搜索子集**：按"战术重要性 → 出现概率 → color → 规范序"取前 3。
+    // 累加顺序与 Star1 剪枝时机保持不变，因此只影响"哪 3 个身份被递归搜索"。
+    // ⚠ 排序键必须与 Python `_evaluate_chance_flip` 的 ranking key 逐项一致。
+    std::vector<char> do_search(outcomes.size(), 1);
+    if (allow_restricted_star1) {
+        std::fill(do_search.begin(), do_search.end(), 0);
+        std::vector<size_t> ranked(outcomes.size());
+        for (size_t i = 0; i < ranked.size(); ++i) ranked[i] = i;
+        std::sort(ranked.begin(), ranked.end(), [&](size_t x, size_t y) {
+            const auto& ox = outcomes[x];
+            const auto& oy = outcomes[y];
+            if (STAR1_IMPORTANCE[ox[1]] != STAR1_IMPORTANCE[oy[1]]) {
+                return STAR1_IMPORTANCE[ox[1]] > STAR1_IMPORTANCE[oy[1]];
+            }
+            if (ox[2] != oy[2]) return ox[2] > oy[2];
+            if (ox[0] != oy[0]) return ox[0] < oy[0];
+            return ox[1] < oy[1];
+        });
+        for (size_t j = 0; j < ranked.size() && j < kRestrictedStar1Slots; ++j) {
+            do_search[ranked[j]] = 1;
+        }
+    }
+
+    for (size_t i = 0; i < outcomes.size(); ++i) {
+        const auto& o = outcomes[i];
         double prob = static_cast<double>(o[2]) / total_hidden;
         if (expected_value + remaining_prob * v_max <= alpha) {
             stats.star1_cutoffs++;
@@ -273,7 +318,16 @@ double ExpertSearch::chance_flip_(JunqiBoard& b, uint8_t pos, int depth, int ply
             return beta;
         }
         JunqiBoard child = make_child(o[0], o[1]);
-        double v = -negamax_(child, depth - 1, ply_depth + 1, -EXPERT_WIN_SCORE, EXPERT_WIN_SCORE);
+        double v;
+        if (do_search[i]) {
+            v = -negamax_(child, sub_depth, ply_depth + 1, -EXPERT_WIN_SCORE, EXPERT_WIN_SCORE);
+        } else {
+            // ⚠ 长尾必须取负：与上方解析期望分支 `prob * (-child_value(child))` 同一约定
+            // （child_value 返回的是"翻出该身份后、对手视角"的值）。曾漏负号，
+            // 导致受限展开分支的值整体偏移 2×长尾期望（实测差 30.66 分，
+            // 与 Python 逐位比对 10/10 分歧）。
+            v = -child_value(child);
+        }
         expected_value += prob * v;
         remaining_prob -= prob;
     }

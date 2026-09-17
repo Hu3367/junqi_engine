@@ -454,7 +454,29 @@ double ExpertQSearch::_qsearch(JunqiBoard& b, double alpha, double beta, int dep
     for (const Action& a : acts) {
         if (a.kind != ActionKind::MOVE) continue;
         const Piece& t = b.cells[a.to];
-        if (!t.is_empty() && t.revealed && t.color != my) tactical.push_back(a);
+        if (!t.is_empty() && t.revealed && t.color != my) {
+            tactical.push_back(a);
+        } else if (is_camp_idx(a.to) && !is_camp_idx(a.frm)) {
+            // P1.C 增强：高危大子逃入行营避险
+            const Piece& m = b.cells[a.frm];
+            if (!m.is_empty() && m.revealed && (rank_value(m.rank) >= rank_value(Rank::SHI) || m.rank == Rank::ZHA)) {
+                bool threatened = false;
+                const CellNeighbors& nb = get_road_neighbors()[a.frm];
+                for (int i = 0; i < nb.count; ++i) {
+                    const Piece& e = b.cells[nb.neighbors[i]];
+                    if (!e.is_empty() && e.revealed && e.color != my && e.rank != Rank::QI && e.rank != Rank::LEI) {
+                        BattleResult res = resolve_battle(e.rank, m.rank);
+                        if (res == BattleResult::ATTACKER_WINS || res == BattleResult::BOTH_DIE) {
+                            threatened = true;
+                            break;
+                        }
+                    }
+                }
+                if (threatened) {
+                    tactical.push_back(a);
+                }
+            }
+        }
     }
     if (tactical.empty()) return stand_pat;
 

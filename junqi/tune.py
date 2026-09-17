@@ -25,16 +25,22 @@ TUNE_KEYS = [
     ("piece", "GONG"), ("piece", "ZHA"), ("piece", "LEI"), ("piece", "QI"),
     ("piece", "SI"), ("piece", "SHI"), ("piece", "PAI"),
     ("scalar", "flag_exposed"), ("scalar", "camp_occ"),
-    ("scalar", "camp_siege"), ("scalar", "attack"), ("scalar", "attack_camp"),
-    ("scalar", "threat"),
+    ("scalar", "camp_zone"), ("scalar", "camp_siege"),
+    ("scalar", "attack"), ("scalar", "attack_camp"),
+    ("scalar", "threat"), ("scalar", "fortress"),
+    ("scalar", "hidden_tempo"), ("scalar", "mine_flag_guard_bonus"),
 ]
 PIECE_MIN = {"GONG": 20, "ZHA": 25, "LEI": 10, "QI": 20, "SI": 60,
              "SHI": 40, "PAI": 8}
 PIECE_MAX = {"GONG": 80, "ZHA": 90, "LEI": 60, "QI": 90, "SI": 160,
              "SHI": 120, "PAI": 40}
-SCALAR_RANGE = {"flag_exposed": (10.0, 90.0), "camp_occ": (0.0, 25.0),
-                "camp_siege": (0.0, 14.0), "attack": (0.05, 0.6),
-                "attack_camp": (0.2, 1.6), "threat": (0.1, 0.6)}
+SCALAR_RANGE = {
+    "flag_exposed": (10.0, 90.0), "camp_occ": (0.0, 25.0),
+    "camp_zone": (0.5, 6.0), "camp_siege": (0.0, 14.0),
+    "attack": (0.05, 0.6), "attack_camp": (0.2, 1.6),
+    "threat": (0.1, 0.6), "fortress": (5.0, 50.0),
+    "hidden_tempo": (1.0, 15.0), "mine_flag_guard_bonus": (20.0, 150.0),
+}
 MAT_WEIGHT = 0.0005     # 适应度中平均歼敌子力差的系数（胜率 1 分制下）
 
 

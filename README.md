@@ -12,6 +12,8 @@
 > - ✅ **（2026-09-15）`evaluate_expert` 已移植至 C++**（移植切片 1）：残局单步 4236 → 1225 ms（3.46×），估值函数 5.8~9.0×，`scratch/perf_baseline.py verify --cpp` 逐位一致（worst 5.68e-14）。开关 `ExpertSearchEngine(use_cpp_eval=...)`，默认开、可回滚。
 > - ✅ **（2026-09-15）QSearch 也已移植至 C++**（移植切片 2）：残局单步 4250 → 245 ms（**17.36×**，切片 1 后为 1228 ms），中盘 9.84× / 7.74×。开关 `ExpertSearchEngine(use_cpp_qsearch=...)`，默认开、可回滚。
 > - ✅ **（2026-09-16）搜索子树也已移植至 C++**（切片 3，`_negamax` + Star1 机会节点）：开局 1542 → 35 ms（**43.70×**），中盘 29.77×，残局 4194 → 221 ms（18.98×）。三切片累计、四档决策全一致。开关 `ExpertSearchEngine(use_cpp_search=...)`。迭代加深根循环仍留在 Python（语义最复杂处不冒险）。
+> - ✅ **（2026-09-16）传统搜索 P1 全面增强与 IDS 1000ms 动态时间预算落地**：默认启用 1000ms 时限防护与 IDS 迭代加深；引入战术交火区受限 Star1 消除两回合翻棋盲区；QSearch 增补大子受威胁进营避险；彻底重构 `fit_weights` 消除暗子泄漏、严格守住公共信息边界；`HybridAgent` 升级深度至 3 并全面接通 C++ 高速战术把关。
+> - ✅ **（2026-09-17）P1/P2 行为克隆与搜索/价值蒸馏全面缺陷修复与健壮性加固**：冻结模块 BatchNorm 统计量保护；搜索截断（Degraded Search）感知与元数据审计；教师打标冷 TT 独立性；NpzReplayDataset 强制版本守卫（>=3.0.0）与 7 元组规范解包；合成终局局面与真实打标量纲严格对齐；修正 38 通道、尾批保护、Argmax 动作 ID 与防塌缩平衡准确率评估指标。
 > - ⚠️ **重建 C++ 扩展请用 `python scripts/build_cpp.py`**（`--clean` 全量）：本机 `reg.exe` 被安全策略拦截，setuptools 无法靠注册表定位 Windows SDK，直接 `pip install -e .` 会报 `C1083: 无法打开包括文件 'io.h'`。
 > - ✅ 13 份专业文档 (>120k 字)
 > - ✅ 全量单元测试通过（`python -m pytest tests/ -q`，数量随迭代增长，以 CI 输出为准）

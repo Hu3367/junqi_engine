@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from .analysis import detect_phase
 from .ai import ExpertAgent
 from .config import RuleConfig, SearchConfig
-from .dataset import DEFAULT_P1_DIR, MIN_P1_VERSION
+from .dataset import DEFAULT_P1_DIR, MIN_P1_VERSION, check_p1_version
 from .encoder import encode_state_np
 from .endgame_gen import gen_endgame
 from .net import JunqiNet
@@ -96,38 +96,50 @@ def score_to_class(score: float) -> int:
     return 1
 
 
-def _label_worker(task: tuple) -> int:
+def _label_worker(task: tuple) -> tuple[int, bool]:
     """子进程独立打标：使用独立种子和 SearchConfig 对单局面执行搜索。"""
     st, depth, time_limit_ms, seed = task
     agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms), seed=seed)
-    scored = agent.choose_actions(st, topn=1)
+    agent.engine.tt.clear()
+    scored, stats = agent.choose_actions(st, topn=1, return_stats=True)
     if not scored:
-        return 2
-    return score_to_class(scored[0][1])
+        return 2, bool(stats.degraded)
+    return score_to_class(scored[0][1]), bool(stats.degraded)
 
 
 def label_with_expert(states: List[GameState], depth: int = 3,
                       time_limit_ms: int = 300,
-                      seed: int = 2026, workers: int = 0) -> List[int]:
+                      seed: int = 2026, workers: int = 0,
+                      return_stats: bool = False) -> List[int] | Tuple[List[int], dict]:
     """用专家搜索为局面打伪标签（走子方视角）。无合法走法判负（困毙）。支持多进程加速。"""
-    if workers is None or workers <= 0:
-        workers = min(8, os.cpu_count() or 4)
-    if workers > 1 and len(states) > 10:
+    if workers and workers > 1 and len(states) > 10:
         import multiprocessing as mp
         tasks = [(st, depth, time_limit_ms, seed + i) for i, st in enumerate(states)]
         print(f"[蒸馏] 启动 {workers} 个并行 Worker 进程加速打标...")
         with mp.Pool(processes=workers) as pool:
-            return pool.map(_label_worker, tasks)
+            results = pool.map(_label_worker, tasks)
+        labels = [r[0] for r in results]
+        samples_degraded = sum(1 for r in results if r[1])
+    else:
+        agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms),
+                            seed=seed)
+        labels = []
+        samples_degraded = 0
+        for st in states:
+            # 保证每局面冷 TT，使单进程与多进程打标语义严格一致
+            agent.engine.tt.clear()
+            scored, stats = agent.choose_actions(st, topn=1, return_stats=True)
+            if stats.degraded:
+                samples_degraded += 1
+            if not scored:
+                labels.append(2)
+                continue
+            labels.append(score_to_class(scored[0][1]))
 
-    agent = ExpertAgent(SearchConfig(depth=depth, time_limit_ms=time_limit_ms),
-                        seed=seed)
-    labels = []
-    for st in states:
-        scored = agent.choose_actions(st, topn=1)
-        if not scored:
-            labels.append(2)
-            continue
-        labels.append(score_to_class(scored[0][1]))
+    print(f"[蒸馏] 专家打标完成: 总计 {len(states)}, 时限截断 (degraded) {samples_degraded} "
+          f"({samples_degraded / max(len(states), 1):.1%})")
+    if return_stats:
+        return labels, {"samples_degraded": samples_degraded}
     return labels
 
 
@@ -142,7 +154,8 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
                         val_ratio: float = 0.15, seed: int = 2026,
                         depth: int = 3, time_limit_ms: int = 300,
                         workers: int = 0,
-                        device: str | None = None) -> dict:
+                        device: str | None = None,
+                        sync_pool: bool = False) -> dict:
     """执行价值蒸馏：支持加载实战预打标数据（或随机推进采样） → 仅训练价值头 → 保存。
     策略头与主干冻结，保证 BC 策略能力不被破坏。返回指标字典。"""
     if device is None:
@@ -153,6 +166,7 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
 
     # 1. 局面采样与专家打标（优先读取高质量预打标实战数据）
     from collections import Counter
+    samples_degraded = 0
     if data_path and os.path.exists(data_path):
         import json
         from .tactical_sampler import dict_to_state
@@ -187,14 +201,18 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
                                   n_endgame=n_end)
         print(f"[蒸馏] 有效局面 {len(positions)}，开始专家打标 "
               f"(depth={depth}, time_limit={time_limit_ms}ms) ...")
-        labels = label_with_expert([st for st, _ in positions], depth=depth,
-                                   time_limit_ms=time_limit_ms, seed=seed, workers=workers)
+        labels, stats_info = label_with_expert([st for st, _ in positions], depth=depth,
+                                              time_limit_ms=time_limit_ms, seed=seed,
+                                              workers=workers, return_stats=True)
+        samples_degraded = stats_info["samples_degraded"]
         label_dist = dict(Counter(labels))
         print(f"[蒸馏] 伪标签分布: Win={label_dist.get(0, 0)} "
               f"Draw={label_dist.get(1, 0)} Loss={label_dist.get(2, 0)}")
 
+        # B3 修复：明确胜负赋予 ±WIN_SCORE，使 tanh(WIN_SCORE/SCORE_SCALE)=±1.0，
+        # 与真实终局标签分支量纲严格对齐，防止胜负置信度被压缩到 0.7616。
         samples = [(encode_state_np(st, seat=st.turn, world=None), z,
-                    (600.0 if z == 0 else (-600.0 if z == 2 else 0.0)), phase)
+                    (float(WIN_SCORE) if z == 0 else (-float(WIN_SCORE) if z == 2 else 0.0)), phase)
                    for (st, phase), z in zip(positions, labels)]
 
     # 2. 确定性切分训练/验证
@@ -248,7 +266,10 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
         rng.shuffle(train_idx)
         total_loss, n_b = 0.0, 0
         for b in range(0, len(train_idx), batch_size):
-            xs, ys, vs = _batch(train_idx[b:b + batch_size])
+            b_idx = train_idx[b:b + batch_size]
+            if len(b_idx) <= 1 and len(train_idx) > 1:
+                continue
+            xs, ys, vs = _batch(b_idx)
             optimizer.zero_grad()
             _, v_logits = net(xs)
             if v_logits.shape[-1] == 3:
@@ -284,6 +305,7 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
         "channels": net.in_conv[0].out_channels,
         "base_model": base_model,
         "distill_samples": len(samples),
+        "samples_degraded": samples_degraded,
         "val_acc": best_acc,
         "val_mse": best_mse,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -300,42 +322,27 @@ def train_value_distill(base_model: str = "models/bc_best.pt",
     torch.save(out_dict, out_path)
     print(f"[蒸馏] 完成：最佳验证准确率 {best_acc * 100:.1f}% (MSE={best_mse:.4f})，已保存 {out_path}")
 
-    # 同步更新 models/pool/value_distilled.pt（若 pool 目录存在）
+    # 可选同步更新 models/pool/value_distilled.pt（需显式开启 sync_pool）
     pool_path = os.path.join("models", "pool", os.path.basename(out_path))
-    if os.path.exists(os.path.dirname(pool_path)):
+    if sync_pool and os.path.exists(os.path.dirname(pool_path)):
         import shutil
         shutil.copyfile(out_path, pool_path)
         print(f"[蒸馏] 已同步更新对手池权重: {pool_path}")
+    elif os.path.exists(os.path.dirname(pool_path)):
+        print(f"[蒸馏] 提示: 未开启 --sync-pool，对手池权重保持不变 ({pool_path})")
 
     return {
         "samples": len(samples),
         "label_dist": label_dist,
         "best_val_acc": best_acc,
         "best_val_mse": best_mse,
+        "samples_degraded": samples_degraded,
         "out_path": out_path,
     }
 
 
 # ---------------------------------------------------------------- Value 健康度探针（P3 修订）
 
-def check_p1_version(metadata: dict) -> tuple[bool, str]:
-    """校验数据集版本是否达到 `MIN_P1_VERSION`（R6 修复的守卫）。
-
-    p1_v1 / p1_v2 生成于 2026-09-06，早于 2026-09-13 的 "code 24 断线不得赋
-    Value" 修正，两者的 Value 标签口径不同。混用会出现"同一份指标、两套真值"
-    的静默不一致，因此低于 3.0.0 直接拒绝。
-    """
-    ver = str((metadata or {}).get("version", "") or "")
-    try:
-        parts = tuple(int(x) for x in ver.split(".")[:3])
-    except ValueError:
-        parts = (0,)
-    ok = parts >= tuple(MIN_P1_VERSION)
-    if ok:
-        return True, f"数据集版本 {ver} 通过（≥ {'.'.join(map(str, MIN_P1_VERSION))}）"
-    return False, (f"数据集版本 {ver} 低于最低要求 "
-                   f"{'.'.join(map(str, MIN_P1_VERSION))}：该版本生成于 code 24 "
-                   f"标签口径修正之前，请改用 {DEFAULT_P1_DIR} 或重新导出")
 
 
 def load_p1_arrays(p1_dir: str, split: str = "train",
@@ -458,16 +465,24 @@ def train_value_head_only(net: JunqiNet, train: dict, val: dict, *,
 
     x_tr, y_tr, v_tr = train["x"], train["y"], train["v"]
     x_va, y_va, v_va = val["x"], val["y"], val["v"]
+    if len(y_tr) < 2:
+        raise ValueError(f"训练样本数不足 ({len(y_tr)} < 2)，无法训练")
 
     best = {"balanced_acc": -1.0, "mae": 9.9, "state": None, "epoch": 0}
     history = []
     stale = 0
     try:
         for epoch in range(1, epochs + 1):
-            net.train()
+            # A1 修复：仅让 value_head 处于 train 模式，主干与策略头保持 eval 模式，
+            # 杜绝冻结模块的 BatchNorm running_mean / running_var 在前向时被篡改更新。
+            net.eval()
+            net.value_head.train()
             order = rng.permutation(len(y_tr))
-            for b in range(0, len(y_tr) - batch_size + 1, batch_size):
+            # 新增 2 修复：遍历全部批次，保留尾批（避开单样本批次防止 BatchNorm 出错）
+            for b in range(0, len(y_tr), batch_size):
                 idx = order[b:b + batch_size]
+                if len(idx) <= 1 and len(y_tr) > 1:
+                    continue
                 xs = torch.from_numpy(x_tr[idx]).float().to(device)
                 ys = torch.from_numpy(y_tr[idx]).long().to(device)
                 vs = torch.from_numpy(v_tr[idx]).float().to(device)

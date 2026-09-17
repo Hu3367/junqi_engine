@@ -257,6 +257,18 @@ PYBIND11_MODULE(junqi_core, m) {
         const auto& c = get_expert_camp_order();
         return std::vector<int>(c.begin(), c.end());
     });
+    m.def("expert_star1_importance", []() {
+        // 受限 Star1 展开的战术重要性分档（下标 = RANK_VALS 规范序 SI..QI）
+        return std::vector<int>(std::begin(STAR1_IMPORTANCE),
+                                std::end(STAR1_IMPORTANCE));
+    });
+    m.def("expert_zobrist", [](const std::string& blob) {
+        // C++ 侧 zobrist 键（供 Python 比对）。
+        // 用途：TT 的桶索引是 `key & mask`；若两侧键不同，则**相等性判定一致
+        // 但碰撞/淘汰模式不同** ⇒ depth>=3 的子树值会分叉（决策通常不变）。
+        JunqiBoard b = board_from_blob(blob);
+        return b.compute_zobrist();
+    });
 
     // Search Engine
     py::class_<ApkSearchEngine>(m, "ApkSearchEngine")

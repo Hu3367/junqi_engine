@@ -28,9 +28,11 @@ class RuleConfig:
 
 @dataclass
 class SearchConfig:
-    depth: int = 2          # 搜索深度（ ply ）
+    # `depth` 同时是迭代加深的**深度上限**（`ExpertAgent` 把它作为 search(max_depth=…) 传入），
+    # 因此不需要额外的 `ids_max_depth` —— 那曾是死配置（声明后无任何消费者），已删除。
+    depth: int = 2          # 搜索深度（ ply ），同时为 IDS 上限
     samples: int = 6        # PIMC 采样的世界数 K
-    time_limit_ms: int = 0  # >0 时迭代加深限时
+    time_limit_ms: int = 1000  # >0 时迭代加深限时 (默认启用 1000ms IDS 动态时间预算)
     qsearch_depth: int = 16 # 静态搜索深度上限 (ply)
     # qsearch_depth 取值的实测依据（2026-09-15，scratch/probe_qsearch_cost.py
     # + scratch/bench_qtt.py），**不要凭直觉下调**：

@@ -152,6 +152,73 @@ class TestTrainValueHeadOnly(unittest.TestCase):
         for name, p in net.named_parameters():
             self.assertTrue(p.requires_grad, f"{name} 的 requires_grad 未恢复")
 
+    def test_train_value_head_only_freezes_batchnorm_running_stats(self):
+        """A1: 验证 train_value_head_only 在训练前后，冻结模块的 BatchNorm running 统计严格不变。"""
+        from junqi.net import JunqiNet
+        net = JunqiNet(in_channels=38, num_blocks=1, channels=16)
+        before_bn = {
+            name: buf.detach().clone()
+            for name, buf in net.named_buffers()
+            if "value_head" not in name and ("running_mean" in name or "running_var" in name)
+        }
+        self.assertGreater(len(before_bn), 0, "必须存在待验证的 BatchNorm 统计量")
+        tr, va = _separable_dataset(128, 9), _separable_dataset(64, 10)
+        train_value_head_only(net, tr, va, epochs=2, batch_size=32, lr=1e-2,
+                              seed=9, device="cpu", verbose=False)
+        for name, before_buf in before_bn.items():
+            current_buf = dict(net.named_buffers())[name]
+            self.assertTrue(
+                torch.equal(current_buf, before_buf),
+                f"冻结模块 BatchNorm 统计量被改写: {name}")
+
+    def test_train_value_head_only_runs_when_samples_fewer_than_batch_size(self):
+        """新增 2: 样本数少于 batch_size 时不得 0 batch 空跑，必须完整执行全部样本。"""
+        net = _StubValueNet()
+        before_value = net.value_head[0].weight.detach().clone()
+        # 30 条样本，batch_size=64（旧代码 range(0, 30-64+1, 64) 产生空区间直接空跑）
+        tr, va = _separable_dataset(30, 11), _separable_dataset(20, 12)
+        res = train_value_head_only(net, tr, va, epochs=2, batch_size=64, lr=1e-2,
+                                    seed=11, device="cpu", verbose=False)
+        self.assertEqual(res["train_samples"], 30)
+        self.assertFalse(torch.equal(before_value, net.value_head[0].weight.detach()),
+                         "样本数小于 batch_size 时应正常执行训练，而非空跑丢弃")
+
+    def test_value_target_scale_and_domain(self):
+        """B3: 终局合成局面分值经 tanh 映射后值域在 [-1, 1]，且明确胜负映射为 ±1.0。"""
+        import math
+        from junqi.state import WIN_SCORE
+        from junqi.train_value_distill import SCORE_SCALE
+        win_target = math.tanh(float(WIN_SCORE) / SCORE_SCALE)
+        loss_target = math.tanh(-float(WIN_SCORE) / SCORE_SCALE)
+        draw_target = math.tanh(0.0 / SCORE_SCALE)
+        self.assertAlmostEqual(win_target, 1.0, places=4)
+        self.assertAlmostEqual(loss_target, -1.0, places=4)
+        self.assertAlmostEqual(draw_target, 0.0, places=4)
+
+    def test_train_value_head_only_rejects_insufficient_samples(self):
+        """边界用例: 训练样本数少于 2 时抛出 ValueError。"""
+        net = _StubValueNet()
+        tr_empty = {"x": np.zeros((0, 38, 12, 5), dtype=np.float32), "y": np.zeros(0, dtype=np.int64), "v": np.zeros(0, dtype=np.float32)}
+        tr_one = {"x": np.zeros((1, 38, 12, 5), dtype=np.float32), "y": np.zeros(1, dtype=np.int64), "v": np.zeros(1, dtype=np.float32)}
+        va = _separable_dataset(10, 1)
+
+        with self.assertRaises(ValueError):
+            train_value_head_only(net, tr_empty, va, epochs=1, batch_size=32)
+        with self.assertRaises(ValueError):
+            train_value_head_only(net, tr_one, va, epochs=1, batch_size=32)
+
+    def test_label_with_expert_serial_vs_multiprocessing(self):
+        """A3: 验证 label_with_expert 在 workers=0 (单进程) 与 workers=2 (多进程) 下打标结果完全一致。"""
+        from junqi.state import deal, RuleConfig
+        from junqi.train_value_distill import label_with_expert
+        import random
+
+        cfg = RuleConfig()
+        states = [deal(random.Random(100 + i), cfg) for i in range(12)]
+        labels_serial = label_with_expert(states, depth=1, time_limit_ms=50, seed=42, workers=0)
+        labels_mp = label_with_expert(states, depth=1, time_limit_ms=50, seed=42, workers=2)
+        self.assertEqual(labels_serial, labels_mp, "单进程与多进程冷 TT 打标结果必须完全一致")
+
 
 # ------------------------------------------------------------------ 重锚数据集组装
 

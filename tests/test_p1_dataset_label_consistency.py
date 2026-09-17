@@ -230,6 +230,53 @@ class TestDefaultDatasetVersion(unittest.TestCase):
         self.assertFalse(ok, "p1_v2 口径早于 code 24 修正，必须拒绝")
         self.assertIn("2.0.0", msg)
 
+    def test_npz_dataset_version_guard_enforced(self):
+        """B1: NpzReplayDataset 加载低于 3.0.0 的数据集时必须抛出 ValueError。"""
+        from junqi.dataset import NpzReplayDataset
+        import tempfile
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as td:
+            npz_path = os.path.join(td, "test.npz")
+            meta_path = os.path.join(td, "metadata.json")
+            np.savez(npz_path,
+                     states=np.zeros((2, 38, 12, 5), dtype=np.float32),
+                     masks=np.ones((2, 3650), dtype=bool),
+                     actions=np.zeros(2, dtype=np.int32),
+                     values=np.zeros(2, dtype=np.float32),
+                     has_values=np.ones(2, dtype=bool),
+                     phases=np.zeros(2, dtype=np.int8))
+            # 写入旧版本 2.0.0
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump({"version": "2.0.0"}, f)
+
+            with self.assertRaises(ValueError):
+                NpzReplayDataset(npz_path)
+
+            # 显式关闭校验时可正常加载
+            ds = NpzReplayDataset(npz_path, check_version=False)
+            self.assertEqual(len(ds), 2)
+
+            # 更新为 3.0.0 时正常加载
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump({"version": "3.0.0"}, f)
+            ds3 = NpzReplayDataset(npz_path)
+            self.assertEqual(len(ds3), 2)
+
+            # 元数据文件内容损坏时抛出 ValueError
+            with open(meta_path, "w", encoding="utf-8") as f:
+                f.write("{corrupt_json: invalid")
+            with self.assertRaises(ValueError) as cm:
+                NpzReplayDataset(npz_path)
+            self.assertIn("损坏", str(cm.exception))
+
+    def test_export_replay_dataset_default_version_is_v3(self):
+        """新增 6: export_replay_dataset 的默认 version 参数必须为 3.0.0。"""
+        import inspect
+        from junqi.dataset import export_replay_dataset
+        sig = inspect.signature(export_replay_dataset)
+        self.assertEqual(sig.parameters["version"].default, "3.0.0")
+
 
 class TestPlanCodeConsistencyR5(unittest.TestCase):
     """R5：基地方案与代码对"认输局 Value 口径"的表述必须一致。

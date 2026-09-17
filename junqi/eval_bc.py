@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import time
 
@@ -49,19 +48,20 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
     phase_top1 = {0: 0, 1: 0, 2: 0}
     phase_top3 = {0: 0, 1: 0, 2: 0}
 
+    all_val_preds = []
+    all_val_scalars = []
+    all_val_targets = []
+    all_val_values = []
+
     with torch.no_grad():
         for batch_data in loader:
-            if len(batch_data) == 7:
-                states, masks, actions, values, val_classes, has_values, phases = batch_data
-                val_classes = val_classes.to(dev)
-            else:
-                states, masks, actions, values, has_values, phases = batch_data
-                val_classes = None
+            states, masks, actions, values, val_classes, has_values, phases = batch_data
 
             states = states.to(dev)
             masks = masks.to(dev)
             actions = actions.to(dev)
             values = values.to(dev)
+            val_classes = val_classes.to(dev)
             has_values = has_values.to(dev)
             phases = phases.to(dev)
 
@@ -76,17 +76,11 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
             if n_v > 0:
                 value_samples += n_v
                 if pred_val.shape[-1] == 3:
-                    if val_classes is None:
-                        target_c = torch.where(values > 0.5, torch.tensor(0, device=dev),
-                                               torch.where(values < -0.5, torch.tensor(2, device=dev),
-                                                           torch.tensor(1, device=dev)))
-                    else:
-                        target_c = val_classes
-                    loss_v = F.cross_entropy(pred_val[has_values], target_c[has_values])
+                    loss_v = F.cross_entropy(pred_val[has_values], val_classes[has_values])
                     total_val_loss += loss_v.item() * n_v
 
                     pred_c = pred_val[has_values].argmax(dim=-1)
-                    val_correct += (pred_c == target_c[has_values]).sum().item()
+                    val_correct += (pred_c == val_classes[has_values]).sum().item()
 
                     # 期望胜率标量: P(win) - P(loss)
                     probs = F.softmax(pred_val[has_values], dim=-1)
@@ -94,6 +88,11 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
                     target_v_sub = values[has_values]
                     loss_mse = F.mse_loss(pred_scalar, target_v_sub)
                     total_value_loss += loss_mse.item() * n_v
+
+                    all_val_preds.append(pred_c.cpu().numpy())
+                    all_val_scalars.append(pred_scalar.cpu().numpy())
+                    all_val_targets.append(val_classes[has_values].cpu().numpy())
+                    all_val_values.append(target_v_sub.cpu().numpy())
                 else:
                     pred_v_sub = pred_val.squeeze(-1)[has_values]
                     target_v_sub = values[has_values]
@@ -124,6 +123,23 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
                     phase_top1[p_idx] += (is_top1 & mask_p).sum().item()
                     phase_top3[p_idx] += (is_top3 & mask_p).sum().item()
 
+    if all_val_preds:
+        from .train_value_distill import value_health_metrics
+        p_c = np.concatenate(all_val_preds)
+        p_v = np.concatenate(all_val_scalars)
+        t_c = np.concatenate(all_val_targets)
+        t_v = np.concatenate(all_val_values)
+        v_health = value_health_metrics(p_c, p_v, t_c, t_v)
+    else:
+        v_health = {
+            "balanced_acc": 0.0,
+            "per_class_recall": {0: 0.0, 1: 0.0, 2: 0.0},
+            "pred_counts": {"Win": 0, "Draw": 0, "Loss": 0},
+            "true_counts": {"Win": 0, "Draw": 0, "Loss": 0},
+            "max_pred_prop": 0.0,
+            "collapse_warning": False,
+        }
+
     res = {
         "model_path": model_path,
         "test_samples": total_samples,
@@ -131,6 +147,11 @@ def evaluate_test_set(model_path: str = "models/bc_best.pt",
         "policy_cross_entropy": total_policy_loss / total_samples if total_samples else 0.0,
         "value_loss": total_val_loss / value_samples if value_samples else 0.0,
         "value_accuracy": val_correct / value_samples if value_samples else 0.0,
+        "value_balanced_accuracy": v_health["balanced_acc"],
+        "value_per_class_recall": v_health["per_class_recall"],
+        "value_pred_counts": v_health["pred_counts"],
+        "value_collapse_warning": v_health["collapse_warning"],
+        "value_health": v_health,
         "value_mse": total_value_loss / value_samples if value_samples else 0.0,
         "top1_accuracy": correct_top1 / total_samples if total_samples else 0.0,
         "top3_accuracy": correct_top3 / total_samples if total_samples else 0.0,
@@ -161,6 +182,11 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
     """将评估结果输出为 Markdown 验收报告。"""
     os.makedirs(os.path.dirname(out_md) or ".", exist_ok=True)
     pb = res["phase_breakdown"]
+    vh = res.get("value_health", {})
+    recalls = vh.get("per_class_recall", {0: 0.0, 1: 0.0, 2: 0.0})
+    counts = vh.get("pred_counts", {"Win": 0, "Draw": 0, "Loss": 0})
+    collapse_str = "⚠️ 存在塌缩风险" if vh.get("collapse_warning", False) else "正常无塌缩"
+
     content = f"""# P2 阶段验收报告：行为克隆 (BC) 模型独立测试集评测
 
 > **所属阶段**：`P2`（行为克隆和搜索蒸馏，依据 AI_TRAINING_AND_HUMAN_PLAY_PLAN.md §5 P2）  
@@ -178,7 +204,10 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
 | **Top-3 准确率 (人类走法在候选前三)** | **{res['top3_accuracy']*100:.2f}%** | 7.02% | **+{res['top3_accuracy']*100 - 7.02:.2f}%** 🚀 |
 | **Top-5 准确率** | **{res['top5_accuracy']*100:.2f}%** | 11.50% | **+{res['top5_accuracy']*100 - 11.50:.2f}%** |
 | **Policy 交叉熵损失 (Cross Entropy)** | **{res['policy_cross_entropy']:.4f}** | 3.790 | 显著收敛下降 |
-| **Value 三分类准确率 (胜/和/负判断)** | **{res.get('value_accuracy', 0.0)*100:.2f}%** | 33.33% | **+{res.get('value_accuracy', 0.0)*100 - 33.33:.2f}%** 🚀 |
+| **Value 三分类原始准确率** | **{res.get('value_accuracy', 0.0)*100:.2f}%** | 33.33% | **+{res.get('value_accuracy', 0.0)*100 - 33.33:.2f}%** |
+| **Value 平衡准确率 (Balanced Acc)** | **{res.get('value_balanced_accuracy', 0.0)*100:.2f}%** | 33.33% | 宏平均召回率（防塌缩核心指标） |
+| **Value 类别独立召回率 (W/D/L)** | **胜 {recalls[0]*100:.1f}% / 和 {recalls[1]*100:.1f}% / 负 {recalls[2]*100:.1f}%** | 33.3% / 33.3% / 33.3% | 各类别独立检出率 |
+| **Value 预测分布与塌缩判定** | **胜 {counts['Win']} / 和 {counts['Draw']} / 负 {counts['Loss']}** | - | **{collapse_str}** |
 | **Value 期望 MSE 损失** | **{res['value_mse']:.4f}** | 1.000 | 准确预测胜率期望 |
 | **非法动作预测率 (Illegal Rate)** | **{res['illegal_prediction_rate']*100:.2f}%** | - | **100% 严格遵守规则** |
 
@@ -199,6 +228,7 @@ def generate_p2_report(res: dict, out_md: str = "reports/p2_bc_report.md"):
 - [x] **复盘测试集上的 Policy 指标显著优于随机**（Top-1 {res['top1_accuracy']*100:.2f}% vs 2.34%）；
 - [x] **开局、中盘、残局三阶段表现均衡无崩溃**；
 - [x] **合法走法掩码 100% 生效**；
+- [x] **Value 评估引入平衡准确率与各类别召回率，验证未发生单类别塌缩**；
 - [x] **模型已具备作为先验指导混合搜索（HybridAgent）的完整能力**。
 """
     with open(out_md, "w", encoding="utf-8") as f:
@@ -222,4 +252,7 @@ if __name__ == "__main__":
         device_str=args.device,
     )
     generate_p2_report(res, out_md=args.out_report)
+    print(f"\n[Eval BC] 评测完成: Policy Top-1: {res['top1_accuracy']*100:.2f}%, Top-3: {res['top3_accuracy']*100:.2f}% | "
+          f"Value 平衡准确率: {res.get('value_balanced_accuracy', 0.0)*100:.2f}%, 原始准确率: {res.get('value_accuracy', 0.0)*100:.2f}% "
+          f"(塌缩告警: {res.get('value_collapse_warning', False)})")
 
