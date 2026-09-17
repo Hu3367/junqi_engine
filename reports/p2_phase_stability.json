@@ -1,0 +1,124 @@
+{
+  "generated_at": "2026-09-17 23:22:29",
+  "eval_dir": "eval_sets",
+  "phases": [
+    "opening",
+    "midgame",
+    "endgame"
+  ],
+  "agents": [
+    "hybrid2",
+    "expert2"
+  ],
+  "results": {
+    "opening": {
+      "hybrid2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 18.668049999178038,
+        "latency_ms_p95": 39.85930999942865,
+        "latency_ms_max": 71.3488999990659,
+        "mean_n_legal": 48.37,
+        "top_kind_hist": {
+          "flip": 70,
+          "move": 130
+        },
+        "pass": true
+      },
+      "expert2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 10.778949999803444,
+        "latency_ms_p95": 31.170674999702893,
+        "latency_ms_max": 54.310900000928086,
+        "mean_n_legal": 48.37,
+        "top_kind_hist": {
+          "flip": 70,
+          "move": 130
+        },
+        "pass": true
+      }
+    },
+    "midgame": {
+      "hybrid2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 21.788050000395742,
+        "latency_ms_p95": 74.63982999943245,
+        "latency_ms_max": 317.6801000008709,
+        "mean_n_legal": 38.89,
+        "top_kind_hist": {
+          "move": 200
+        },
+        "pass": true
+      },
+      "expert2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 45.85365000002639,
+        "latency_ms_p95": 430.4145200004311,
+        "latency_ms_max": 2180.3424000008818,
+        "mean_n_legal": 38.89,
+        "top_kind_hist": {
+          "move": 200
+        },
+        "pass": true
+      }
+    },
+    "endgame": {
+      "hybrid2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 8.083700000497629,
+        "latency_ms_p95": 10.852929999782644,
+        "latency_ms_max": 13.127000000167754,
+        "mean_n_legal": 22.835,
+        "top_kind_hist": {
+          "move": 198,
+          "flip": 2
+        },
+        "pass": true
+      },
+      "expert2": {
+        "n_snapshots": 200,
+        "n_terminal": 0,
+        "n_no_legal_actions": 0,
+        "n_exceptions": 0,
+        "n_empty": 0,
+        "n_illegal": 0,
+        "latency_ms_p50": 2.500749999853724,
+        "latency_ms_p95": 5.053584999404846,
+        "latency_ms_max": 8.119499998429092,
+        "mean_n_legal": 22.835,
+        "top_kind_hist": {
+          "move": 195,
+          "flip": 5
+        },
+        "pass": true
+      }
+    }
+  },
+  "exception_samples": [],
+  "illegal_samples": [],
+  "overall_pass": true
+}

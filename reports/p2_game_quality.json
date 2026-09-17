@@ -1,0 +1,172 @@
+{
+ "generated_at": "2026-09-17 22:58:38",
+ "init_desc": "eval_sets/endgame.jsonl（200 个局面，按位取 60 个，配对同牌）",
+ "seed_base": 900000,
+ "tolerance": 1.5,
+ "abs_cap": 2.0,
+ "repro": "python scripts/audit_p2_game_quality.py --games 60 --a hybrid2 --b search2 --model-a models/bc_best.pt --compare-a expert2 --init-set eval_sets/endgame.jsonl --seed-base 900000",
+ "verdict": {
+  "items": [
+   {
+    "criterion": "非法动作率 = 0（硬性）",
+    "value": "0.0000/100 决策（0 次）",
+    "pass": true,
+    "hard": true
+   },
+   {
+    "criterion": "非法状态转移率 = 0（硬性）",
+    "value": "0.0000/100 决策（0 次）",
+    "pass": true,
+    "hard": true
+   },
+   {
+    "criterion": "送旗（自造一步可吃旗窗口，每100决策）",
+    "value": "0.0172/100 决策（1/5798）",
+    "reference": "对照 0.0000、Wilson [0.0000, 0.0772]；候选 Wilson [0.0030, 0.0976]；统计更差=否；绝对上限 ≤ 2/100",
+    "pass": true,
+    "hard": false
+   },
+   {
+    "criterion": "往复踱步事件段（探针，每100决策）",
+    "value": "0.1380/100 决策（8/5798）",
+    "reference": "对照 0.4221、Wilson [0.2763, 0.6445]；候选 Wilson [0.0699, 0.2721]；统计更差=否、幅度更差(1.5x)=否；绝对上限 ≤ 2/100",
+    "pass": true,
+    "hard": false
+   },
+   {
+    "criterion": "龟缩拒翻事件段（探针，每100决策）",
+    "value": "0.0000/100 决策（0/5798）",
+    "reference": "对照 0.0000、Wilson [0.0000, 0.0772]；候选 Wilson [0.0000, 0.0662]；统计更差=否；绝对上限 ≤ 2/100",
+    "pass": true,
+    "hard": false
+   },
+   {
+    "criterion": "送旗致失旗（局占比）",
+    "value": "0.0167（局占比）（1/60）",
+    "reference": "对照 0.0000、Wilson [0.0000, 0.0602]；候选 Wilson [0.0029, 0.0886]；统计更差=否",
+    "pass": true,
+    "hard": false
+   },
+   {
+    "criterion": "无意义循环：重复判和+触顶（局占比）",
+    "value": "0.0333（局占比）（2/60）",
+    "reference": "对照 0.0667、Wilson [0.0262, 0.1593]；候选 Wilson [0.0092, 0.1136]；统计更差=否、幅度更差(1.5x)=否",
+    "pass": true,
+    "hard": false
+   }
+  ],
+  "passed": true,
+  "hard_failed": false
+ },
+ "configs": [
+  {
+   "label": "hybrid2 vs search2",
+   "metrics": {
+    "games": 60,
+    "decisions": 5798,
+    "avg_plies": 152.28333333333333,
+    "illegal_action": 0,
+    "illegal_action_per100": 0.0,
+    "illegal_transition": 0,
+    "illegal_transition_per100": 0.0,
+    "flag_gift": 1,
+    "flag_gift_per100": 0.017247326664367024,
+    "flag_window_post": 5,
+    "flag_window_post_per100": 0.08623663332183512,
+    "flag_window_pre": 5,
+    "flag_window_pre_per100": 0.08623663332183512,
+    "flag_gift_games": 1,
+    "flag_gift_game_rate": 0.016666666666666666,
+    "flag_loss_games": 5,
+    "flag_loss_by_gift_games": 1,
+    "flag_loss_by_gift_game_rate": 0.016666666666666666,
+    "end_repetition_games": 2,
+    "end_repetition_game_rate": 0.03333333333333333,
+    "end_no_capture_games": 41,
+    "end_max_plies_games": 0,
+    "end_immobilized_games": 12,
+    "end_flag_games": 5,
+    "loop_soft_games": 2,
+    "loop_soft_game_rate": 0.03333333333333333,
+    "probe_ping_pong": 8,
+    "probe_ping_pong_per100": 0.1379786133149362,
+    "probe_turtling": 0,
+    "probe_turtling_per100": 0.0,
+    "probe_camp_abandonment": 156,
+    "probe_camp_abandonment_per100": 2.690582959641256,
+    "probe_top_piece_suicide": 10,
+    "probe_top_piece_suicide_per100": 0.17247326664367024,
+    "probe_sapper_suicide": 6,
+    "probe_sapper_suicide_per100": 0.10348395998620213,
+    "probe_raw_hits": {
+     "camp_abandonment": 159,
+     "sapper_suicide": 6,
+     "top_piece_suicide": 10,
+     "ping_pong": 8
+    },
+    "probe_error": 0
+   },
+   "illegal_samples": [],
+   "transition_samples": [],
+   "gift_samples": [
+    {
+     "seed": 900031,
+     "ply": 40,
+     "seat": 1,
+     "action": "翻(5,2)"
+    }
+   ]
+  },
+  {
+   "label": "expert2 vs search2（对照）",
+   "metrics": {
+    "games": 60,
+    "decisions": 4975,
+    "avg_plies": 138.56666666666666,
+    "illegal_action": 0,
+    "illegal_action_per100": 0.0,
+    "illegal_transition": 0,
+    "illegal_transition_per100": 0.0,
+    "flag_gift": 0,
+    "flag_gift_per100": 0.0,
+    "flag_window_post": 6,
+    "flag_window_post_per100": 0.12060301507537688,
+    "flag_window_pre": 7,
+    "flag_window_pre_per100": 0.1407035175879397,
+    "flag_gift_games": 0,
+    "flag_gift_game_rate": 0.0,
+    "flag_loss_games": 5,
+    "flag_loss_by_gift_games": 0,
+    "flag_loss_by_gift_game_rate": 0.0,
+    "end_repetition_games": 4,
+    "end_repetition_game_rate": 0.06666666666666667,
+    "end_no_capture_games": 42,
+    "end_max_plies_games": 0,
+    "end_immobilized_games": 9,
+    "end_flag_games": 5,
+    "loop_soft_games": 4,
+    "loop_soft_game_rate": 0.06666666666666667,
+    "probe_ping_pong": 21,
+    "probe_ping_pong_per100": 0.4221105527638191,
+    "probe_turtling": 0,
+    "probe_turtling_per100": 0.0,
+    "probe_camp_abandonment": 126,
+    "probe_camp_abandonment_per100": 2.5326633165829144,
+    "probe_top_piece_suicide": 11,
+    "probe_top_piece_suicide_per100": 0.22110552763819097,
+    "probe_sapper_suicide": 6,
+    "probe_sapper_suicide_per100": 0.12060301507537688,
+    "probe_raw_hits": {
+     "camp_abandonment": 128,
+     "ping_pong": 21,
+     "sapper_suicide": 6,
+     "top_piece_suicide": 11
+    },
+    "probe_error": 0
+   },
+   "illegal_samples": [],
+   "transition_samples": [],
+   "gift_samples": []
+  }
+ ]
+}

@@ -535,11 +535,14 @@ class HybridAgent:
         # 4. 对候选走法进行战术评估与打分
         scored = []
         for a in candidates:
-            if avoid and a in avoid:
+            # 重复局面规避：`avoid` 里装的是 `position_key()` 产出的**局面键**，
+            # 因此必须用「走完之后的局面键」去比对（与 Agent / ExpertAgent /
+            # search 根节点 / MCTS / HybridDecisionEngine 同口径）。
+            # 只对走子判定：翻子会永久增加公开信息，其局面键不可能与历史键重合。
+            nxt = state.apply(a) if a.kind == "move" else None
+            if avoid and nxt is not None and position_key(nxt) in avoid:
                 tactical_score = -WIN_SCORE + 100.0
             elif a.kind == "move":
-                # 模拟执行移动
-                nxt = state.apply(a)
                 if nxt.is_terminal() and nxt.winner == state.turn:
                     # 一步制胜（直接吃旗赋予绝对最高斩杀优先级，避免因困毙平分被先验扰乱）
                     tgt = state.board.get(a.to)

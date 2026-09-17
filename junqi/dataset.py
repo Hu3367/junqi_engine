@@ -150,6 +150,15 @@ class DatasetStats:
     phase_distribution: dict = None
     outcome_distribution: dict = None
     hashes: dict = None
+    # --- 切分可审计性（2026-09-17 修复跨版本评测泄漏）---
+    # 背景：同一批 .sav 被多次重导出，各版本用同一 seed 洗**不同长度**的列表 ⇒
+    # 划分完全不同；旧版本 train 覆盖新版本 test 的约 80%，而 metadata 只存 SHA-256、
+    # 不存文件清单 ⇒ 重叠无法被审计发现。以下字段把每个 split 的 .sav 文件名落盘。
+    split_files: dict = None          # {"train": [basename...], "val": [...], "test": [...]}
+    sav_dir: str = ""                 # 语料来源目录（provenance）
+    frozen_test_files: list = None    # 本次导出被强制排除出 train/val 的冻结 test 局
+    frozen_test_missing: list = None  # 冻结清单里在本语料中找不到的文件（应为空）
+    leak_free: bool = False           # True = 已按冻结 test 清单排除（train/val ∩ canonical test = ∅）
 
 
 def compute_file_sha256(filepath: str) -> str:
@@ -159,6 +168,111 @@ def compute_file_sha256(filepath: str) -> str:
         while chunk := f.read(65536):
             sha.update(chunk)
     return sha.hexdigest()
+
+
+# ---------------------------------------------------------------- 切分清单与冻结 test
+
+FROZEN_TEST_MANIFEST = "datasets/canonical_test.json"
+
+
+def load_frozen_test_files(path: str = FROZEN_TEST_MANIFEST) -> list[str]:
+    """读取冻结的 canonical test 局文件清单（只取 basename）。
+
+    文件格式：``{"version": "...", "created_at": "...", "files": ["x.sav", ...]}``，
+    兼容裸 JSON 列表。文件不存在时返回 `[]` —— 此时导出不做冻结排除，
+    但 `DatasetStats.leak_free` 会记为 False，让审计脚本能区分
+    "没启用冻结" 与 "启用了但清单为空"。
+    """
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    raw = data.get("files") if isinstance(data, dict) else data
+    return sorted({os.path.basename(str(x)) for x in (raw or [])})
+
+
+def write_json_file(path: str, payload) -> None:
+    """写 UTF-8 JSON（自动建父目录）。"""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _reconstruct_legacy_manifests(valid_game_entries, seed: int,
+                                  split_ratios, targets) -> list[dict]:
+    """一次性迁移工具：反推历史数据集的切分清单，**仅在完全复现时才落盘**。
+
+    为什么需要：p1_v1/p1_v2/p1_v3 的 metadata 只有 SHA-256、没有文件清单，
+    导致跨版本的 train/test 重叠无法审计（2026-09-17 复核暴露的系统性缺陷）。
+
+    为什么可反推：这些版本的切分规则是「`.sav` 排序 → 清洗过滤 →
+    `random.Random(seed).shuffle(...)` → 按 ratios 前缀切分」，与本次导出
+    走的是同一段代码，因此用同一份 `valid_game_entries` 即可复算
+    （注意：洗的是**过滤后**的列表，所以必须用同一份有效局列表）。
+
+    安全性：只有反推出的 **局数与 plies 数逐项等于**目标 metadata 记录值时才
+    写入 `split_files.json`；否则只返回诊断、不落盘 ——
+    错误的清单比没有清单更危险（会让审计脚本给出虚假的"无泄漏"结论）。
+    """
+    results = []
+    for target in targets or []:
+        meta_path = os.path.join(target, "metadata.json")
+        if not os.path.exists(meta_path):
+            results.append({"target": target, "written": False,
+                            "reason": "目标目录缺少 metadata.json"})
+            continue
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        rng = random.Random(meta.get("seed", seed))
+        entries = list(valid_game_entries)
+        rng.shuffle(entries)
+        n = len(entries)
+        ratios = split_ratios or (0.8, 0.1, 0.1)
+        n_train = int(n * ratios[0])
+        n_val = int(n * ratios[1])
+        splits = {"train": entries[:n_train],
+                  "val": entries[n_train:n_train + n_val],
+                  "test": entries[n_train + n_val:]}
+
+        checks: dict = {}
+        ok = True
+        for name, es in splits.items():
+            got_games, got_plies = len(es), sum(len(g) for _, _, g in es)
+            exp_games, exp_plies = meta.get(f"{name}_games"), meta.get(f"{name}_plies")
+            match = (got_games == exp_games and got_plies == exp_plies)
+            ok = ok and bool(match)
+            checks[name] = {"games": got_games, "expected_games": exp_games,
+                            "plies": got_plies, "expected_plies": exp_plies,
+                            "match": bool(match)}
+        if int(meta.get("valid_games", -1)) != n:
+            ok = False
+            checks["valid_games"] = {"games": n,
+                                     "expected_games": meta.get("valid_games"),
+                                     "match": False}
+
+        payload = {
+            "source": "从 metadata 的 seed/split_ratios 复现（见 junqi.dataset._reconstruct_legacy_manifests）",
+            "dataset": target,
+            "dataset_version": meta.get("version"),
+            "seed_used": meta.get("seed", seed),
+            "split_ratios": list(ratios),
+            "verified": bool(ok),
+            "checks": checks,
+            "files": {name: sorted(os.path.basename(p) for p, _, _ in es)
+                      for name, es in splits.items()},
+        }
+        if ok:
+            write_json_file(os.path.join(target, "split_files.json"), payload)
+        results.append({
+            "target": target, "written": bool(ok),
+            "reason": ("局数与 plies 逐项吻合，清单已落盘"
+                       if ok else "反推结果与 metadata 不一致，**未落盘**（见 checks）"),
+            "checks": checks,
+        })
+    return results
 
 
 DES_KEY = bytes.fromhex("2c250ed4141278e7")
@@ -350,10 +464,33 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
                           seed: int = 2026, version: str = "3.0.0",
                           max_games: Optional[int] = None,
                           list_cfg_path: Optional[str] = None,
-                          min_plies: int = 20) -> DatasetStats:
+                          min_plies: int = 20,
+                          frozen_test_files: Optional[list] = None,
+                          legacy_manifest_targets: Optional[list] = None,
+                          write_npz: bool = True) -> DatasetStats:
     """从 .sav 文件目录构建标准 P1/P2 高质量行为克隆数据集（按对局切分，附带版本和哈希）。
     支持接入 list.cfg 官方权威终局判定真值数据库。
     包含数据清洗：自动过滤损坏对局与总步数小于 min_plies 的开局失衡秒退异常局。
+
+    `frozen_test_files`（2026-09-17 新增）：冻结 test 局的文件名清单（basename）。
+    给定后切分改为**冻结模式**：这些局**整批排除出 train/val**、并令
+    `test` **恒等于**该清单（不含任何随版本变化的额外局），
+    于是 `leak_free=True`、train/val 与 canonical test 交集恒为空，
+    且任意两个版本的 test 指标都建立在同一批对局上、可直接比较。
+    后续所有版本都应传同一份 `datasets/canonical_test.json`
+    （见 2026-09-17 复核报告 reviews/BC_ACCEPTANCE_VERDICT_2026-09-17.md）。
+
+    ⚠️ 未消除的残余风险：冻结模式只固定了 test，train/val 仍由 seed 洗牌决定
+    ⇒ 不同版本的 **train ∩ val** 仍可能重叠（影响的是"模型选择"层面的可比性，
+    不影响 test 指标的合法性）。彻底消除需要把 train/val 也一起冻结，
+    并把新增语料放进只允许进 train 的扩展池 —— 属于后续工作。
+
+    `legacy_manifest_targets`（2026-09-17 新增）：一次性迁移工具。给出若干历史数据集
+    目录（如 `datasets/p1_v3`），在**同一次重演**中顺带反推它们的切分清单，
+    只有局数与 plies 逐项吻合时才把 `split_files.json` 写进目标目录。
+    做完迁移后应传 None，保持导出逻辑纯净。
+
+    **不做**的事：不写 `split_files.json` 之外的历史产物；不改动任何既有 npz。
     """
     os.makedirs(out_dir, exist_ok=True)
     cfg = RuleConfig()
@@ -427,17 +564,60 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
     if max_games is not None and max_games > 0:
         valid_game_entries = valid_game_entries[:max_games]
 
+    # 2.5 一次性迁移：反推历史数据集（p1_v3 等）的切分清单（必须在 shuffle 之前，
+    #     因为反推要求用**同一份有效局列表**按同一 seed 独立洗牌）。
+    legacy_manifest_results = _reconstruct_legacy_manifests(
+        valid_game_entries, seed, split_ratios, legacy_manifest_targets)
+    for res in legacy_manifest_results:
+        print(f"[Dataset] 反推历史切分 {res['target']}: {res['reason']}")
+
     # 3. 确定性按对局洗牌并划分 Train / Val / Test
+    #
+    # 冻结 test（2026-09-17 修复）：canonical test 局**先从可训练池中整批剔除**，
+    # 再对剩余局按 ratios 洗牌切分，最后把冻结局整体并入 test。
+    # 这样 train/val 与冻结 test 的交集恒为空（leak_free=True），
+    # 且各版本共享同一份 test 语料 ⇒ 跨版本指标可比。
+    frozen_set = {os.path.basename(str(x)) for x in (frozen_test_files or [])}
+    frozen_entries = [e for e in valid_game_entries
+                      if os.path.basename(e[0]) in frozen_set]
+    trainable = [e for e in valid_game_entries
+                 if os.path.basename(e[0]) not in frozen_set]
+    frozen_missing = sorted(frozen_set - {os.path.basename(e[0]) for e in frozen_entries})
+    if frozen_missing:
+        print(f"⚠️ [Dataset] 冻结清单中有 {len(frozen_missing)} 个文件在本语料中未找到: "
+              f"{frozen_missing[:5]}{' ...' if len(frozen_missing) > 5 else ''}")
+    if frozen_set:
+        print(f"[Dataset] 冻结 test: 命中 {len(frozen_entries)}/{len(frozen_set)} 局，"
+              f"已从可训练池剔除（可训练 {len(trainable)} 局）")
+
     rng = random.Random(seed)
-    rng.shuffle(valid_game_entries)
+    rng.shuffle(trainable)
 
-    n_total_valid = len(valid_game_entries)
-    n_train = int(n_total_valid * split_ratios[0])
-    n_val = int(n_total_valid * split_ratios[1])
-
-    train_entries = valid_game_entries[:n_train]
-    val_entries = valid_game_entries[n_train:n_train + n_val]
-    test_entries = valid_game_entries[n_train + n_val:]
+    n_trainable = len(trainable)
+    if frozen_set:
+        # 冻结模式：**test 恒等于 canonical 清单**，非冻结局只分给 train / val。
+        #
+        # 为什么不能让 test 里带"额外的新局"：那些局的划分随版本变化，
+        # 于是又会与其它版本的 train 重叠 —— 正是本次要根除的问题。
+        # test 恒等 ⇒ 任何两个版本的 test 指标都建立在同一批对局上，可直接比较。
+        #
+        # train/val 的比例按原 ratios 在剩余池里**相对**分配：
+        # r0=0.8, r1=0.1 ⇒ train 占剩余池的 0.8/0.9 = 88.89%。
+        # （951 局语料 + 96 局冻结 test ⇒ train 760 / val 95 / test 96，
+        #   与修复前的 p1_v3 局数一致，但 test 被钉在 canonical 上。）
+        share = split_ratios[0] + split_ratios[1]
+        train_share = (split_ratios[0] / share) if share > 0 else 0.8
+        n_train = int(n_trainable * train_share)
+        n_val = n_trainable - n_train
+        train_entries = trainable[:n_train]
+        val_entries = trainable[n_train:]
+        test_entries = list(frozen_entries)
+    else:
+        n_train = int(n_trainable * split_ratios[0])
+        n_val = int(n_trainable * split_ratios[1])
+        train_entries = trainable[:n_train]
+        val_entries = trainable[n_train:n_train + n_val]
+        test_entries = trainable[n_train + n_val:] + frozen_entries
 
     splits = {
         "train": train_entries,
@@ -451,7 +631,7 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
         seed=seed,
         min_plies=min_plies,
         total_sav_files=total_files,
-        valid_games=n_total_valid,
+        valid_games=len(valid_game_entries),
         invalid_games=invalid_count,
         filtered_short_games=filtered_short_count,
         train_games=len(train_entries),
@@ -459,7 +639,14 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
         test_games=len(test_entries),
         phase_distribution={"opening": 0, "midgame": 0, "endgame": 0},
         outcome_distribution={"decided_win": 0, "rule_draw": 0, "special_or_unfinished": 0},
-        hashes={}
+        hashes={},
+        # 切分清单：可审计性的关键（见 DatasetStats 上的说明）
+        split_files={name: sorted(os.path.basename(p) for p, _, _ in entries)
+                     for name, entries in splits.items()},
+        sav_dir=str(sav_dir),
+        frozen_test_files=sorted(frozen_set),
+        frozen_test_missing=frozen_missing,
+        leak_free=bool(frozen_set),
     )
 
     for split_name, entries in splits.items():
@@ -515,6 +702,11 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
 
         # 压缩存储为 npz 文件
         out_npz = os.path.join(out_dir, f"{split_name}.npz")
+        if not write_npz:
+            stats.hashes[f"{split_name}.npz"] = None
+            print(f"  [Split: {split_name}] {len(entries)} 局, {n_samples} plies "
+                  f"（--no-write-npz：仅统计，不落盘）")
+            continue
         np.savez_compressed(
             out_npz,
             states=np.array(all_states, dtype=np.float32),
@@ -528,10 +720,18 @@ def export_replay_dataset(sav_dir: str, out_dir: str = DEFAULT_P1_DIR,
         stats.hashes[f"{split_name}.npz"] = compute_file_sha256(out_npz)
         print(f"  [Split: {split_name}] 写入 {len(entries)} 局, {n_samples} plies -> {out_npz}")
 
-    # 写入元数据 JSON
+    # 写入元数据 JSON（2026-09-17 起额外落盘每个 split 的 .sav 文件名清单，
+    # 供 scripts/audit_dataset_leakage.py 做跨版本重叠审计）
+    if not write_npz:
+        print("[Dataset] --no-write-npz：跳过 npz 与 metadata 落盘"
+              "（本次仅用于反推历史切分清单 / 统计口径核对）")
+        return stats
     meta_path = os.path.join(out_dir, "metadata.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(asdict(stats), f, indent=2, ensure_ascii=False)
+    write_json_file(meta_path, asdict(stats))
+    print(f"[Dataset] 元数据已写入 {meta_path}"
+          f"（split_files: train {len(stats.split_files['train'])} / "
+          f"val {len(stats.split_files['val'])} / test {len(stats.split_files['test'])}；"
+          f"leak_free={stats.leak_free}）")
 
     return stats
 

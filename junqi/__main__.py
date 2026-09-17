@@ -192,7 +192,7 @@ def main(argv=None):
     fw.add_argument("--verify", type=int, default=0, help="验证镜像对局数（0=跳过）")
     fw.add_argument("--workers", type=int, default=8, help="验证对局并行进程数")
 
-    from .dataset import DEFAULT_P1_DIR
+    from .dataset import DEFAULT_P1_DIR, FROZEN_TEST_MANIFEST
 
     ed = sub.add_parser("export_dataset", help="P1: 从复盘数据导出标准行为克隆数据集")
     default_sav = "军旗复盘" if os.path.exists("军旗复盘") else "../军旗复盘"
@@ -201,6 +201,16 @@ def main(argv=None):
     ed.add_argument("--seed", type=int, default=2026, help="随机种子")
     ed.add_argument("--version", default="3.0.0",
                     help="数据集版本号（低于 3.0.0 的数据集会被训练侧拒绝加载）")
+    ed.add_argument("--min-plies", type=int, default=20,
+                    help="短步数弃赛局过滤阈值（默认 20，改动会改变有效局集合）")
+    ed.add_argument("--frozen-test", default=FROZEN_TEST_MANIFEST,
+                    help="冻结 test 清单 JSON（默认 datasets/canonical_test.json；"
+                         "none = 不启用冻结排除，leak_free 记为 False）")
+    ed.add_argument("--legacy-reconstruct", nargs="*", default=None,
+                    help="一次性迁移：反推这些历史数据集目录（如 datasets/p1_v3）的切分清单，"
+                         "仅在局数/plies 逐项吻合时写入其 split_files.json")
+    ed.add_argument("--no-write-npz", action="store_true",
+                    help="只统计/反推清单，不写 npz 与 metadata（用于迁移与口径核对）")
 
     evd = sub.add_parser("eval_dataset", help="P1: 评估数据集上的 Policy 基准与分阶段覆盖率")
     evd.add_argument("--dataset", default=f"{DEFAULT_P1_DIR}/val.npz",
@@ -366,13 +376,24 @@ def main(argv=None):
                 seed=args.seed, out=args.out, verify=args.verify,
                 workers=args.workers)
     elif args.cmd == "export_dataset":
-        from .dataset import export_replay_dataset
-        stats = export_replay_dataset(args.sav_dir, out_dir=args.out_dir, seed=args.seed, version=args.version)
+        from .dataset import export_replay_dataset, load_frozen_test_files
+        frozen = ([] if str(args.frozen_test).lower() == "none"
+                  else load_frozen_test_files(args.frozen_test))
+        if args.frozen_test and str(args.frozen_test).lower() != "none":
+            print(f"[export_dataset] 冻结 test 清单 {args.frozen_test}: "
+                  f"{len(frozen)} 个文件")
+        stats = export_replay_dataset(
+            args.sav_dir, out_dir=args.out_dir, seed=args.seed, version=args.version,
+            min_plies=args.min_plies, frozen_test_files=frozen,
+            legacy_manifest_targets=args.legacy_reconstruct,
+            write_npz=not args.no_write_npz)
         print(f"P1 数据集已成功生成至 {args.out_dir}:")
         print(f"  - 总局数: {stats.total_sav_files} (有效: {stats.valid_games}, 无效: {stats.invalid_games})")
         print(f"  - 切分: Train {stats.train_games} 局 ({stats.train_plies} plies), Val {stats.val_games} 局 ({stats.val_plies} plies), Test {stats.test_games} 局 ({stats.test_plies} plies)")
         print(f"  - Policy 样本数: {stats.policy_samples_count}, Value 样本数: {stats.value_samples_count}")
         print(f"  - 阶段覆盖率: {stats.phase_distribution}")
+        print(f"  - leak_free={stats.leak_free}，frozen 命中 {len(stats.frozen_test_files)} 局，"
+              f"缺失 {len(stats.frozen_test_missing)} 个")
     elif args.cmd == "eval_dataset":
         from .dataset import evaluate_dataset_policy
         report = evaluate_dataset_policy(args.dataset, max_samples=args.samples)

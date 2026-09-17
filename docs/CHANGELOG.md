@@ -1,5 +1,386 @@
 # CHANGELOG
 
+## [2026-09-17] 第二十一批 — P2 验收第 2 条补测（三阶段集合）+ 第 3 条门控复跑（修复后）
+
+阶段归属：**P2（行为克隆与搜索蒸馏）**。承接第二十批 §五 的两项遗留：
+① 第 3 条的门控跑在 `ai.py:538` 修复之前；② 第 2 条从未测过。
+明细见 `reviews/P2_ACCEPTANCE_2_AND_GATE_RERUN_2026-09-17.md`。
+
+### 一、③ 门控复跑（修复后）
+
+```bat
+python -m junqi gate --a hybrid2 --b search2 --seeds 100 --workers 4 ^
+    --init-set eval_sets/endgame.jsonl --model-a models/bc_best.pt ^
+    --out reports --out-name gate_hybrid2_vs_search2_p2accept_postfix
+```
+
+与修复前完全同命令（仅换 `--out-name` 以免覆盖留档）。同 100 组配对种子：
+
+| 口径 | 修复前 | 修复后 |
+|---|---|---|
+| 战绩 | 24 胜 / 161 和 / 15 负 | **34 胜 / 151 和 / 15 负** |
+| 得分率 / Wilson | 0.5225 / [0.4535, 0.5906] | **0.5475 / [0.4783, 0.6149]** |
+| 配对检验 | z=+1.993, p=0.0463 | **z=+3.752, p=0.0002** |
+| SPRT | LLR −28.447 → `accept_h0` | LLR −1.966 → `continue` |
+| 配对 Δ 检验 | +243.2, p<0.0001 | +270.6, p<0.0001 |
+| `repetition` 和 | **75** | **6** |
+| `no_capture` 和 | 86 | 145 |
+
+**判定：③ 通过（非劣）** —— 点估计 0.5475 > 0.5，非劣界 δ=5% 成立（Wilson 下界 0.4783 > 0.45）。
+仍**不可**宣称"显著优于 search2"（区间含 0.5，SPRT 未达 `accept_h1`）。
+⚠️ 两数是两次独立门控的对照，**不是两版引擎直接对杀**，差值未经假设检验。
+
+### 二、② 三阶段"无明显崩溃"：新增两条证据链
+
+验收原文只有"无明显崩溃"一句，本批把它拆成可证伪的两层，并新增工具
+`scripts/audit_p2_phase_stability.py`（决策级全量覆盖，42 秒跑完）。
+
+**为什么新脚本不能省**：`HybridStrategy.choose` / `ExpertStrategy.choose` 在拿到空结果时
+会用 `rng.choice(legal)` 兜底 —— 那会把"内层决策崩溃"掩盖成一次随机走子。
+新脚本因此直接调用 `strat.agent.choose_actions`，并逐条检查
+① 抛异常 ② 存在合法动作却返回空 ③ 首选动作不在 `legal_actions()` 中。
+
+**决策级（每阶段全部 200 快照 × 2 引擎）**：`opening / midgame / endgame` 六个组合
+异常、返回空、非法**全部为 0**，总判定通过。开局单步 p95 仅 39.9 ms（对照 `expert2` 中盘 p95 430 ms）。
+
+**对局级（每阶段 12 局 × 2 配置，`--seed-base 900000`）**：
+
+| 阶段 | 判定 | 非法 | 送旗 | 重复判和 | 往复踱步/100 | 龟缩拒翻/100 |
+|---|---|---|---|---|---|---|
+| opening | ❌ | 0/3500 | 0/3500 | 1/12 | **1.2000**（对照 0.4292） | **7.9429**（对照 4.3225） |
+| midgame | ❌ | 0/2436 | 0/2436 | 1/12 | 0.0821（对照 0.1927） | **6.3218**（对照 6.0071） |
+| endgame | ✅ | 0/925 | 0/925 | 0/12 | 0.0000（对照 0.6529） | 0.0000 |
+
+- `opening` 两个行为探针同时满足"Wilson 不重叠 + 幅度 > 1.5×"⇒ FAIL（往复踱步 **2.80×**、龟缩拒翻 **1.84×**）。
+- `midgame` **仅**因龟缩拒翻超 `--abs-cap 2.0` 而 FAIL，但**对照 `expert2` 自己也是 6.0071**
+  ⇒ 这是**绝对上限标定失当**（该值在残局靶场标定：`expert2` 在 endgame 为 0.0000），
+  不是候选相对劣势。
+- `N=12` 的理由：开局/中盘单局 244–295 手、耗时 50–90 秒，瓶颈在对手 `search2`；
+  `--games 60` 在开局约需 1 小时/配置。决策级压测已用全量 200 快照补足覆盖。
+
+**② 判定：未通过**（不让"硬判据全过"掩盖开局的行为缺口），
+但缺口是**既有问题**、已被第二十批的修复**减轻**、**不阻塞 P3**。
+
+### 三、回归排查：开局探针劣势不是本次修复引入的
+
+把工程最小运行时子集复制到 `E:\Local code\军棋\_p2_prefix_base`，
+用 `git show HEAD:junqi/ai.py` 覆写副本里的 `ai.py`（副本与工作区**仅此一文件不同**），
+以**完全相同的种子与起始局面**重跑同一审计：
+
+| 阶段 | 指标 | 修复前 | 修复后 | 对照 `expert2` |
+|---|---|---|---|---|
+| opening | 往复踱步/100 | 1.4053（31/2206） | **1.2000** | 0.4292 |
+| opening | 龟缩拒翻/100 | 11.8767（262/2206） | **7.9429** | 4.3225 |
+| opening | 重复判和 | **9/12 = 75%** | **1/12 = 8.3%** | 1/12 |
+| midgame | 往复踱步/100 | 0.1018（2/1964） | **0.0821** | 0.1927 |
+| midgame | 龟缩拒翻/100 | 7.8411（154/1964） | **6.3218** | 6.0071 |
+| midgame | 重复判和 | **7/12 = 58.3%** | **1/12 = 8.3%** | 3/12 |
+
+⇒ **三阶段每一项指标都在修复后改善，无任何退化**。开局探针劣势是 `hybrid2` 的既有棋风
+（修复前比现在还重 17–50%）。
+
+### 四、未解决问题
+
+1. ⚠️ **修复的棋力影响缺直接 A/B**：需一个 `hybrid2_prefix`（修复前 `HybridAgent`）对手入口，
+   `junqi/selfplay.py::make_strategy` 现无该 spec，未加。
+2. ⚠️ **`--abs-cap` 需按阶段标定**：当前 2.0/100 在开局/中盘会让任何引擎判 FAIL
+   （对照 `expert2` 分别为 4.32 / 6.01）。本轮未改。
+3. ⚠️ **开局棋风是独立待办**：往复踱步 2.80×、龟缩拒翻 1.84× 于 `expert2`。
+   属"BC 单次前向先验 + `top_k=6` 候选"的固有倾向，建议独立课题处理
+   （提高 `top_k` / 加强营间闲走惩罚 / 阶段化 `prior_weight`）。
+4. ②/④ 的对局级口径均为**无头自对弈**，不经 GUI 事件循环（点击合法性由 P0 的
+   `legal_actions` 门控保证，同一真源）。
+5. ② 的 `N=12` 对稀疏事件（送旗）统计力弱；若要作为正式晋级判据应扩到 ≥60 局/阶段。
+
+## [2026-09-17] 第二十批 — P2 验收第 4 条：新增审计 + 定位并修复混合引擎的重复局面规避缺陷
+
+阶段归属：**P2（行为克隆与搜索蒸馏）**。承接第十九批未完成的"验收第 4 条"。
+本批含**一处生产代码修复**（`junqi/ai.py`），流程按纪律执行：先加回归测试 → 确认它失败 → 再改实现 → 复测。
+
+### 一、新增审计脚本（首次运行：**未通过**）
+
+新增 `scripts/audit_p2_game_quality.py`：此前的唯一证据是 `junqi/eval_bc.py` 里硬编码的一行
+"非法动作预测率 0.00%"，**没有分母**、也没覆盖送旗与循环。
+
+- 分母 `decisions` = 双方实际做出选择的次数；另有局级分母。
+- **非法**：动作不在 `legal_actions()` 中；或 `apply()` 后状态不变量被破坏。
+- **送旗**：军旗 `Rank.QI` 不可移动，所以送旗只能是"本方这一手**新造出**对方一步可吃己方军旗
+  的窗口"。判定复用 `legal_actions()`（规则唯一真源），**不重写** `flag_gong_only` 等门控。
+  并额外报告"窗口出现次数"——本规则集 `flag_needs_mines_cleared=True` 时窗口可能整局不出现，
+  不报窗口数就会把"指标失效"误读成"棋风干净"。
+- **无意义循环**：`repetition` / `max_plies` / 往复踱步探针 / 龟缩拒翻探针；
+  探针按**事件段**折叠计数（按 ply 计数会被长循环放大）。
+- **判定**：非法类硬性为 0；其余与对照 `expert2`（同起始局面、同对手、同 60 局）做
+  **Wilson 非劣性检验**（与 `eval_gate` 同一统计真源）：判 FAIL 需同时满足
+  "候选 Wilson 下界 > 对照 Wilson 上界" 且 "点估计 > 对照 × 1.5"。
+
+首次结果（留档 `reports/p2_game_quality_prefix_20260917.{json,md}`）：
+
+| 指标 | `hybrid2` vs `search2` | 对照 `expert2` | 判定 |
+|---|---|---|---|
+| 非法动作 / 状态转移 | 0 / 4165、0 / 4165 | 0 / 0 | ✅ |
+| 送旗（每 100 决策） | 1 = 0.024 | 0 | ✅ |
+| 往复踱步事件段（每 100 决策） | 0.192 | 0.422 | ✅ 优于对照 |
+| **重复判和 + 触顶（局占比）** | **24/60 = 40.0%** | 4/60 = 6.7% | ❌ **显著且幅度更大** |
+
+关键读法：两者**总判和局数相同**（55/60），所以不是"和棋更多"，而是"**判和的方式变了**"——
+`repetition` 24 vs 4、`no_capture` 23 vs 42。往复踱步探针反而更低（8 vs 21）
+⇒ 这些重复不是两格踱步，而是经典探针抓不到的**多子绕圈长循环**。
+
+### 二、根因：`junqi/ai.py:538` 的 avoid 判定恒不命中
+
+```python
+if avoid and a in avoid:          # ← 恒为 False
+    tactical_score = -WIN_SCORE + 100.0
+```
+
+`avoid` 是**局面键集合**（`junqi/state.py::position_key()` 产出的
+`(tuple(obs), turn, seat_color[0], seat_color[1])`），
+而 `a` 是 `Action` **dataclass**（`kind/frm/to`）。类型不同 ⇒ **判定永远不命中**
+⇒ 混合引擎**从不规避重复局面**。
+
+同仓其余 5 处消费者**全部写法正确**（`position_key(state.apply(a)) in avoid`）：
+`ai.py:208-212`（`Agent`）、`ai.py:451`（`ExpertAgent`）、`search.py:1096-1099`（专家搜索根节点）、
+`mcts.py:155-158`、`hybrid_engine.py:195`。⇒ 这是**孤例错误**，不是设计意图。
+
+### 三、修复与回归测试
+
+```python
+nxt = state.apply(a) if a.kind == "move" else None
+if avoid and nxt is not None and position_key(nxt) in avoid:
+    tactical_score = -WIN_SCORE + 100.0
+elif a.kind == "move":
+    ...
+```
+
+1. **只对走子判定**：翻子会**永久增加公开信息**，而 `position_key` 记录每格的
+   `(color, rank)` 或 `None` ⇒ 翻子后的局面键**不可能与任何历史键重合**，
+   重复判和在数学上不可能由翻子造成。加该限制既正确又省一次 `apply`。
+2. `nxt` 提到循环顶部**只算一次**，消掉了原实现"命中路径漏算、常规路径才算"的重复 `apply`。
+
+新增回归测试 `tests/test_hybrid_agent.py::test_hybrid_agent_penalizes_repetition_position`：
+
+- 构造"1 个明子（可走）+ 1 个暗子（可翻）"的局面；先用**不传 `avoid`** 的完整打分
+  挑出"本来最优的那步走子"，再把它的后继局面键放进 `avoid` 重问一次。
+- 断言：该走法仍出现在打分表里（只是垫底）、**必须排末位**、分数 `< -1e5`。
+- **自校准设计**：目标由"无 avoid 时的最优走子"动态选出 ⇒ 修复前必然失败，
+  不会出现"碰巧没被选中而假通过"。
+
+实测流程（先红后绿）：
+
+```
+修复前： test_hybrid_agent_penalizes_repetition_position FAILED
+         E  AssertionError: Action(...to=(3, 0)) != Action(...to=(3, 2)) : 命中 avoid 的走法必须被罚到末位
+         1 failed, 3 passed
+修复后： 4 passed in 1.64s
+回归：   tests/test_hybrid_agent.py + tests/test_hybrid_tactical_pricing.py
+         + tests/test_p1_advanced_enhancements.py（含 TestP1DHybridAgentIntegration）= 21 passed
+```
+
+### 四、复测（同一命令、同一种子基 `--seed-base 900000`）：**通过**
+
+| 指标 | 修复前 | **修复后** | 对照 `expert2` | 判定 |
+|---|---|---|---|---|
+| 非法动作 / 状态转移 | 0 / 0 | **0 / 0**（分母 5798） | 0 / 0 | ✅ |
+| 送旗（每 100 决策） | 1/4165 = 0.024 | **1/5798 = 0.017** | 0 | ✅ |
+| 送旗致失旗（局） | 1/60 | **1/60** | 0/60 | ✅ |
+| 往复踱步事件段（每 100 决策） | 0.192 | **0.138** | 0.422 | ✅ 优于对照 |
+| 龟缩拒翻 | 0 | **0** | 0 | ✅ |
+| **重复判和 + 触顶（局占比）** | **24/60 = 40.0%** | **2/60 = 3.3%** | 4/60 = 6.7% | ✅ **由 6 倍劣势转为优于对照** |
+| 平均手数 | 125.1 | **152** | 138.6 | — |
+
+终局原因分布（局）：
+
+| 配置 | flag | immobilized | no_capture | repetition | 和棋 | 分胜负 |
+|---|---|---|---|---|---|---|
+| hybrid2（修复前） | 5 | 8 | 23 | **24** | 47 | 13 |
+| **hybrid2（修复后）** | 5 | 12 | 41 | **2** | 43 | **17** |
+| expert2（对照） | 5 | 9 | 42 | 4 | 46 | 14 |
+
+`repetition` 的 22 局大多转成 `no_capture`（多子绕圈被消除后，改由既有的 70 手无吃子规则收尾）；
+`immobilized` 8→12、分胜负局 13→17，**决定性略有提升**，与平均手数 125→152 方向一致。
+
+⇒ 验收第 4 条判定：**通过**（7 项判据全部 PASS）。
+报告：`reviews/P2_ACCEPTANCE_34_AND_DATA_SPLIT_2026-09-17.md` §7。
+
+### 五、未解决问题
+
+1. ✅ **已做（见上方第二十一批）**：第 3 条门控已用修复后的引擎重跑 ——
+   得分率 0.5225 → **0.5475**、配对 p 0.0463 → **0.0002**、`repetition` 和 75 → **6**，
+   非劣判定仍成立。
+2. ✅ **已做（见上方第二十一批）**：第 2 条已在 `eval_sets/{opening,midgame,endgame}.jsonl`
+   三阶段上补测 —— 决策级 600 快照全覆盖零违规；对局级 `endgame` 通过、
+   `opening`/`midgame` 因两个行为探针未过，并已证明**非本次修复引入**（修复使三阶段全部改善）。
+3. ④ 的对照口径仍是"与 `expert2` 比"；未做"同一模型开/关重复惩罚"的门控 A/B 来量化
+   该修复对**胜率**的影响。
+4. ④ 只在**残局起始局面**上做了 60 局，且是无头自对弈（未经 GUI 事件循环）。
+
+## [2026-09-17] 第十九批 — 补 P2 验收第 3 条（门控）+ 数据集切分可审计化
+
+阶段归属：**P2（行为克隆与搜索蒸馏）**。承接第十八批的复核结论
+（`reviews/BC_ACCEPTANCE_VERDICT_2026-09-17.md` §6 建议的"先补 P2 缺口、再修数据切分"）。
+
+### 一、补 P2 验收第 3 条：混合代理在相同计算预算下不弱于 `search2`
+
+```bat
+python -m junqi gate --a hybrid2 --b search2 --seeds 100 --workers 4 ^
+    --init-set eval_sets/endgame.jsonl --model-a models/bc_best.pt ^
+    --out reports --out-name gate_hybrid2_vs_search2_p2accept
+```
+
+（`--init-set` 是必需的：纯随机发牌下自对局大面积循环判和，门控无分辨力。）
+
+结果（`reports/gate_hybrid2_vs_search2_p2accept.json`，200 局）：
+
+| 口径 | 结果 | 判定 |
+|---|---|---|
+| 官方得分率（胜1/和0.5/负0） | **0.5225**，Wilson 95%CI [0.4535, 0.5906] | 点估计 > 0.5；区间含 0.5 |
+| 仅计胜负局胜率 | 0.6154（24 胜 / 15 负，n=39） | 样本太少，不做判据 |
+| SPRT（elo0=0, elo1=65） | LLR −28.45 → `accept_h0` | 不能宣告"显著更强" |
+| 配对 Δ 检验（保留估值差幅度） | mean **+243.2**，t=+4.747，p<0.0001，符号 正72/负28 | **显著为正** |
+| 裁决式判分（和棋按终局估值判） | 0.5100，Wilson [0.4412, 0.5784] | 受座位标签偏差影响，偏保守 |
+
+终局原因：`no_capture` 86、`repetition` 75、`immobilized` 20（16 胜/4 负）、`flag` 19（8 胜/11 负）。
+
+**采用结论**：以"**不弱于**"（非劣性）为判据 —— 得分率点估计 0.5225 > 0.5，
+非劣性在 δ=5% 界下成立（Wilson 下界 0.4535 > 0.45），且配对 Δ 检验 p<0.0001 支持更强。
+但**不能**宣称"显著优于 search2"（SPRT 接受 H0；长期记忆：分辨 0.05 得分率差需 ~1500 局）。
+验收条款 ③ 判定为**通过（非劣）**。
+
+### 二、数据集切分可审计化（根治跨版本评测泄漏）
+
+第十八批定证的泄漏机理是"`metadata.json` 只有 SHA-256、没有文件名清单 ⇒
+旧版 train 覆盖新版 test 约 80% 而无法被审计"。本批从三处堵住：
+
+1. **清单落盘**（`junqi/dataset.py`）：`DatasetStats` 新增
+   `split_files` / `sav_dir` / `frozen_test_files` / `frozen_test_missing` / `leak_free`，
+   导出时把每个 split 的 `.sav` 文件名写进 `metadata.json`。
+2. **冻结 test 机制**：新增 `frozen_test_files` 参数与 `--frozen-test` CLI。
+   给定清单后切分进入**冻结模式**：冻结局整批排除出 train/val，且
+   **`test` 恒等于 canonical 清单**（不再掺入随版本变化的额外局，否则又会重新引入重叠）。
+   非冻结局只在 train/val 间按 ratios 相对分配（0.8/0.1 ⇒ 88.89% 进 train）。
+3. **泄漏审计脚本**：新增 `scripts/audit_dataset_leakage.py`。
+   - 单数据集内部：train/val/test 两两互斥；
+   - 跨版本：3×3 交集矩阵，`(train|val) × test` 命中即 **ERROR**（test 分数无效），
+     `train×val` / `val×val` 命中为 **WARN**（只影响模型选择可比性）；
+   - canonical 守卫：任何数据集 train/val 不得含冻结局；`leak_free` 版本的 test 必须覆盖清单；
+   - **兜底**：没有任何数据集携带清单时报 ERROR"无法判定"，而不是绿灯"未发现泄漏"
+     （把"审计盲区"包装成"合规"是本次缺陷的根源）；
+   - `--freeze-from <dir>` 冻结某数据集的 test 划分并回写其 `leak_free`；
+   - `--exempt` 历史豁免名单，非零交集照打印、只降级为 WARN，避免守卫被长期忽略。
+4. **历史切分反推**（`_reconstruct_legacy_manifests`）：用同一份有效局列表按 metadata 的
+   seed/ratios 复算，**只有局数与 plies 逐项吻合才落盘**
+   （错清单比没有清单更危险）。对 `datasets/p1_v3` 反推成功：
+
+   | split | 局数（反推/记录） | plies（反推/记录） |
+   |---|---|---|
+   | train | 760 / 760 | 90645 / 90645 |
+   | val | 95 / 95 | 11360 / 11360 |
+   | test | 96 / 96 | 11811 / 11811 |
+
+   产出 `datasets/p1_v3/split_files.json`（`verified: true`），
+   从此 p1_v3 的切分可被审计，其诚实基线（`bc_best.pt` 在 p1_v3/test Top-1 **24.90%**）
+   也随之成为受保护的 canonical 分数。
+
+### 三、冻结 canonical test 与 p1_v4
+
+- `datasets/canonical_test.json`：96 局，来自 p1_v3 的 test 划分（与 p1_v3/test 逐文件一致）。
+- `datasets/p1_v4`（version 4.0.0，`--frozen-test datasets/canonical_test.json`）：
+  train 760 局 / 90645 plies，val 95 局 / 11360 plies，test 96 局 / 11811 plies，
+  `leak_free=True`，冻结命中 96/96、缺失 0。
+  总体本量（951 有效局、113816 plies、phase 分布）与 p1_v3 完全一致 —— 只是重新划分。
+- 实测 `p1_v3` 与 `p1_v4` 的关系：
+  `test∩test = 96`（同一 canonical），`train∩train = 678`，
+  `train∩val = 82`（双向）、`val∩val = 13` ⇒ **无致命泄漏**（`(train|val)∩test = 0`），
+  但 train/val 层面仍有重叠 ⇒ 审计给出 WARN"模型选择不可比"。
+  ⚠️ 这一点是**已知残余风险**：冻结模式只钉住 test；
+  彻底消除需把 train/val 也冻结、新增语料只进"train 扩展池"（后续工作）。
+
+### 四、测试
+
+新增 `tests/test_dataset_split_manifest.py`（17 项）：清单落盘与内部互斥、
+冻结模式（test 恒等于 canonical、train/val 排除冻结局、`leak_free`）、
+`--no-write-npz` 不落盘、反推"全等才落盘/plies 或有效局数不符则拒写"、
+审计脚本的内部重叠 ERROR、`(train|val)×test` ERROR、`train×val` WARN、
+`--exempt` 降级、canonical 落入 train 的 ERROR、"零个可审计数据集 ≠ 通过"、
+`--freeze-from` 回写 `leak_free`。
+
+回归：`tests/test_dataset.py`、`tests/test_bc_pipeline.py`、
+`tests/test_p1_dataset_label_consistency.py`、`tests/test_p3_audit_artifacts.py`、
+`tests/test_p4_model_cleanup_script.py`、`tests/test_eval_gate.py` 全部通过。
+
+### 五、未解决问题
+
+1. **P2 验收第 4 条**（非法/送旗/无意义循环比例）在本批之后补测 —— 见上方**第二十批**
+   （首次未通过，已定位并修复 `junqi/ai.py:538`，复测通过）与 `reports/p2_game_quality_*.md`。
+2. `p1_v1` / `p1_v2` **无法反推切分清单**（其"有效局"判定口径已变：p1_v2 只认 835 局有效、
+   把 116 局判为损坏），只能标注为"历史不可审计"，已列入 `--exempt`。
+   它们与其它版本的重叠数字永远拿不到 —— 其派生模型（`models/pool/*`、
+   `bc_best_legacy_36ch_20260906.pt`）的任何跨版本对比仍然无效。
+3. 训练侧默认仍是 `DEFAULT_P1_DIR = datasets/p1_v3`（现已 `leak_free=True`、test 即 canonical，
+   因此无需强制迁移）；但**后续任何语料更新都必须走 `--frozen-test`**，
+   否则审计会立刻报 ERROR。
+4. `junqi/train_rl.py:1280-1282` 基于泄漏值（0.735/0.288）优先取
+   `models/value_distilled_v2.pt` 的热启动决策仍未修改 —— 见 `reviews/` 复核报告 §6。
+
+## [2026-09-17] 第十八批 — P2 行为克隆验收复核：确认跨数据集版本评测泄漏（**无代码改动，文档/审计批**）
+
+阶段归属：**P2（行为克隆与搜索蒸馏）**。本批**未修改任何生产代码**，仅对
+`reports/p2_bc_report.md`（重跑 `train_bc` 于 `datasets/p1_v3`，15 轮）做独立复核，
+产出 `reviews/BC_ACCEPTANCE_VERDICT_2026-09-17.md`，并修正长期记忆中被污染的结论。
+
+### 一、复核结论
+
+1. **`reports/p2_bc_report.md` 不能作为验收证据**：
+   - 4 条 `[x]` 验收勾选与随机基线（2.34%/7.02%/11.50%/CE 3.790）都是 `junqi/eval_bc.py:203-232`
+     的硬编码字面量，与实测无关；其中"模型已具备作为先验指导混合搜索的完整能力"从未被测量；
+   - "200 局独立对局"与 `datasets/p1_v3/metadata.json` 的 `test_games=96` 不符；
+   - "Value 期望 MSE 0.7686 vs 基线 1.000 → 准确预测胜率期望"**结论错误**：该指标无技巧基线是
+     `E[t²]=0.4517`，模型 0.7686 反而差 70%。
+2. **本次重训相对上一版无提升**：诚实 Top-1 24.90%，上一版诚实值 24.39%。
+   训练曲线（`models/bc_best_history.json`）显示 val Top-1 第 4 轮见顶 25.36% 后单调恶化
+   （val loss 3.62→9.19），train Top-1 记到 98.63% —— 延长 epoch 无收益。
+3. **新 BC 的 Value 头对未见对局零判别力**：胜负 AUC（P(win)−P(loss)）= **0.4899**，
+   召回 胜 23.2% / 和 58.9% / 负 24.0%（胜、负低于随机 33.3%），MSE 0.7686 > 平凡基线 0.4517。
+4. **⚠️ 定证：跨数据集版本评测泄漏**（本批最重要的发现）。同一模型在"自己训过的划分"上
+   Top-1 45–52%，在"自己没训过的划分"上只有 24–25%：
+
+   | 模型（训练划分） | p1_v3/test | p1_v2/test | p1_v2/val |
+   |---|---|---|---|
+   | `bc_best.pt` 09-17（p1_v3.train） | 24.90%〔未见〕 | 48.86%〔见过〕 | 45.00%〔见过〕 |
+   | `bc_best_legacy_36ch_20260906`（p1_v2.train） | **52.41%**〔见过〕 | 24.39%〔未见〕 | 24.10%〔未见〕 |
+   | `models/best.pt`（策略头=上一行） | **52.90%**〔见过〕 | 24.23% | 24.00% |
+   | `models/pool/bc_best.pt`（p1_v1.train） | 88.18% | 86.60% | 88.96% |
+
+   **机理**：同一批 1072 局复盘语料被反复重导出（p1_v2 有效 835 局、p1_v3 有效 951 局），
+   各版按 `seed=2026` 洗牌但列表长度不同 ⇒ 划分完全不同；旧版 train 覆盖新版 test 约 80% 局，
+   而 `metadata.json` 只存 SHA-256、无文件名清单 ⇒ 重叠不可审计。
+5. **连带作废的数字**：`reports/eval_bc_best.md`（52.90%/74.61%）、
+   `reports/eval_bc_distilled20k_*.md` 与 `eval_bc_T20_anchor05_tac30.md`（40.82% 等）、
+   `junqi/train_rl.py:1280-1282` 注释中的"实测平衡准确率 0.735 / MAE 0.288"
+   （该模型诚实值 = p1_v2/val **0.4467 / 0.9366**）。这些数字是在含其训练局的划分上测得的。
+   ⚠️ `train_rl.py` 的"优先 `value_distilled_v2.pt`"热启动决策正是基于该泄漏对比；
+   且该文件已于 21:56 被以新 `bc_best.pt` 为基座重建（诚实 val 平衡准确率 0.3247 < 1/3 随机）。
+
+### 二、P2 验收状态（对照 `AI_TRAINING_AND_HUMAN_PLAY_PLAN.md` §5 P2）
+
+| 条款 | 状态 |
+|---|---|
+| ① 复盘测试集 Policy 显著优于随机 | ✅ 满足（24.90% vs 2.34%），但相对上一版无提升 |
+| ② 固定开局/中盘/尾盘集合无崩溃 | ⚠️ 未在 `eval_sets/*.jsonl` 上测 |
+| ③ 混合代理同计算预算不弱于 `search2` | ❌ 从未测量 |
+| ④ GUI 非法/送旗/循环比例≈0 | ⚠️ 仅非法动作 0.00% 已测 |
+
+**判定：P2 未通过验收**，暂不具备宣布"克隆成功"或"以 P2 完成"为前提启动长周期自博弈的条件。
+
+### 三、后续动作（待执行，尚未落地）
+
+1. 补 P2 验收③：`gate --a hybrid2 --b search2 --seeds 100 --init-set eval_sets/endgame.jsonl --model-a models/bc_best.pt`；
+2. 补 P2 验收④：用 `games/*.json` 统计送旗/无意义循环比例；
+3. **数据切分冻结**：`metadata.json` 落盘每个 split 的 `.sav` 文件名清单，新增跨版本 test 交集审计脚本，
+   冻结 canonical test 集后重测全部候选并刷新历史数字；
+4. 复议 P3 热启动权重的选择（现值 `value_distilled_v2.pt` 不值得作为价值锚点）。
+
 ## [2026-09-17] 第十七批 — P1/P2 行为克隆与搜索/价值蒸馏全面缺陷修复与健壮性加固（P1 / P2）
 
 阶段归属：**P1（复盘数据集与传统基线）/ P2（行为克隆与搜索蒸馏）**。
